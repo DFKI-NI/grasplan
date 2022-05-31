@@ -1,0 +1,24 @@
+# this parameters are specific to mia hand on ur5 robot
+# the gripper orientation when grasping from the side in quaternion
+grasp_orientations:
+    side_grasp: [-0.011, -0.001, 0.690, 0.724] # [-0.052, 0.102, 0.713, 0.692]
+
+# offest is w.r.t. example prerecorded orientation ref frame, NOT w.r.t object!
+object_offset_params:
+  cylinder:
+    side_grasp: [0.0, 0.0, 0.0]
+  tall_insole:
+    side_grasp: [0.0, 0.0, 0.0]
+
+# Pose generator (sampling) params
+spherical_sampling:
+  side_grasp:
+    roll_step:     0.0
+    pitch_step:    0.3
+    yaw_step:      0.6
+    roll_start:    0.0
+    roll_end:      0.0
+    pitch_start:   0.0
+    pitch_end:     0.6
+    yaw_start:    -1.2
+    yaw_end:       1.2

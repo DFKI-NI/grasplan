@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<launch>
+
+  <!-- visualise a gripper in rviz -->
+  <node pkg="grasplan" type="rviz_gripper_visualiser.py" name="rviz_gripper_visualiser" output="screen" >
+    <rosparam file="$(find grasplan)/config/visualisation/gripper_open_transformations.yaml" command="load" ns="gripper_transformations"/>
+  </node>
+
+</launch>

@@ -1,0 +1,83 @@
+<?xml version="1.0"?>
+<launch>
+
+  <!-- Launch simulated mia hand in gazebo, moveit around, press enter to record poses, gen yaml file when q is pressed -->
+
+  <arg name="object_name" default="tall_insole" />
+  <arg name="gripper" default="gazebo_ros_vel/mia_hand" />
+  <arg name="gripper_root_link" default="wrist" />
+
+  <!-- bringup robot -->
+  <include file="$(find april_robot_bringup)/launch/robot.launch">
+    <arg name="sim" value="true" />
+    <arg name="robot_name" value="$(arg gripper)" />
+    <arg name="robot_environment" value="floating" /> <!-- an empty environment without gravity -->
+  </include>
+
+  <!-- publish robot world to root_link transform taken from gazebo ground truth -->
+  <node pkg="grasplan" type="link_tf_gt_publisher.py" name="link_tf_gt_publisher">
+    <param name="prefix" type="string" value="$(arg gripper)::" />
+    <param name="link_name" type="string" value="$(arg gripper_root_link)" />
+  </node>
+
+  <!-- spawn object in gazebo world -->
+  <arg name="spawn_pose_z" default="0.5"/>
+  <include file="$(find april_use_case_common)/launch/spawn_object.launch" >
+    <arg name="sdf_path" value="$(find april_environments)/models/$(arg object_name)/static_model.sdf"/>
+    <arg name="model_name" value="$(arg object_name)"/>
+    <arg name="spawn_pose_x" value="0.0"/>
+    <arg name="spawn_pose_y" value="0.0"/>
+    <arg name="spawn_pose_z" value="$(arg spawn_pose_z)"/>
+    <arg name="add_uncertainty" value="false"/>
+    <arg name="pkg" value="april_use_case_common"/>
+    <arg name="node_type" value="spawn_object.py"/>
+    <arg name="single_spawn" value="true"/>
+  </include>
+
+  <!-- fake object recognition -->
+  <node pkg="fake_object_recognition" type="object_recognition_mockup.py" name="object_recognition" output="log">
+    <!-- field of view box parameters -->
+    <param name="box_width" type="double" value="1.0" />
+    <param name="box_length" type="double" value="1.0" />
+    <param name="box_height" type="double" value="1.0" />
+    <param name="x_box_position" type="double" value="0.0" />
+    <param name="y_box_position" type="double" value="0.0" />
+    <param name="z_box_position" type="double" value="$(arg spawn_pose_z)" />
+    <param name="supress_warnings" type="bool" value="true" />
+    <!-- objects bounding box parameters -->
+    <rosparam file="$(find fake_object_recognition)/config/object_bounding_boxes.yaml" command="load"/>
+  </node>
+
+  <!-- publish 6dof twist with spacenav joystic -->
+  <arg name="spacenav_node_required" default="true" />
+  <group if="$(arg spacenav_node_required)">
+    <node pkg="spacenav_node" type="spacenav_node" name="spacenav_node" output="screen">
+      <remap from="spacenav/twist" to="/cmd_vel"/>
+      <remap from="spacenav/joy" to="/joy"/>
+      <param name="zero_when_static" type="bool" value="false" />
+      <rosparam param="linear_scale">[1, 1, 1]</rosparam>
+      <rosparam param="angular_scale">[1, 1, 1]</rosparam>
+    </node>
+  </group>
+
+  <!-- tf recorder: record tf between gripper end effector link and object tf -->
+  <arg name="end_effector_link" default="hand_ee_link" />
+  <node pkg="grasplan" type="tf_gripper_listener.py" name="tf_gripper_listener" output="screen" required="true" >
+    <param name="file_path" value="$(find grasplan)/config/grasp_planner/handcoded_grasp_planner/objects/handcoded_grasp_planner_$(arg object_name).yaml" />
+    <param name="end_effector_link" value="$(arg end_effector_link)" />
+    <param name="object_ref_frame" value="$(arg object_name)" />
+  </node>
+
+  <!-- perception persistent trigger -->
+  <arg name="node_start_delay" default="5.0" />
+  <node pkg="rostopic" type="rostopic" name="fake_obj_recognition_trigger" args="pub -r 10 /object_recognition/event_in std_msgs/String 'data: '"
+        launch-prefix="bash -c 'sleep $(arg node_start_delay); $0 $@' "/>
+
+  <!-- rviz -->
+  <arg name="rviz" default="true" />
+  <group if="$(arg rviz)">
+    <node pkg="rviz" type="rviz" name="rviz"
+          args="--display-config $(find grasplan)/config/rviz/teach_grasp_poses.rviz" />
+  </group>
+
+</launch>

@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<launch>
+
+  <!-- april analytical pick object script using simple_pregrasp_planner -->
+  <node pkg="grasplan" type="pick.py" name="pick_object_node" output="screen" >
+    <param name="import_file" type="string" value="grasp_planner.handcoded_grasp_planner" />
+    <param name="import_class" type="string" value="HandcodedGraspPlanner" />
+    <rosparam file="$(find grasplan)/config/pick_params.yaml" command="load" />
+    <rosparam file="$(find grasplan)/config/grasp_planning_core_params.yaml" command="load" />
+    <!-- grasp planner parameters -->
+    <rosparam file="$(find grasplan)/config/grasp_planner/handcoded_grasp_planner/handcoded_grasp_planner_all_objecst.yaml"
+              command="load" ns="handcoded_grasp_planner_transforms" />
+  </node>
+
+</launch>

@@ -1,0 +1,5 @@
+# this file was generated automatically by tf_gripper_listener node
+grasp_poses:
+  -
+    translation: [-0.000266, 0.000846, 0.727430]
+    rotation: [-0.710971, 0.002592, 0.002810, 0.703211]
