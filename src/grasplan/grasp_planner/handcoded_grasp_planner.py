@@ -24,7 +24,7 @@ class HandcodedGraspPlanner(GraspPlanningCore):
             super().__init__()
 
         # get transforms as a dictionary
-        self.grasp_poses = rospy.get_param('~handcoded_grasp_planner_transforms')
+        self.grasp_poses = rospy.get_param('~handcoded_grasp_planner_transforms', [])
 
         rospy.sleep(0.5) # give some time for publisher to register
         rospy.loginfo('handcoded grasp planner object was created')

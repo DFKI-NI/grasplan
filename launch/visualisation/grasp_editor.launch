@@ -4,16 +4,23 @@
   <!-- visualise and edit teached grasps dumped into yaml file with rviz -->
 
   <arg name="object_name" default="multimeter"/>
-  <arg name="grasps_path" default="$(find incorap_sab_demo)/config/grasp_planner/handcoded_grasp_planner/objects/handcoded_grasp_planner_multimeter.yaml"/>
+  <arg name="grasps_yaml_path" default="$(find mobipick_pick_n_place)/config/grasplan/object_grasps"/>
+  <arg name="obj_pkg_name" default="mobipick_gazebo" />
+
+  <!-- rqt_grasplan does not work if use_sim_time is set to true -->
+  <param name="/use_sim_time" value="False" />
 
   <!-- rqt to edit grasps -->
   <node pkg="grasplan" type="rqt_grasplan" name="grasp_editor" output="screen" required="true" >
-    <rosparam file="$(arg grasps_path)" command="load" ns="handcoded_grasp_planner_transforms" />
+    <param name="grasps_yaml_path" value="$(arg grasps_yaml_path)" />
     <param name="object_name" value="$(arg object_name)" />
+    <!-- the ros pkg where the object mesh can be found, {obj_pkg_name}/meshes/{object_name}.dae -->
+    <param name="obj_pkg_name" value="$(arg obj_pkg_name)" />
   </node>
 
   <!-- visualise gripper in rviz as marker -->
   <node pkg="grasplan" type="rviz_gripper_visualiser.py" name="rviz_gripper_visualiser" output="screen">
+    <param name="global_reference_frame" value="object" />
     <rosparam file="$(find mobipick_pick_n_place)/config/gripper_open_transformations.yaml" command="load" ns="gripper_transformations"/>
     <remap from="pose_array" to="/grasp_editor/grasp_poses"/>
   </node>

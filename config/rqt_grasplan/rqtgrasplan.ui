@@ -9,8 +9,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>709</width>
-    <height>653</height>
+    <width>696</width>
+    <height>810</height>
    </rect>
   </property>
   <property name="cursor">
@@ -510,7 +510,7 @@ p, li { white-space: pre-wrap; }
     </rect>
    </property>
    <property name="title">
-    <string>Edit grasps</string>
+    <string>Edit</string>
    </property>
    <widget class="QGroupBox" name="groupBox_6">
     <property name="geometry">
@@ -751,7 +751,7 @@ p, li { white-space: pre-wrap; }
       <x>10</x>
       <y>270</y>
       <width>161</width>
-      <height>51</height>
+      <height>111</height>
      </rect>
     </property>
     <property name="text">
@@ -772,7 +772,7 @@ p, li { white-space: pre-wrap; }
 &lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
 p, li { white-space: pre-wrap; }
 &lt;/style&gt;&lt;/head&gt;&lt;body style=&quot; font-family:'Ubuntu'; font-size:11pt; font-weight:400; font-style:normal;&quot;&gt;
-&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;1&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;2&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
     </property>
    </widget>
    <widget class="QLabel" name="lblGraspNumbers_16">
@@ -819,61 +819,6 @@ p, li { white-space: pre-wrap; }
     </property>
    </widget>
   </widget>
-  <widget class="QPushButton" name="cmdSave">
-   <property name="geometry">
-    <rect>
-     <x>410</x>
-     <y>490</y>
-     <width>221</width>
-     <height>101</height>
-    </rect>
-   </property>
-   <property name="palette">
-    <palette>
-     <active>
-      <colorrole role="Button">
-       <brush brushstyle="SolidPattern">
-        <color alpha="255">
-         <red>138</red>
-         <green>226</green>
-         <blue>52</blue>
-        </color>
-       </brush>
-      </colorrole>
-     </active>
-     <inactive>
-      <colorrole role="Button">
-       <brush brushstyle="SolidPattern">
-        <color alpha="255">
-         <red>138</red>
-         <green>226</green>
-         <blue>52</blue>
-        </color>
-       </brush>
-      </colorrole>
-     </inactive>
-     <disabled>
-      <colorrole role="Button">
-       <brush brushstyle="SolidPattern">
-        <color alpha="255">
-         <red>138</red>
-         <green>226</green>
-         <blue>52</blue>
-        </color>
-       </brush>
-      </colorrole>
-     </disabled>
-    </palette>
-   </property>
-   <property name="font">
-    <font>
-     <pointsize>19</pointsize>
-    </font>
-   </property>
-   <property name="text">
-    <string>Print grasps</string>
-   </property>
-  </widget>
   <widget class="QGroupBox" name="groupBox_11">
    <property name="geometry">
     <rect>
@@ -884,7 +829,7 @@ p, li { white-space: pre-wrap; }
     </rect>
    </property>
    <property name="title">
-    <string>Grasp selector</string>
+    <string>Select</string>
    </property>
    <widget class="QLabel" name="lblGraspNumbers">
     <property name="geometry">
@@ -992,6 +937,101 @@ p, li { white-space: pre-wrap; }
     </property>
     <property name="text">
      <string>0</string>
+    </property>
+   </widget>
+  </widget>
+  <widget class="QGroupBox" name="groupBox_12">
+   <property name="geometry">
+    <rect>
+     <x>10</x>
+     <y>620</y>
+     <width>331</width>
+     <height>171</height>
+    </rect>
+   </property>
+   <property name="title">
+    <string>File</string>
+   </property>
+   <widget class="QPushButton" name="cmdFileLoadG">
+    <property name="geometry">
+     <rect>
+      <x>10</x>
+      <y>120</y>
+      <width>151</width>
+      <height>41</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Load grasps</string>
+    </property>
+   </widget>
+   <widget class="QPushButton" name="cmdFileSaveG">
+    <property name="geometry">
+     <rect>
+      <x>170</x>
+      <y>120</y>
+      <width>151</width>
+      <height>41</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Save grasps</string>
+    </property>
+   </widget>
+   <widget class="QTextEdit" name="txtFileObjectName">
+    <property name="geometry">
+     <rect>
+      <x>170</x>
+      <y>30</y>
+      <width>151</width>
+      <height>31</height>
+     </rect>
+    </property>
+    <property name="html">
+     <string>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
+&lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
+p, li { white-space: pre-wrap; }
+&lt;/style&gt;&lt;/head&gt;&lt;body style=&quot; font-family:'Ubuntu'; font-size:11pt; font-weight:400; font-style:normal;&quot;&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;my_object_name&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+    </property>
+   </widget>
+   <widget class="QLabel" name="lblGraspNumbers_6">
+    <property name="geometry">
+     <rect>
+      <x>10</x>
+      <y>40</y>
+      <width>141</width>
+      <height>17</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Object name :</string>
+    </property>
+   </widget>
+   <widget class="QPushButton" name="cmdFilePrintG">
+    <property name="geometry">
+     <rect>
+      <x>170</x>
+      <y>70</y>
+      <width>151</width>
+      <height>41</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Print grasps</string>
+    </property>
+   </widget>
+   <widget class="QPushButton" name="cmdFileSelectObjPath">
+    <property name="geometry">
+     <rect>
+      <x>10</x>
+      <y>70</y>
+      <width>151</width>
+      <height>41</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Select file</string>
     </property>
    </widget>
   </widget>

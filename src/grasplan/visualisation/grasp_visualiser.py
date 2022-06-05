@@ -14,17 +14,20 @@ Load grasp configurations from yaml file and display them on rviz.
 class GraspVisualiser:
     def __init__(self):
         # parameters
-        self.object_name = rospy.get_param('object_name', 'multimeter')
-        self.global_reference_frame = 'map'
+        self.object_name = rospy.get_param('~object_name', 'multimeter')
+        self.object_pkg = rospy.get_param('~object_pkg', 'mobipick_gazebo')
+        self.global_reference_frame = rospy.get_param('~global_reference_frame', 'object')
+        rospy.Subscriber('~update_object_mesh', std_msgs.msg.String, self.UpdateObjectMeshCB)
         # Publishers
-        self.marker_pub = rospy.Publisher('object_mesh', Marker, queue_size=1, latch=True)
+        self.object_mesh_publisher = rospy.Publisher('object_mesh', Marker, queue_size=1, latch=True)
         self.pose_array_pub = rospy.Publisher('~grasp_poses', PoseArray, queue_size=50, latch=True)
         # use helper function to convert gripper poses to pose array
         self.handcoded_grasp_planner_obj = HandcodedGraspPlanner(call_parent_constructor=False)
-        # load gripper grasps
-        self.grasp_poses = rospy.get_param('~handcoded_grasp_planner_transforms')
         rospy.sleep(0.5)
         rospy.loginfo('grasp visualiser node started')
+
+    def UpdateObjectMeshCB(self, msg):
+        self.update_mesh(object_name=msg.data, object_pkg=self.object_pkg)
 
     def make_mesh_marker_msg(self, mesh_path, position=[0,0,0], orientation=[0,0,0,1], mesh_scale=[1,1,1]):
         mesh_marker_msg = Marker()
@@ -49,7 +52,7 @@ class GraspVisualiser:
     def publish_grasps_as_pose_array(self):
         object_name = self.object_name
         object_pose = PoseStamped()
-        object_pose.header.frame_id = 'map'
+        object_pose.header.frame_id = self.global_reference_frame
         object_pose.pose.position.x = 0.0
         object_pose.pose.position.y = 0.0
         object_pose.pose.position.z = 0.0
@@ -61,11 +64,14 @@ class GraspVisualiser:
         pose_array_msg = self.handcoded_grasp_planner_obj.gen_end_effector_grasp_poses(object_name, object_pose, grasp_type)
         self.pose_array_pub.publish(pose_array_msg)
 
-    def start_grasp_visualiser(self):
-        mesh_path = 'package://mobipick_gazebo/meshes/multimeter.dae'
+    def update_mesh(self, object_name='multimeter', object_pkg='mobipick_gazebo'):
+        mesh_path = f'package://{object_pkg}/meshes/{object_name}.dae'
         marker_msg = self.make_mesh_marker_msg(mesh_path)
         rospy.loginfo(f'publishing mesh:{mesh_path}')
-        self.marker_pub.publish(marker_msg)
+        self.object_mesh_publisher.publish(marker_msg)
+
+    def start_grasp_visualiser(self):
+        self.update_mesh(object_name=self.object_name, object_pkg=self.object_pkg)
         # visualise grasps
         self.publish_grasps_as_pose_array()
         rospy.spin()
