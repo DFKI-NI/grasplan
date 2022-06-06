@@ -38,6 +38,61 @@ class OpenFileDialog(QWidget):
         if fileName:
             return fileName
 
+class Grasps:
+    def __init__(self, reference_frame='object'):
+        self.reference_frame = reference_frame
+        self.grasps_as_pose_array = None
+        self.__init()
+
+    def __init(self):
+        self.grasps_as_pose_array = PoseArray()
+        self.grasps_as_pose_array.header.frame_id = self.reference_frame
+
+    def add_grasp(self, grasp):
+        assert isinstance(grasp, Pose)
+        self.grasps_as_pose_array.poses.append(grasp)
+
+    def add_grasps(self, pose_array_grasps):
+        assert isinstance(pose_array_grasps, PoseArray)
+        for grasp in pose_array_grasps.poses:
+            self.grasps_as_pose_array.poses.append(grasp)
+
+    def remove_grasp(self, grasp):
+        assert isinstance(grasp, Pose)
+        self.grasps_as_pose_array.poses.remove(grasp)
+
+    def remove_grasp_by_index(self, grasp_index):
+        assert isinstance(grasp_index, int)
+        grasp = self.grasps_as_pose_array.poses[grasp_index]
+        self.remove_grasp(grasp)
+
+    def remove_all_grasps(self):
+        self.__init()
+
+    def get_grasp_by_index(self, grasp_index):
+        assert isinstance(grasp_index, int)
+        return self.grasps_as_pose_array.poses[grasp_index]
+
+    def replace_grasp_by_index(self, grasp_index, new_grasp):
+        assert isinstance(grasp_index, int)
+        assert isinstance(new_grasp, Pose)
+        self.grasps_as_pose_array.poses[grasp_index] = new_grasp
+
+    def get_grasps_as_pose_list(self):
+        return self.grasps_as_pose_array.poses
+
+    def get_grasps_as_pose_array_msg(self):
+        return self.grasps_as_pose_array
+
+    def size(self):
+        return len(self.grasps_as_pose_array.poses)
+
+    def undo(self):
+        pass
+
+    def redo(self):
+        pass
+
 class RqtGrasplan(Plugin):
 
     def __init__(self, context):
@@ -61,7 +116,7 @@ class RqtGrasplan(Plugin):
             self._widget.setWindowTitle(self._widget.windowTitle() + (' (%d)' % context.serial_number()))
 
         # variables
-        self.grasps_as_pose_array = None # stores all grasps
+        self.grasps = Grasps() # stores all grasps
         self.grasps_yaml_path = None
         self.object_name = None
         self.tab = '    ' # used in save function
@@ -83,7 +138,7 @@ class RqtGrasplan(Plugin):
             self._widget.txtFileObjectName.setText(self.object_name)
             if rospy.has_param('~grasps_yaml_path'):
                 self.grasps_yaml_path = rospy.get_param('~grasps_yaml_path') + f'/handcoded_grasp_planner_{self.object_name}.yaml'
-                self.grasps_as_pose_array = self.load_grasps_from_yaml(self.object_name, self.grasps_yaml_path)
+                self.grasps.add_grasps(self.load_grasps_from_yaml(self.object_name, self.grasps_yaml_path))
             else:
                 rospy.logwarn('object name parameter is set but grasps_yaml_path param is missing, is this correct?')
 
@@ -189,7 +244,7 @@ class RqtGrasplan(Plugin):
 
     def handle_file_save_grasps_button(self):
         rospy.loginfo('save!')
-        self.write_grasps_to_yaml_file(self.grasps_as_pose_array.poses, self._widget.txtFileObjectName.toPlainText())
+        self.write_grasps_to_yaml_file(self.grasps.get_grasps_as_pose_list(), self._widget.txtFileObjectName.toPlainText())
 
     def fix_displayed_text(self):
         '''
@@ -250,14 +305,14 @@ class RqtGrasplan(Plugin):
         publish grasps as pose array msg for visualisation purposes
         '''
         self.pose_highlight_pub.publish(self.selected_pose)
-        self.grasp_poses_pub.publish(self.grasps_as_pose_array)
+        self.grasp_poses_pub.publish(self.grasps.get_grasps_as_pose_array_msg())
 
     def handle_file_print_grasps_button(self):
         '''
         print grasps to console in yaml format
         '''
         rospy.loginfo('print!')
-        for grasp in self.grasps_as_pose_array.poses:
+        for grasp in self.grasps.get_grasps_as_pose_list():
             print(f'{self.tab}-\n{self.tab}  translation: [{grasp.position.x},{grasp.position.y},{grasp.position.z}]\n' +\
                      f'{self.tab}  rotation: [{grasp.orientation.x},{grasp.orientation.y},\
                                               {grasp.orientation.z},{grasp.orientation.w}]')
@@ -294,7 +349,8 @@ class RqtGrasplan(Plugin):
         grasps = self.load_grasps_from_yaml(self.object_name, self.grasps_yaml_path)
         if grasps is None:
             return
-        self.grasps_as_pose_array = grasps
+        self.grasps.remove_all_grasps()
+        self.grasps.add_grasps(grasps)
         self.publish_grasps()
         self.update_grasp_number()
 
@@ -305,7 +361,7 @@ class RqtGrasplan(Plugin):
             return True
         else:
             grasp_number = int(self._widget.txtGraspSGraspNumbers.toPlainText())
-            if grasp_number >= len(self.grasps_as_pose_array.poses):
+            if grasp_number >= self.grasps.size():
                 self.log_error('Cannot select/highlight grasp, selected number is out of bounds')
                 return False
             else:
@@ -339,7 +395,7 @@ class RqtGrasplan(Plugin):
             # load selected pose in transform if needed
             if self._widget.chkTransformLoadSelected.isChecked():
                 if self.selected_pose != -10 and self.selected_pose != -1:
-                    selected_pose = self.grasps_as_pose_array.poses[self.selected_pose]
+                    selected_pose = self.grasps.get_grasp_by_index(self.selected_pose)
                     self.write_linear_to_tf_textbox([selected_pose.position.x,\
                                                      selected_pose.position.y,\
                                                      selected_pose.position.z])
@@ -356,24 +412,24 @@ class RqtGrasplan(Plugin):
                     self.fix_displayed_text()
 
     def update_grasp_number(self):
-        self._widget.lblGraspSGrasps.setText(str(len(self.grasps_as_pose_array.poses)))
+        self._widget.lblGraspSGrasps.setText(str(self.grasps.size()))
 
     def handle_grasp_s_delete_button(self):
         rospy.loginfo('delete grasp!')
         if self._widget.chkGraspSAllGrasps.isChecked():
-            if len(self.grasps_as_pose_array.poses) == 1:
+            if self.grasps.size() == 1:
                 rospy.loginfo('deleting all grasps!')
-                self.grasps_as_pose_array.poses = []
+                self.grasps.remove_all_grasps()
             else:
                 rospy.logwarn('deleting all grasps but leaving grasp #0,\
                                if you want to remove it click delete again')
-                pose0 = copy.deepcopy(self.grasps_as_pose_array.poses[0])
-                self.grasps_as_pose_array.poses = []
-                self.grasps_as_pose_array.poses.append(pose0)
+                pose0 = copy.deepcopy(self.grasps.get_grasp_by_index(0))
+                self.grasps.remove_all_grasps()
+                self.grasps.add_grasp(pose0)
             self.selected_pose = -1
             self.publish_grasps()
         elif self.update_selected_pose():
-            del self.grasps_as_pose_array.poses[self.selected_pose]
+            self.grasps.remove_grasp_by_index(self.selected_pose)
             self.selected_pose = -1
             self.publish_grasps()
         self.update_grasp_number()
@@ -381,9 +437,9 @@ class RqtGrasplan(Plugin):
     def handle_edit_g_apply_button(self):
         rospy.loginfo('apply pattern!')
         if self.selected_pose == -10:
-            static_grasps = copy.deepcopy(self.grasps_as_pose_array.poses)
+            static_grasps = copy.deepcopy(self.grasps.get_grasps_as_pose_list())
         else:
-            static_grasps = [copy.deepcopy(self.grasps_as_pose_array.poses[self.selected_pose])]
+            static_grasps = [copy.deepcopy(self.grasps.get_grasp_by_index(self.selected_pose))]
         # mirror: rotate quaternion by 180 degrees in each desired axis
         if self._widget.optEditGPatternMirror.isChecked():
             if self.update_selected_pose():
@@ -401,8 +457,8 @@ class RqtGrasplan(Plugin):
                                 derived_grasp.orientation.z, derived_grasp.orientation.w]
                     derived_grasp.orientation = self.rotate_quaternion(q_orig, roll, pitch, yaw)
                     if self._widget.optEditGHandlingCopyR.isChecked():
-                        self.grasps_as_pose_array.poses.remove(grasp_pose)
-                    self.grasps_as_pose_array.poses.append(derived_grasp)
+                        self.grasps.remove_grasp(grasp_pose)
+                    self.grasps.add_grasp(derived_grasp)
             self.publish_grasps()
         # circular pattern
         if self._widget.optEditGPatternCircular.isChecked():
@@ -432,11 +488,11 @@ class RqtGrasplan(Plugin):
                         if self._widget.chkEditGAxisZ.isChecked():
                             yaw += ang_step
                         derived_grasp.orientation = self.rotate_quaternion(q_orig, roll, pitch, yaw)
-                        self.grasps_as_pose_array.poses.append(derived_grasp)
+                        self.grasps.add_grasp(derived_grasp)
                         # prepare for next pose
                         grasp_pose = copy.deepcopy(derived_grasp)
                         # highlight and select newly generated grasp
-                        self.selected_pose = len(self.grasps_as_pose_array.poses) - 1
+                        self.selected_pose = self.grasps.size() - 1
                 self.publish_grasps()
         self.update_grasp_number()
 
@@ -465,13 +521,13 @@ class RqtGrasplan(Plugin):
         linear, angular_rpy, angular_q = self.read_transform(apply_rpy_to_q=True)
         if self.selected_pose == -10 or self.selected_pose == -1:
             # apply transform to all
-            for grasp in self.grasps_as_pose_array.poses:
+            for grasp in self.grasps.get_grasps_as_pose_list():
                 q_orig = [grasp.orientation.x, grasp.orientation.y, grasp.orientation.z, grasp.orientation.w]
                 grasp.orientation = self.rotate_quaternion(q_orig, *angular_rpy)
             self.publish_grasps()
         else:
             pose_msg = self.list_to_pose_msg(linear, angular_q)
-            self.grasps_as_pose_array.poses[self.selected_pose] = pose_msg
+            self.grasps.replace_grasp_by_index(self.selected_pose, pose_msg)
             self.publish_grasps()
 
     def handle_grasp_s_unselect_button(self):
@@ -508,8 +564,8 @@ class RqtGrasplan(Plugin):
         rospy.loginfo('create grasp!')
         linear, angular_rpy, angular_q = self.read_transform(apply_rpy_to_q=True)
         pose_msg = self.list_to_pose_msg(linear, angular_q)
-        self.grasps_as_pose_array.poses.append(pose_msg)
-        self.selected_pose = len(self.grasps_as_pose_array.poses) - 1
+        self.grasps.add_grasp(pose_msg)
+        self.selected_pose = self.grasps.size() - 1
         self.publish_grasps()
         self.update_grasp_number()
 
