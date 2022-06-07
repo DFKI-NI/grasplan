@@ -58,7 +58,13 @@ class Grasps:
 
     def bkp_grasps(self):
         self.undo_index += 1
-        self.grasp_history[self.undo_index] = copy.deepcopy(self.grasps_as_pose_array.poses)
+        if self.undo_index < self.history_buffer_size:
+            self.grasp_history[self.undo_index] = copy.deepcopy(self.grasps_as_pose_array.poses)
+        else:
+            # history_buffer_size exceeded
+            del self.grasp_history[0]
+            self.grasp_history.append(copy.deepcopy(self.grasps_as_pose_array.poses))
+            self.undo_index -= 1
 
     def add_grasp(self, grasp):
         assert isinstance(grasp, Pose)
@@ -150,15 +156,14 @@ class Grasps:
             self.grasps_as_pose_array.poses = copy.deepcopy(self.grasp_history[self.undo_index])
 
     def redo(self):
-        if self.undo_index + 1 > self.history_buffer_size:
-            rospy.logwarn("can't redo any further")
-        else:
-            self.undo_index += 1
-            if self.grasp_history[self.undo_index] is None:
+        if self.undo_index + 1 < self.history_buffer_size:
+            if self.grasp_history[self.undo_index + 1] is None:
                 rospy.logwarn("can't redo any further, already at the latest action")
-                self.undo_index -= 1
             else:
+                self.undo_index += 1
                 self.grasps_as_pose_array.poses = copy.deepcopy(self.grasp_history[self.undo_index])
+        else:
+            rospy.logwarn("can't redo any further")
 
 class RqtGrasplan(Plugin):
 
@@ -644,11 +649,13 @@ class RqtGrasplan(Plugin):
         rospy.loginfo("Don't forget to click on load grasps next!")
 
     def handle_undo_button(self):
+        rospy.loginfo('undo!')
         self.grasps.undo()
         self.grasps.unselect_all_grasps()
         self.publish_grasps()
 
     def handle_redo_button(self):
+        rospy.loginfo('redo!')
         self.grasps.redo()
         self.grasps.unselect_all_grasps()
         self.publish_grasps()
