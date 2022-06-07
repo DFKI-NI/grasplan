@@ -605,6 +605,9 @@ class RqtGrasplan(Plugin):
 
     def handle_edit_g_apply_button(self):
         rospy.loginfo('apply pattern!')
+        if self.grasps.size() == 0:
+            self.log_error("Can't create pattern, grasps are empty")
+            return
         replace = None
         if self._widget.optEditGHandlingCopyR.isChecked():
             replace = True
@@ -636,6 +639,9 @@ class RqtGrasplan(Plugin):
                 return
             roll, pitch, yaw = 0.0, 0.0, 0.0
             grasps = self.grasps.get_selected_grasps()
+            if len(grasps) == 0:
+                self.log_error("Can't create pattern, no grasps are selected")
+                return
             for pattern_grasp in range(number_of_grasps - 1):
                 if self._widget.chkEditGAxisX.isChecked():
                     roll += ang_step
