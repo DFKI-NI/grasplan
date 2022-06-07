@@ -47,8 +47,9 @@ class GraspEditorState:
         assert isinstance(grasps, list)
         if len(grasps) == 0:
             self.__grasps = []
-        assert isinstance(grasps[0], Pose)
-        self.__grasps = copy.deepcopy(grasps) # deepcopy is essential here!
+        else:
+            assert isinstance(grasps[0], Pose)
+            self.__grasps = copy.deepcopy(grasps) # deepcopy is essential here!
 
     def get_grasps(self):
         return self.__grasps
@@ -115,6 +116,48 @@ class Grasps:
         for grasp in pose_array_grasps.poses:
             self.add_grasp(grasp)
 
+    def rotate_grasp(self, grasp, roll=0.0, pitch=0.0, yaw=0.0):
+        '''
+        input: geometry_msgs/Pose (grasp) and the rotations in roll pitch yaw (in radians) in that order that you want to apply
+        output: this function modifies grasp by reference
+        ---
+        quaternion rotation is applied via multiplication, see:
+        http://wiki.ros.org/tf2/Tutorials/Quaternions , section "Applying a quaternion rotation"
+        '''
+        assert isinstance(grasp, Pose)
+        q_orig = np.array([grasp.orientation.x, grasp.orientation.y, grasp.orientation.z, grasp.orientation.w])
+        angular_q = tf.transformations.quaternion_from_euler(roll, pitch, yaw)
+        q_new = tf.transformations.quaternion_multiply(angular_q, q_orig)
+        grasp.orientation.x = q_new[0]
+        grasp.orientation.y = q_new[1]
+        grasp.orientation.z = q_new[2]
+        grasp.orientation.w = q_new[3]
+        return grasp
+
+    def rotate_grasps(self, grasps, roll=0.0, pitch=0.0, yaw=0.0, replace=False):
+        assert isinstance(grasps, list)
+        self.pause_history() # for undo to work on all pattern poses we pause history
+        static_grasps = copy.deepcopy(grasps)
+        for grasp in static_grasps:
+            assert isinstance(grasp, Pose)
+            derived_grasp = copy.deepcopy(grasp)
+            derived_grasp = self.rotate_grasp(grasp, roll, pitch, yaw)
+            if replace:
+                self.remove_grasp(grasp)
+            self.add_grasp(derived_grasp)
+        self.unpause_history() # for undo to work on all pattern poses we unpause history
+
+    def rotate_selected_grasps(self, roll=0.0, pitch=0.0, yaw=0.0, replace=False):
+        if self.selected_grasp_index == -1:
+            return False
+        grasps = self.get_selected_grasps()
+        assert isinstance(grasps, list)
+        if grasps == []:
+            return False
+        else:
+            self.rotate_grasps(grasps, roll, pitch, yaw, replace)
+            return True
+
     def remove_grasp(self, grasp):
         assert isinstance(grasp, Pose)
         self.grasps_as_pose_array.poses.remove(grasp)
@@ -135,7 +178,7 @@ class Grasps:
 
     def get_grasp_by_index(self, grasp_index):
         assert isinstance(grasp_index, int)
-        return self.grasps_as_pose_array.poses[grasp_index]
+        return copy.deepcopy(self.grasps_as_pose_array.poses[grasp_index])
 
     def replace_grasp_by_index(self, grasp_index, new_grasp):
         assert isinstance(grasp_index, int)
@@ -144,7 +187,7 @@ class Grasps:
         self.add_state_to_history()
 
     def get_grasps_as_pose_list(self):
-        return self.grasps_as_pose_array.poses
+        return copy.deepcopy(self.grasps_as_pose_array.poses)
 
     def get_grasps_as_pose_array_msg(self):
         return self.grasps_as_pose_array
@@ -554,11 +597,11 @@ class RqtGrasplan(Plugin):
 
     def handle_edit_g_apply_button(self):
         rospy.loginfo('apply pattern!')
-        self.grasps.pause_history() # for undo to work on all pattern poses we pause history
-        static_grasps = copy.deepcopy(self.grasps.get_selected_grasps())
-        if static_grasps == []:
-            self.log_error('To apply a pattern please select a grasp first')
-            return
+        replace = None
+        if self._widget.optEditGHandlingCopyR.isChecked():
+            replace = True
+        else:
+            replace = False
         # mirror: rotate quaternion by 180 degrees in each desired axis
         if self._widget.optEditGPatternMirror.isChecked():
             roll, pitch, yaw = 0.0, 0.0, 0.0
@@ -568,16 +611,8 @@ class RqtGrasplan(Plugin):
                 pitch = math.pi
             if self._widget.chkEditGAxisZ.isChecked():
                 yaw = math.pi
-            angular_rpy = [roll, pitch, yaw]
-            for grasp_pose in static_grasps:
-                derived_grasp = copy.deepcopy(grasp_pose)
-                q_orig = [derived_grasp.orientation.x, derived_grasp.orientation.y,\
-                            derived_grasp.orientation.z, derived_grasp.orientation.w]
-                derived_grasp.orientation = self.rotate_quaternion(q_orig, roll, pitch, yaw)
-                if self._widget.optEditGHandlingCopyR.isChecked():
-                    self.grasps.remove_grasp(grasp_pose)
-                self.grasps.add_grasp(derived_grasp)
-            self.publish_grasps()
+            if not self.grasps.rotate_selected_grasps(roll, pitch, yaw, replace=replace):
+                self.log_error('Failed to apply pattern, have you selected a grasp or grasps first?')
         # circular pattern
         elif self._widget.optEditGPatternCircular.isChecked():
             # read angular step
@@ -588,52 +623,25 @@ class RqtGrasplan(Plugin):
                 rospy.logwarn('step angle is greater than 360 deg (pi radians), is this correct?')
             # read number of times that the user wants to repeat the grasp
             number_of_grasps = int(self._widget.txtEditGNumberOfGrasps.toPlainText())
-            if number_of_grasps < 0:
-                self.log_error('Number of grasps to make pattern cannot be negative')
+            if number_of_grasps < 2:
+                self.log_error('Number of grasps to make pattern must be greater than 1')
                 return
-            for grasp_pose in static_grasps:
-                for pattern_grasp in range(number_of_grasps - 1):
-                    derived_grasp = copy.deepcopy(grasp_pose)
-                    q_orig = [derived_grasp.orientation.x, derived_grasp.orientation.y,\
-                            derived_grasp.orientation.z, derived_grasp.orientation.w]
-                    roll, pitch, yaw = 0.0, 0.0, 0.0
-                    if self._widget.chkEditGAxisX.isChecked():
-                        roll += ang_step
-                    if self._widget.chkEditGAxisY.isChecked():
-                        pitch += ang_step
-                    if self._widget.chkEditGAxisZ.isChecked():
-                        yaw += ang_step
-                    derived_grasp.orientation = self.rotate_quaternion(q_orig, roll, pitch, yaw)
-                    self.grasps.add_grasp(derived_grasp)
-                    # prepare for next pose
-                    grasp_pose = copy.deepcopy(derived_grasp)
-        self.grasps.unpause_history() # for undo to work on all pattern poses we unpause history
+            roll, pitch, yaw = 0.0, 0.0, 0.0
+            grasps = self.grasps.get_selected_grasps()
+            for pattern_grasp in range(number_of_grasps - 1):
+                if self._widget.chkEditGAxisX.isChecked():
+                    roll += ang_step
+                if self._widget.chkEditGAxisY.isChecked():
+                    pitch += ang_step
+                if self._widget.chkEditGAxisZ.isChecked():
+                    yaw += ang_step
+                self.grasps.rotate_grasps(grasps, roll, pitch, yaw, replace=replace)
         if self._widget.chkGraspSAllGrasps.isChecked():
             self.grasps.select_all_grasps()
         else:
             self.grasps.select_last_grasp()
         self.publish_grasps()
         self.update_grasp_number_label()
-
-    def rotate_quaternion(self, quaternion, roll=0.0, pitch=0.0, yaw=0.0):
-        '''
-        input: quaternion as a list and the rotations in roll pitch yaw (in radians) in that order that you want to apply
-        output: a rotated quaternion msg
-        ---
-        quaternion rotation is applied via multiplication, see:
-        http://wiki.ros.org/tf2/Tutorials/Quaternions , section "Applying a quaternion rotation"
-        '''
-        if roll > math.pi or pitch > math.pi or yaw > math.pi:
-            rospy.logwarn('one or more rpy values are above pi (3.1416), is this correct?')
-        q_orig = np.array([*quaternion])
-        angular_q = tf.transformations.quaternion_from_euler(roll, pitch, yaw)
-        q_new = tf.transformations.quaternion_multiply(angular_q, q_orig)
-        quaternion_msg = Quaternion()
-        quaternion_msg.x = q_new[0]
-        quaternion_msg.y = q_new[1]
-        quaternion_msg.z = q_new[2]
-        quaternion_msg.w = q_new[3]
-        return quaternion_msg
 
     def handle_transform_apply_button(self):
         rospy.loginfo('apply transform!')
@@ -643,8 +651,7 @@ class RqtGrasplan(Plugin):
             self.log_error('There is no selected grasp to apply the transform')
             return
         for grasp in selected_grasps:
-            q_orig = [grasp.orientation.x, grasp.orientation.y, grasp.orientation.z, grasp.orientation.w]
-            grasp.orientation = self.rotate_quaternion(q_orig, *angular_rpy)
+            grasp = self.grasps.rotate_grasp(grasp, *angular_rpy)
         self.publish_grasps()
 
     def handle_grasp_s_unselect_button(self):
@@ -703,9 +710,11 @@ class RqtGrasplan(Plugin):
     def handle_undo_button(self):
         rospy.loginfo('undo!')
         self.grasps.undo()
+        self.update_grasp_number_label()
         self.publish_grasps()
 
     def handle_redo_button(self):
         rospy.loginfo('redo!')
         self.grasps.redo()
+        self.update_grasp_number_label()
         self.publish_grasps()
