@@ -38,6 +38,28 @@ class OpenFileDialog(QWidget):
         if fileName:
             return fileName
 
+class GraspEditorState:
+    def __init__(self):
+        self.__grasps = None
+        self.__selected_grasp_index = None
+
+    def set_grasps(self, grasps):
+        assert isinstance(grasps, list)
+        if len(grasps) == 0:
+            self.__grasps = []
+        assert isinstance(grasps[0], Pose)
+        self.__grasps = copy.deepcopy(grasps) # deepcopy is essential here!
+
+    def get_grasps(self):
+        return self.__grasps
+
+    def set_selected_grasp_index(self, selected_grasp_index):
+        assert isinstance(selected_grasp_index, int)
+        self.__selected_grasp_index = copy.deepcopy(selected_grasp_index)
+
+    def get_selected_grasp_index(self):
+        return self.__selected_grasp_index
+
 class Grasps:
     def __init__(self, reference_frame='object', history_buffer_size=100):
         self.reference_frame = reference_frame
@@ -56,20 +78,29 @@ class Grasps:
         for i in range(self.history_buffer_size):
             self.grasp_history.append(None)
 
-    def bkp_grasps(self):
+    def get_current_state(self):
+        state = GraspEditorState()
+        state.set_grasps(self.grasps_as_pose_array.poses)
+        state.set_selected_grasp_index(self.selected_grasp_index)
+        return state
+
+    def add_state_to_history(self):
+        '''
+        for undo/redo purposes
+        '''
         self.undo_index += 1
         if self.undo_index < self.history_buffer_size:
-            self.grasp_history[self.undo_index] = copy.deepcopy(self.grasps_as_pose_array.poses)
+            self.grasp_history[self.undo_index] = self.get_current_state()
         else:
             # history_buffer_size exceeded
             del self.grasp_history[0]
-            self.grasp_history.append(copy.deepcopy(self.grasps_as_pose_array.poses))
+            self.grasp_history.append(self.get_current_state())
             self.undo_index -= 1
 
     def add_grasp(self, grasp):
         assert isinstance(grasp, Pose)
         self.grasps_as_pose_array.poses.append(grasp)
-        self.bkp_grasps() # for undo/redo purposes
+        self.add_state_to_history()
 
     def add_grasps(self, pose_array_grasps):
         assert isinstance(pose_array_grasps, PoseArray)
@@ -79,7 +110,7 @@ class Grasps:
     def remove_grasp(self, grasp):
         assert isinstance(grasp, Pose)
         self.grasps_as_pose_array.poses.remove(grasp)
-        self.bkp_grasps() # for undo/redo purposes
+        self.add_state_to_history()
 
     def remove_grasp_by_index(self, grasp_index):
         assert isinstance(grasp_index, int)
@@ -92,6 +123,7 @@ class Grasps:
 
     def remove_all_grasps(self):
         self.__init()
+        self.add_state_to_history()
 
     def get_grasp_by_index(self, grasp_index):
         assert isinstance(grasp_index, int)
@@ -101,6 +133,7 @@ class Grasps:
         assert isinstance(grasp_index, int)
         assert isinstance(new_grasp, Pose)
         self.grasps_as_pose_array.poses[grasp_index] = new_grasp
+        self.add_state_to_history()
 
     def get_grasps_as_pose_list(self):
         return self.grasps_as_pose_array.poses
@@ -128,16 +161,20 @@ class Grasps:
             return False
         else:
             self.selected_grasp_index = grasp_index
+            self.add_state_to_history()
             return True
 
     def select_all_grasps(self):
         self.selected_grasp_index = -10
+        self.add_state_to_history()
 
     def select_last_grasp(self):
         self.selected_grasp_index = self.size() - 1
+        self.add_state_to_history()
 
     def unselect_all_grasps(self):
         self.selected_grasp_index = -1
+        self.add_state_to_history()
 
     def single_grasp_is_selected(self):
         if self.selected_grasp_index == -10 or self.selected_grasp_index == -1:
@@ -148,12 +185,17 @@ class Grasps:
     def size(self):
         return len(self.grasps_as_pose_array.poses)
 
+    def restore_state(self):
+        state = self.grasp_history[self.undo_index]
+        self.grasps_as_pose_array.poses = state.get_grasps()
+        self.selected_grasp_index = state.get_selected_grasp_index()
+
     def undo(self):
         if self.undo_index - 1 < 0:
             rospy.logwarn("can't undo any further")
         else:
             self.undo_index -= 1
-            self.grasps_as_pose_array.poses = copy.deepcopy(self.grasp_history[self.undo_index])
+            self.restore_state()
 
     def redo(self):
         if self.undo_index + 1 < self.history_buffer_size:
@@ -161,7 +203,7 @@ class Grasps:
                 rospy.logwarn("can't redo any further, already at the latest action")
             else:
                 self.undo_index += 1
-                self.grasps_as_pose_array.poses = copy.deepcopy(self.grasp_history[self.undo_index])
+                self.restore_state()
         else:
             rospy.logwarn("can't redo any further")
 
@@ -505,25 +547,27 @@ class RqtGrasplan(Plugin):
     def handle_edit_g_apply_button(self):
         rospy.loginfo('apply pattern!')
         static_grasps = copy.deepcopy(self.grasps.get_selected_grasps())
+        if static_grasps == []:
+            self.log_error('To apply a pattern please select a grasp first')
+            return
         # mirror: rotate quaternion by 180 degrees in each desired axis
         if self._widget.optEditGPatternMirror.isChecked():
-            if self.update_selected_grasp():
-                roll, pitch, yaw = 0.0, 0.0, 0.0
-                if self._widget.chkEditGAxisX.isChecked():
-                    roll = math.pi
-                if self._widget.chkEditGAxisY.isChecked():
-                    pitch = math.pi
-                if self._widget.chkEditGAxisZ.isChecked():
-                    yaw = math.pi
-                angular_rpy = [roll, pitch, yaw]
-                for grasp_pose in static_grasps:
-                    derived_grasp = copy.deepcopy(grasp_pose)
-                    q_orig = [derived_grasp.orientation.x, derived_grasp.orientation.y,\
-                                derived_grasp.orientation.z, derived_grasp.orientation.w]
-                    derived_grasp.orientation = self.rotate_quaternion(q_orig, roll, pitch, yaw)
-                    if self._widget.optEditGHandlingCopyR.isChecked():
-                        self.grasps.remove_grasp(grasp_pose)
-                    self.grasps.add_grasp(derived_grasp)
+            roll, pitch, yaw = 0.0, 0.0, 0.0
+            if self._widget.chkEditGAxisX.isChecked():
+                roll = math.pi
+            if self._widget.chkEditGAxisY.isChecked():
+                pitch = math.pi
+            if self._widget.chkEditGAxisZ.isChecked():
+                yaw = math.pi
+            angular_rpy = [roll, pitch, yaw]
+            for grasp_pose in static_grasps:
+                derived_grasp = copy.deepcopy(grasp_pose)
+                q_orig = [derived_grasp.orientation.x, derived_grasp.orientation.y,\
+                            derived_grasp.orientation.z, derived_grasp.orientation.w]
+                derived_grasp.orientation = self.rotate_quaternion(q_orig, roll, pitch, yaw)
+                if self._widget.optEditGHandlingCopyR.isChecked():
+                    self.grasps.remove_grasp(grasp_pose)
+                self.grasps.add_grasp(derived_grasp)
             self.publish_grasps()
         # circular pattern
         elif self._widget.optEditGPatternCircular.isChecked():
@@ -538,24 +582,22 @@ class RqtGrasplan(Plugin):
             if number_of_grasps < 0:
                 self.log_error('Number of grasps to make pattern cannot be negative')
                 return
-            # read selected pose and check if it is valid
-            if self.update_selected_grasp():
-                for grasp_pose in static_grasps:
-                    for pattern_grasp in range(number_of_grasps - 1):
-                        derived_grasp = copy.deepcopy(grasp_pose)
-                        q_orig = [derived_grasp.orientation.x, derived_grasp.orientation.y,\
-                                derived_grasp.orientation.z, derived_grasp.orientation.w]
-                        roll, pitch, yaw = 0.0, 0.0, 0.0
-                        if self._widget.chkEditGAxisX.isChecked():
-                            roll += ang_step
-                        if self._widget.chkEditGAxisY.isChecked():
-                            pitch += ang_step
-                        if self._widget.chkEditGAxisZ.isChecked():
-                            yaw += ang_step
-                        derived_grasp.orientation = self.rotate_quaternion(q_orig, roll, pitch, yaw)
-                        self.grasps.add_grasp(derived_grasp)
-                        # prepare for next pose
-                        grasp_pose = copy.deepcopy(derived_grasp)
+            for grasp_pose in static_grasps:
+                for pattern_grasp in range(number_of_grasps - 1):
+                    derived_grasp = copy.deepcopy(grasp_pose)
+                    q_orig = [derived_grasp.orientation.x, derived_grasp.orientation.y,\
+                            derived_grasp.orientation.z, derived_grasp.orientation.w]
+                    roll, pitch, yaw = 0.0, 0.0, 0.0
+                    if self._widget.chkEditGAxisX.isChecked():
+                        roll += ang_step
+                    if self._widget.chkEditGAxisY.isChecked():
+                        pitch += ang_step
+                    if self._widget.chkEditGAxisZ.isChecked():
+                        yaw += ang_step
+                    derived_grasp.orientation = self.rotate_quaternion(q_orig, roll, pitch, yaw)
+                    self.grasps.add_grasp(derived_grasp)
+                    # prepare for next pose
+                    grasp_pose = copy.deepcopy(derived_grasp)
         if self._widget.chkGraspSAllGrasps.isChecked():
             self.grasps.select_all_grasps()
         else:
@@ -651,11 +693,9 @@ class RqtGrasplan(Plugin):
     def handle_undo_button(self):
         rospy.loginfo('undo!')
         self.grasps.undo()
-        self.grasps.unselect_all_grasps()
         self.publish_grasps()
 
     def handle_redo_button(self):
         rospy.loginfo('redo!')
         self.grasps.redo()
-        self.grasps.unselect_all_grasps()
         self.publish_grasps()
