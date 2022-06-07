@@ -65,9 +65,9 @@ class Grasps:
     def __init__(self, reference_frame='object', history_buffer_size=100):
         self.reference_frame = reference_frame
         self.history_buffer_size = history_buffer_size # the maximum number of times you can perform undo
-        self.undo_index = -1
-        self.grasp_history = []
-        self.__pause_history = False
+        self.grasp_history = None
+        self.undo_index = None
+        self.__pause_history = None
         self.grasps_as_pose_array = None
         # flag used to highlight a grasp in green color, set to -1 to not highlight any pose in particular
         self.selected_grasp_index = None
@@ -76,9 +76,13 @@ class Grasps:
     def __init(self):
         self.grasps_as_pose_array = PoseArray()
         self.grasps_as_pose_array.header.frame_id = self.reference_frame
+        self.__pause_history = False
         self.selected_grasp_index = -1
+        self.undo_index = -1
+        self.grasp_history = []
         for i in range(self.history_buffer_size):
             self.grasp_history.append(None)
+        self.add_state_to_history()
 
     def pause_history(self):
         self.__pause_history = True
@@ -172,9 +176,14 @@ class Grasps:
         self.remove_grasp_by_index(self.selected_grasp_index)
         self.unselect_all_grasps()
 
+    def remove_all_but_one_grasp(self):
+        grasp_zero = copy.deepcopy(self.grasps_as_pose_array.poses[0])
+        self.grasps_as_pose_array.poses = [grasp_zero]
+        self.select_grasp(0)
+
     def remove_all_grasps(self):
-        self.__init()
-        self.add_state_to_history()
+        self.grasps_as_pose_array.poses = []
+        self.unselect_all_grasps()
 
     def get_grasp_by_index(self, grasp_index):
         assert isinstance(grasp_index, int)
@@ -579,21 +588,20 @@ class RqtGrasplan(Plugin):
     def handle_grasp_s_delete_button(self):
         rospy.loginfo('delete grasp!')
         if self._widget.chkGraspSAllGrasps.isChecked():
-            if self.grasps.size() == 1:
+            if self.grasps.size() == 0:
+                self.log_error('There is nothing to delete, grasps are empty already')
+                return
+            elif self.grasps.size() == 1:
                 rospy.loginfo('deleting all grasps!')
                 self.grasps.remove_all_grasps()
             else:
                 rospy.logwarn('deleting all grasps but leaving grasp #0,\
                                if you want to remove it click delete again')
-                pose0 = copy.deepcopy(self.grasps.get_grasp_by_index(0))
-                self.grasps.remove_all_grasps()
-                self.grasps.add_grasp(pose0)
-            self.grasps.unselect_all_grasps()
-            self.publish_grasps()
+                self.grasps.remove_all_but_one_grasp()
         elif self.update_selected_grasp():
             self.grasps.remove_selected_grasp()
-            self.publish_grasps()
         self.update_grasp_number_label()
+        self.publish_grasps()
 
     def handle_edit_g_apply_button(self):
         rospy.loginfo('apply pattern!')
