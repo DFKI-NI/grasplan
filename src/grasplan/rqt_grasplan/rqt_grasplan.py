@@ -66,6 +66,7 @@ class Grasps:
         self.history_buffer_size = history_buffer_size # the maximum number of times you can perform undo
         self.undo_index = -1
         self.grasp_history = []
+        self.__pause_history = False
         self.grasps_as_pose_array = None
         # flag used to highlight a grasp in green color, set to -1 to not highlight any pose in particular
         self.selected_grasp_index = None
@@ -78,6 +79,12 @@ class Grasps:
         for i in range(self.history_buffer_size):
             self.grasp_history.append(None)
 
+    def pause_history(self):
+        self.__pause_history = True
+
+    def unpause_history(self):
+        self.__pause_history = False
+
     def get_current_state(self):
         state = GraspEditorState()
         state.set_grasps(self.grasps_as_pose_array.poses)
@@ -88,14 +95,15 @@ class Grasps:
         '''
         for undo/redo purposes
         '''
-        self.undo_index += 1
-        if self.undo_index < self.history_buffer_size:
-            self.grasp_history[self.undo_index] = self.get_current_state()
-        else:
-            # history_buffer_size exceeded
-            del self.grasp_history[0]
-            self.grasp_history.append(self.get_current_state())
-            self.undo_index -= 1
+        if not self.__pause_history:
+            self.undo_index += 1
+            if self.undo_index < self.history_buffer_size:
+                self.grasp_history[self.undo_index] = self.get_current_state()
+            else:
+                # history_buffer_size exceeded
+                del self.grasp_history[0]
+                self.grasp_history.append(self.get_current_state())
+                self.undo_index -= 1
 
     def add_grasp(self, grasp):
         assert isinstance(grasp, Pose)
@@ -546,6 +554,7 @@ class RqtGrasplan(Plugin):
 
     def handle_edit_g_apply_button(self):
         rospy.loginfo('apply pattern!')
+        self.grasps.pause_history() # for undo to work on all pattern poses we pause history
         static_grasps = copy.deepcopy(self.grasps.get_selected_grasps())
         if static_grasps == []:
             self.log_error('To apply a pattern please select a grasp first')
@@ -598,6 +607,7 @@ class RqtGrasplan(Plugin):
                     self.grasps.add_grasp(derived_grasp)
                     # prepare for next pose
                     grasp_pose = copy.deepcopy(derived_grasp)
+        self.grasps.unpause_history() # for undo to work on all pattern poses we unpause history
         if self._widget.chkGraspSAllGrasps.isChecked():
             self.grasps.select_all_grasps()
         else:
