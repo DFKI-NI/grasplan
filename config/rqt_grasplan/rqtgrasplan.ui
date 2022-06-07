@@ -9,7 +9,7 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>696</width>
+    <width>709</width>
     <height>810</height>
    </rect>
   </property>
@@ -579,7 +579,7 @@ p, li { white-space: pre-wrap; }
       <string>Mirror</string>
      </property>
      <property name="checked">
-      <bool>true</bool>
+      <bool>false</bool>
      </property>
     </widget>
     <widget class="QRadioButton" name="optEditGPatternCircular">
@@ -595,7 +595,7 @@ p, li { white-space: pre-wrap; }
       <string>Circular pattern</string>
      </property>
      <property name="checked">
-      <bool>false</bool>
+      <bool>true</bool>
      </property>
     </widget>
     <widget class="QRadioButton" name="optEditGPatternLinear">
@@ -652,6 +652,9 @@ p, li { white-space: pre-wrap; }
      <property name="text">
       <string>y</string>
      </property>
+     <property name="checked">
+      <bool>true</bool>
+     </property>
     </widget>
     <widget class="QCheckBox" name="chkEditGAxisX">
      <property name="geometry">
@@ -666,7 +669,7 @@ p, li { white-space: pre-wrap; }
       <string>x</string>
      </property>
      <property name="checked">
-      <bool>true</bool>
+      <bool>false</bool>
      </property>
     </widget>
    </widget>
@@ -772,7 +775,7 @@ p, li { white-space: pre-wrap; }
 &lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
 p, li { white-space: pre-wrap; }
 &lt;/style&gt;&lt;/head&gt;&lt;body style=&quot; font-family:'Ubuntu'; font-size:11pt; font-weight:400; font-style:normal;&quot;&gt;
-&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;2&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;9&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
     </property>
    </widget>
    <widget class="QLabel" name="lblGraspNumbers_16">
@@ -918,12 +921,12 @@ p, li { white-space: pre-wrap; }
      <rect>
       <x>230</x>
       <y>30</y>
-      <width>61</width>
+      <width>81</width>
       <height>17</height>
      </rect>
     </property>
     <property name="text">
-     <string>grasps:</string>
+     <string># grasps:</string>
     </property>
    </widget>
    <widget class="QLabel" name="lblGraspSGrasps">
@@ -1034,6 +1037,32 @@ p, li { white-space: pre-wrap; }
      <string>Select file</string>
     </property>
    </widget>
+  </widget>
+  <widget class="QPushButton" name="cmdUndo">
+   <property name="geometry">
+    <rect>
+     <x>350</x>
+     <y>470</y>
+     <width>171</width>
+     <height>41</height>
+    </rect>
+   </property>
+   <property name="text">
+    <string>Undo</string>
+   </property>
+  </widget>
+  <widget class="QPushButton" name="cmdRedo">
+   <property name="geometry">
+    <rect>
+     <x>530</x>
+     <y>470</y>
+     <width>171</width>
+     <height>41</height>
+    </rect>
+   </property>
+   <property name="text">
+    <string>Redo</string>
+   </property>
   </widget>
  </widget>
  <resources/>

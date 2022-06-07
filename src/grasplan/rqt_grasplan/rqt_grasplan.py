@@ -39,8 +39,11 @@ class OpenFileDialog(QWidget):
             return fileName
 
 class Grasps:
-    def __init__(self, reference_frame='object'):
+    def __init__(self, reference_frame='object', history_buffer_size=100):
         self.reference_frame = reference_frame
+        self.history_buffer_size = history_buffer_size # the maximum number of times you can perform undo
+        self.undo_index = -1
+        self.grasp_history = []
         self.grasps_as_pose_array = None
         # flag used to highlight a grasp in green color, set to -1 to not highlight any pose in particular
         self.selected_grasp_index = None
@@ -50,19 +53,27 @@ class Grasps:
         self.grasps_as_pose_array = PoseArray()
         self.grasps_as_pose_array.header.frame_id = self.reference_frame
         self.selected_grasp_index = -1
+        for i in range(self.history_buffer_size):
+            self.grasp_history.append(None)
+
+    def bkp_grasps(self):
+        self.undo_index += 1
+        self.grasp_history[self.undo_index] = copy.deepcopy(self.grasps_as_pose_array.poses)
 
     def add_grasp(self, grasp):
         assert isinstance(grasp, Pose)
         self.grasps_as_pose_array.poses.append(grasp)
+        self.bkp_grasps() # for undo/redo purposes
 
     def add_grasps(self, pose_array_grasps):
         assert isinstance(pose_array_grasps, PoseArray)
         for grasp in pose_array_grasps.poses:
-            self.grasps_as_pose_array.poses.append(grasp)
+            self.add_grasp(grasp)
 
     def remove_grasp(self, grasp):
         assert isinstance(grasp, Pose)
         self.grasps_as_pose_array.poses.remove(grasp)
+        self.bkp_grasps() # for undo/redo purposes
 
     def remove_grasp_by_index(self, grasp_index):
         assert isinstance(grasp_index, int)
@@ -132,10 +143,22 @@ class Grasps:
         return len(self.grasps_as_pose_array.poses)
 
     def undo(self):
-        pass
+        if self.undo_index - 1 < 0:
+            rospy.logwarn("can't undo any further")
+        else:
+            self.undo_index -= 1
+            self.grasps_as_pose_array.poses = copy.deepcopy(self.grasp_history[self.undo_index])
 
     def redo(self):
-        pass
+        if self.undo_index + 1 > self.history_buffer_size:
+            rospy.logwarn("can't redo any further")
+        else:
+            self.undo_index += 1
+            if self.grasp_history[self.undo_index] is None:
+                rospy.logwarn("can't redo any further, already at the latest action")
+                self.undo_index -= 1
+            else:
+                self.grasps_as_pose_array.poses = copy.deepcopy(self.grasp_history[self.undo_index])
 
 class RqtGrasplan(Plugin):
 
@@ -207,6 +230,7 @@ class RqtGrasplan(Plugin):
         self._widget.cmdTransformRPY2Q.clicked.connect(self.handle_transform_rpy_2_q_button)
         self._widget.cmdFileSelectObjPath.clicked.connect(self.handle_select_obj_path_button)
         self._widget.cmdUndo.clicked.connect(self.handle_undo_button)
+        self._widget.cmdRedo.clicked.connect(self.handle_redo_button)
 
         # inform the user how many grasps were loaded
         self.update_grasp_number_label()
@@ -621,4 +645,10 @@ class RqtGrasplan(Plugin):
 
     def handle_undo_button(self):
         self.grasps.undo()
+        self.grasps.unselect_all_grasps()
+        self.publish_grasps()
+
+    def handle_redo_button(self):
+        self.grasps.redo()
+        self.grasps.unselect_all_grasps()
         self.publish_grasps()
