@@ -429,7 +429,7 @@ class RqtGrasplan(Plugin):
     def handle_transform_apply_button(self):
         rospy.loginfo('apply transform!')
         linear, angular_rpy, angular_q = self.read_transform(apply_rpy_to_q=True)
-        self.grasps.rotate_selected_grasps(*angular_rpy, replace=True)
+        self.grasps.transform_selected_grasps(linear, angular_rpy, replace=True)
         self.publish_grasps()
 
     def handle_grasp_s_unselect_button(self):

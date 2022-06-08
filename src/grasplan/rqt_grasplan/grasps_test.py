@@ -116,6 +116,14 @@ class TestGrasps(unittest.TestCase):
         self.assertEquals(np.allclose(desired_q, q0), True)
         self.assertEquals(np.allclose(desired_q, q1), True)
 
+    def test_transform_selected_grasp_replace_true(self):
+        g = self.get_grasps_object()
+        g.select_grasp(0)
+        linear = [0.05, 0.0, 0.0]
+        g.transform_selected_grasps(linear=linear, replace=True)
+        grasp = g.get_grasp_by_index(0)
+        self.assertEquals(grasp.position.x, 0.05)
+
 if __name__ == '__main__':
     import rostest
     rostest.rosrun(PKG, 'test_g', TestGrasps)

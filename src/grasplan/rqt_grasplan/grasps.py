@@ -87,7 +87,10 @@ class Grasps:
         for grasp in pose_array_grasps.poses:
             self.add_grasp(grasp)
 
-    def rotate_grasp(self, grasp, roll=0.0, pitch=0.0, yaw=0.0):
+    def rotate_grasp(self, grasp, roll=0., pitch=0., yaw=0.):
+        return self.transform_grasp(grasp, angular_rpy=[roll, pitch, yaw])
+
+    def transform_grasp(self, grasp, linear=[0., 0., 0.], angular_rpy=[0., 0., 0.]):
         '''
         input: geometry_msgs/Pose (grasp) and the rotations in roll pitch yaw (in radians) in that order that you want to apply
         output: this function modifies grasp by reference
@@ -96,29 +99,40 @@ class Grasps:
         http://wiki.ros.org/tf2/Tutorials/Quaternions , section "Applying a quaternion rotation"
         '''
         assert isinstance(grasp, Pose)
+        assert isinstance(linear, list)
+        assert isinstance(angular_rpy, list)
         q_orig = np.array([grasp.orientation.x, grasp.orientation.y, grasp.orientation.z, grasp.orientation.w])
-        angular_q = tf.transformations.quaternion_from_euler(roll, pitch, yaw)
+        angular_q = tf.transformations.quaternion_from_euler(angular_rpy[0], angular_rpy[1], angular_rpy[2])
         q_new = tf.transformations.quaternion_multiply(angular_q, q_orig)
+        grasp.position.x += linear[0]
+        grasp.position.y += linear[1]
+        grasp.position.z += linear[2]
         grasp.orientation.x = q_new[0]
         grasp.orientation.y = q_new[1]
         grasp.orientation.z = q_new[2]
         grasp.orientation.w = q_new[3]
         return grasp
 
-    def rotate_grasps(self, grasps, roll=0.0, pitch=0.0, yaw=0.0, replace=False):
+    def rotate_grasps(self, grasps, roll=0., pitch=0., yaw=0., replace=False):
+        self.transform_grasps(grasps, angular_rpy=[roll, pitch, yaw], replace=replace)
+
+    def transform_grasps(self, grasps, linear=[0., 0., 0.], angular_rpy=[0., 0., 0.], replace=False):
         assert isinstance(grasps, list)
         self.pause_history() # for undo to work on all pattern poses we pause history
         static_grasps = copy.deepcopy(grasps)
         for grasp in static_grasps:
             assert isinstance(grasp, Pose)
             derived_grasp = copy.deepcopy(grasp)
-            derived_grasp = self.rotate_grasp(grasp, roll, pitch, yaw)
+            derived_grasp = self.transform_grasp(grasp, linear, angular_rpy)
             if replace:
                 self.remove_selected_grasp()
             self.add_grasp(derived_grasp)
         self.unpause_history() # for undo to work on all pattern poses we unpause history
 
-    def rotate_selected_grasps(self, roll=0.0, pitch=0.0, yaw=0.0, replace=False):
+    def rotate_selected_grasps(self, roll=0., pitch=0., yaw=0., replace=False):
+        return self.transform_selected_grasps(angular_rpy=[roll, pitch, yaw], replace=replace)
+
+    def transform_selected_grasps(self, linear=[0., 0., 0.], angular_rpy=[0., 0., 0.], replace=False):
         if self.no_grasp_is_selected():
             return False
         grasps = self.get_selected_grasps()
@@ -126,7 +140,7 @@ class Grasps:
         if grasps == []:
             return False
         else:
-            self.rotate_grasps(grasps, roll, pitch, yaw, replace)
+            self.transform_grasps(grasps, linear, angular_rpy, replace)
             return True
 
     def remove_grasp(self, grasp):
