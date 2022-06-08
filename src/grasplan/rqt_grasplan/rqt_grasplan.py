@@ -147,12 +147,12 @@ class Grasps:
             derived_grasp = copy.deepcopy(grasp)
             derived_grasp = self.rotate_grasp(grasp, roll, pitch, yaw)
             if replace:
-                self.remove_grasp(grasp)
+                self.remove_selected_grasp()
             self.add_grasp(derived_grasp)
         self.unpause_history() # for undo to work on all pattern poses we unpause history
 
     def rotate_selected_grasps(self, roll=0.0, pitch=0.0, yaw=0.0, replace=False):
-        if self.selected_grasp_index == -1:
+        if self.no_grasp_is_selected():
             return False
         grasps = self.get_selected_grasps()
         assert isinstance(grasps, list)
@@ -169,12 +169,21 @@ class Grasps:
 
     def remove_grasp_by_index(self, grasp_index):
         assert isinstance(grasp_index, int)
-        grasp = self.grasps_as_pose_array.poses[grasp_index]
-        self.remove_grasp(grasp)
+        if grasp_index == -10:
+            self.remove_all_grasps()
+        elif grasp_index != -1:
+            grasp = self.grasps_as_pose_array.poses[grasp_index]
+            self.remove_grasp(grasp)
 
     def remove_selected_grasp(self):
-        self.remove_grasp_by_index(self.selected_grasp_index)
+        if self.all_grasps_are_selected():
+            self.remove_all_grasps()
+        else:
+            self.remove_grasp_by_index(self.selected_grasp_index)
         self.unselect_all_grasps()
+
+    def remove_selected_grasps(self):
+        self.remove_selected_grasp()
 
     def remove_all_but_one_grasp(self):
         grasp_zero = copy.deepcopy(self.grasps_as_pose_array.poses[0])
@@ -201,13 +210,33 @@ class Grasps:
     def get_grasps_as_pose_array_msg(self):
         return self.grasps_as_pose_array
 
+    def no_grasp_is_selected(self):
+        '''
+        selected_grasp_index = -1  # no grasp is selected
+        selected_grasp_index = -10 # all grasps are selected
+        selected_grasp_index = 4   # grasp no. 4 is selected
+        '''
+        if self.selected_grasp_index == -1:
+            return True
+        return False
+
+    def all_grasps_are_selected(self):
+        '''
+        selected_grasp_index = -1  # no grasp is selected
+        selected_grasp_index = -10 # all grasps are selected
+        selected_grasp_index = 4   # grasp no. 4 is selected
+        '''
+        if self.selected_grasp_index == -10:
+            return True
+        return False
+
     def get_selected_grasp(self):
         return self.get_grasp_by_index(self.selected_grasp_index)
 
     def get_selected_grasps(self):
         if self.single_grasp_is_selected():
             return [self.get_selected_grasp()]
-        elif self.selected_grasp_index == -1: # no grasp is selected
+        elif self.no_grasp_is_selected():
             return []
         elif self.selected_grasp_index == -10: # all grasps are selected
             return self.get_grasps_as_pose_list()
@@ -237,7 +266,7 @@ class Grasps:
         self.add_state_to_history()
 
     def single_grasp_is_selected(self):
-        if self.selected_grasp_index == -10 or self.selected_grasp_index == -1:
+        if self.all_grasps_are_selected() or self.no_grasp_is_selected():
             return False
         else:
             return True
@@ -660,12 +689,7 @@ class RqtGrasplan(Plugin):
     def handle_transform_apply_button(self):
         rospy.loginfo('apply transform!')
         linear, angular_rpy, angular_q = self.read_transform(apply_rpy_to_q=True)
-        selected_grasps = self.grasps.get_selected_grasps()
-        if selected_grasps == []:
-            self.log_error('There is no selected grasp to apply the transform')
-            return
-        for grasp in selected_grasps:
-            grasp = self.grasps.rotate_grasp(grasp, *angular_rpy)
+        self.grasps.rotate_selected_grasps(*angular_rpy, replace=True)
         self.publish_grasps()
 
     def handle_grasp_s_unselect_button(self):
