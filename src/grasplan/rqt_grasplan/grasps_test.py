@@ -2,6 +2,7 @@
 
 PKG = 'test_roslaunch'
 
+import tf
 import math
 import copy
 import unittest
@@ -9,6 +10,8 @@ import numpy as np
 
 from grasplan.rqt_grasplan.grasps import Grasps
 from geometry_msgs.msg import Pose
+
+import logging
 
 class TestGrasps(unittest.TestCase):
 
@@ -116,6 +119,50 @@ class TestGrasps(unittest.TestCase):
         self.assertEquals(np.allclose(desired_q, q0), True)
         self.assertEquals(np.allclose(desired_q, q1), True)
 
+    def test_find_grasp_index(self):
+        g = self.get_grasps_object()
+        grasp_index = g.find_grasp_index(self.get_identity_grasp_msg())
+        self.assertEquals(grasp_index, 0)
+
+    def test_replace_grasp_by_index(self):
+        log= logging.getLogger( "TestGrasps.test_replace_grasp_by_index" )
+        log.info('hola')
+        g = self.get_grasps_object()
+        grasp = g.get_grasp_by_index(0)
+        identity_grasp = self.get_identity_grasp_msg()
+        grasp_index = g.grasps_as_pose_array.poses.index(identity_grasp)
+        self.assertEquals(grasp_index, 0)
+        test_grasp = self.get_identity_grasp_msg()
+        test_grasp.position.x = 0.5
+        g.replace_grasp_by_index(grasp_index, test_grasp)
+        m_grasp = g.get_grasp_by_index(0)
+        self.assertEquals(m_grasp, test_grasp)
+        # rotate grasp 90 degress in pitch
+        q_orig = np.array([0.0, 0.0, 0.0, 1.0])
+        angular_q = tf.transformations.quaternion_from_euler(0.0, math.radians(90.0), 0.0)
+        q = tf.transformations.quaternion_multiply(angular_q, q_orig)
+        desired_q = [0.0, 0.7071067811865475, 0.0, 0.7071067811865476]
+        n_grasp = Pose()
+        n_grasp.position.x = 0.0
+        n_grasp.position.y = 0.0
+        n_grasp.position.z = 0.0
+        # ---
+        n_grasp.orientation.x = q[0] # passes test
+        n_grasp.orientation.y = q[1]
+        n_grasp.orientation.z = q[2]
+        n_grasp.orientation.w = q[3]
+        # ---
+        #n_grasp.orientation.x = desired_q[0] # fails test
+        #n_grasp.orientation.y = desired_q[1]
+        #n_grasp.orientation.z = desired_q[2]
+        #n_grasp.orientation.w = desired_q[3]
+        # ---
+        self.assertEquals(desired_q, list(q))
+        g.add_grasp(g.transform_grasp(self.get_identity_grasp_msg(), angular_rpy=[0.0, math.radians(90.0), 0.0]))
+        m_grasp_index = g.grasps_as_pose_array.poses.index(g.get_grasp_by_index(1))
+        n_grasp_index = g.grasps_as_pose_array.poses.index(n_grasp)
+        self.assertEquals(m_grasp_index, n_grasp_index, msg=f'{n_grasp_index}')
+
     def test_transform_selected_grasp_replace_true(self):
         g = self.get_grasps_object()
         g.select_grasp(0)
@@ -123,6 +170,7 @@ class TestGrasps(unittest.TestCase):
         g.transform_selected_grasps(linear=linear, replace=True)
         grasp = g.get_grasp_by_index(0)
         self.assertEquals(grasp.position.x, 0.05)
+        self.assertEquals(g.no_grasp_is_selected(), False)
 
 if __name__ == '__main__':
     import rostest

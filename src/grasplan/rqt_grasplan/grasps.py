@@ -101,20 +101,35 @@ class Grasps:
         assert isinstance(grasp, Pose)
         assert isinstance(linear, list)
         assert isinstance(angular_rpy, list)
-        q_orig = np.array([grasp.orientation.x, grasp.orientation.y, grasp.orientation.z, grasp.orientation.w])
+        derived_grasp = copy.deepcopy(grasp)
+        q_orig = np.array([derived_grasp.orientation.x, derived_grasp.orientation.y,\
+                           derived_grasp.orientation.z, derived_grasp.orientation.w])
         angular_q = tf.transformations.quaternion_from_euler(angular_rpy[0], angular_rpy[1], angular_rpy[2])
         q_new = tf.transformations.quaternion_multiply(angular_q, q_orig)
-        grasp.position.x += linear[0]
-        grasp.position.y += linear[1]
-        grasp.position.z += linear[2]
-        grasp.orientation.x = q_new[0]
-        grasp.orientation.y = q_new[1]
-        grasp.orientation.z = q_new[2]
-        grasp.orientation.w = q_new[3]
-        return grasp
+        derived_grasp.position.x += linear[0]
+        derived_grasp.position.y += linear[1]
+        derived_grasp.position.z += linear[2]
+        derived_grasp.orientation.x = q_new[0]
+        derived_grasp.orientation.y = q_new[1]
+        derived_grasp.orientation.z = q_new[2]
+        derived_grasp.orientation.w = q_new[3]
+        return derived_grasp
 
     def rotate_grasps(self, grasps, roll=0., pitch=0., yaw=0., replace=False):
         self.transform_grasps(grasps, angular_rpy=[roll, pitch, yaw], replace=replace)
+
+    def find_grasp_index(self, grasp):
+        assert isinstance(grasp, Pose)
+        for i, g in enumerate(self.grasps_as_pose_array.poses):
+            if np.allclose(grasp.position.x, g.position.x):
+                if np.allclose(grasp.position.y, g.position.y):
+                    if np.allclose(grasp.position.z, g.position.z):
+                        if np.allclose(grasp.orientation.x, grasp.orientation.x):
+                            if np.allclose(grasp.orientation.y, grasp.orientation.y):
+                                if np.allclose(grasp.orientation.z, grasp.orientation.z):
+                                    if np.allclose(grasp.orientation.w, grasp.orientation.w):
+                                        return i
+        return -1
 
     def transform_grasps(self, grasps, linear=[0., 0., 0.], angular_rpy=[0., 0., 0.], replace=False):
         assert isinstance(grasps, list)
@@ -125,8 +140,12 @@ class Grasps:
             derived_grasp = copy.deepcopy(grasp)
             derived_grasp = self.transform_grasp(grasp, linear, angular_rpy)
             if replace:
-                self.remove_selected_grasp()
-            self.add_grasp(derived_grasp)
+                grasp_index = self.find_grasp_index(grasp)
+                if grasp_index == -1:
+                    raise ValueError('Could not find grasp index while trying to replace after transform, this should not happen.')
+                self.replace_grasp_by_index(grasp_index, derived_grasp)
+            else:
+                self.add_grasp(derived_grasp)
         self.unpause_history() # for undo to work on all pattern poses we unpause history
 
     def rotate_selected_grasps(self, roll=0., pitch=0., yaw=0., replace=False):
@@ -177,6 +196,7 @@ class Grasps:
 
     def get_grasp_by_index(self, grasp_index):
         assert isinstance(grasp_index, int)
+        assert grasp_index >= 0
         return copy.deepcopy(self.grasps_as_pose_array.poses[grasp_index])
 
     def replace_grasp_by_index(self, grasp_index, new_grasp):
