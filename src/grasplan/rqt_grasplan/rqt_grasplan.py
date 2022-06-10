@@ -23,16 +23,21 @@ class OpenFileDialog(QWidget):
     allow the user to select a different yaml file with a button,
     this will open a dialog to select and open a yaml file
     '''
-    def __init__(self):
+    def __init__(self, initial_path=None):
         super().__init__()
         left, top, width, height = 10, 10, 640, 480
         self.setGeometry(left, top, width, height)
+        self.initial_path = initial_path
 
     def openFileNameDialog(self):
         options = QFileDialog.Options()
         options |= QFileDialog.DontUseNativeDialog
+        if self.initial_path is None:
+            initial_path = os.environ['HOME']
+        else:
+            initial_path = self.initial_path
         fileName, _ = QFileDialog.getOpenFileName(self, 'Select grasps yaml file',\
-                      os.environ['HOME'],'Yaml Files (*.yaml)', options=options)
+                      initial_path, 'Yaml Files (*.yaml)', options=options)
         if fileName:
             return fileName
 
@@ -479,7 +484,7 @@ class RqtGrasplan(Plugin):
         pop out a file dialog to select a new grasps yaml file path
         '''
         rospy.loginfo('select object path button was pressed')
-        open_file_dialog = OpenFileDialog()
+        open_file_dialog = OpenFileDialog(initial_path=self.grasps_yaml_path)
         grasps_yaml_path_cadidate = open_file_dialog.openFileNameDialog()
         if grasps_yaml_path_cadidate is None:
             rospy.loginfo('select object yaml path: operation cancelled by user')
