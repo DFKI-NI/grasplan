@@ -172,6 +172,16 @@ class TestGrasps(unittest.TestCase):
         self.assertEquals(grasp.position.x, 0.05)
         self.assertEquals(g.no_grasp_is_selected(), False)
 
+    def test_undo_apply_transform(self):
+        g = self.get_grasps_object()
+        g.select_grasp(0)
+        g.transform_selected_grasps(angular_rpy=[0.0, math.radians(45.0), 0.0], replace=True)
+        g.transform_selected_grasps(angular_rpy=[0.0, math.radians(45.0), 0.0], replace=True)
+        g.undo()
+        grasp = g.get_selected_grasp()
+        q = [0.0, 0.3826834323650898, 0.0, 0.9238795325112867] # q corresponds to a 45 deg rotation around y axis
+        self.assertEquals(self.pose_to_quaternion_list(grasp), q)
+
 if __name__ == '__main__':
     import rostest
     rostest.rosrun(PKG, 'test_g', TestGrasps)

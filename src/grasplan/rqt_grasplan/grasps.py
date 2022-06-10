@@ -92,8 +92,8 @@ class Grasps:
 
     def transform_grasp(self, grasp, linear=[0., 0., 0.], angular_rpy=[0., 0., 0.]):
         '''
-        input: geometry_msgs/Pose (grasp) and the rotations in roll pitch yaw (in radians) in that order that you want to apply
-        output: this function modifies grasp by reference
+        input: geometry_msgs/Pose (grasp) and the incremental transform that you want to apply
+        output: this function does not modify the input grasp by reference
         ---
         quaternion rotation is applied via multiplication, see:
         http://wiki.ros.org/tf2/Tutorials/Quaternions , section "Applying a quaternion rotation"
@@ -147,6 +147,7 @@ class Grasps:
             else:
                 self.add_grasp(derived_grasp)
         self.unpause_history() # for undo to work on all pattern poses we unpause history
+        self.add_state_to_history()
 
     def rotate_selected_grasps(self, roll=0., pitch=0., yaw=0., replace=False):
         return self.transform_selected_grasps(angular_rpy=[roll, pitch, yaw], replace=replace)
