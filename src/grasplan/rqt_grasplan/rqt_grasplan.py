@@ -29,17 +29,24 @@ class OpenFileDialog(QWidget):
         self.setGeometry(left, top, width, height)
         self.initial_path = initial_path
 
-    def openFileNameDialog(self):
+    def openFileNameDialog(self, save_file_name_dialog=False):
         options = QFileDialog.Options()
         options |= QFileDialog.DontUseNativeDialog
         if self.initial_path is None:
             initial_path = os.environ['HOME']
         else:
             initial_path = self.initial_path
-        fileName, _ = QFileDialog.getOpenFileName(self, 'Select grasps yaml file',\
-                      initial_path, 'Yaml Files (*.yaml)', options=options)
+        if save_file_name_dialog:
+            fileName, _ = QFileDialog.getSaveFileName(self, 'Select grasps yaml file',\
+                          initial_path, 'Yaml Files (*.yaml)', options=options)
+        else:
+            fileName, _ = QFileDialog.getOpenFileName(self, 'Select grasps yaml file',\
+                          initial_path, 'Yaml Files (*.yaml)', options=options)
         if fileName:
             return fileName
+
+    def saveFileNameDialog(self):
+        return self.openFileNameDialog(save_file_name_dialog=True)
 
 class RqtGrasplan(Plugin):
 
@@ -101,6 +108,7 @@ class RqtGrasplan(Plugin):
         self._widget.cmdFilePrintG.clicked.connect(self.handle_file_print_grasps_button)
         self._widget.cmdFileLoadG.clicked.connect(self.handle_file_load_grasps_button)
         self._widget.cmdFileSaveG.clicked.connect(self.handle_file_save_grasps_button)
+        self._widget.cmdFileSaveGAs.clicked.connect(self.handle_file_save_grasps_as_button)
         self._widget.cmdGraspSSelect.clicked.connect(self.handle_grasp_s_select_button)
         self._widget.cmdGraspSDelete.clicked.connect(self.handle_grasp_s_delete_button)
         self._widget.cmdEditGApply.clicked.connect(self.handle_edit_g_apply_button)
@@ -109,7 +117,7 @@ class RqtGrasplan(Plugin):
         self._widget.cmdTransformCreateGrasp.clicked.connect(self.handle_transform_create_grasp_button)
         self._widget.cmdTransformQ2RPY.clicked.connect(self.handle_transform_q_2_rpy_button)
         self._widget.cmdTransformRPY2Q.clicked.connect(self.handle_transform_rpy_2_q_button)
-        self._widget.cmdFileSelectObjPath.clicked.connect(self.handle_select_obj_path_button)
+        self._widget.cmdFileSelectGraspsPath.clicked.connect(self.handle_select_grasps_path_button)
         self._widget.cmdUndo.clicked.connect(self.handle_undo_button)
         self._widget.cmdRedo.clicked.connect(self.handle_redo_button)
 
@@ -169,7 +177,7 @@ class RqtGrasplan(Plugin):
         pose_stamped_msg = self.list_to_pose_stamped_msg(linear, angular_q)
         self.test_pose_pub.publish(pose_stamped_msg)
 
-    def write_grasps_to_yaml_file(self, grasps, object_name):
+    def write_grasps_to_yaml_file(self, grasps, object_name, grasps_yaml_path):
         grasp_stream_list = ['# this file was generated automatically by grasplan grasp editor']
         tab = '  '
         grasp_stream_list.append(f'{object_name}:')
@@ -184,15 +192,24 @@ class RqtGrasplan(Plugin):
             # rotation
             rotation_str = f'{tab}{tab}{tab}rotation: [{angular_q[0]:.6f}, {angular_q[1]:.6f}, {angular_q[2]:.6f}, {angular_q[3]:.6f}]'
             grasp_stream_list.append(rotation_str)
-        rospy.loginfo(f'writing grasps to file: {self.grasps_yaml_path}')
-        f = open(self.grasps_yaml_path,'w+')
+        rospy.loginfo(f'writing grasps to file: {grasps_yaml_path}')
+        f = open(grasps_yaml_path,'w+')
         for string in grasp_stream_list:
             f.write(string + '\n')
         f.close()
 
     def handle_file_save_grasps_button(self):
-        rospy.loginfo('save!')
-        self.write_grasps_to_yaml_file(self.grasps.get_grasps_as_pose_list(), self._widget.txtFileObjectName.toPlainText())
+        rospy.loginfo('saving grasps!')
+        self.write_grasps_to_yaml_file(self.grasps.get_grasps_as_pose_list(),\
+                                       self._widget.txtFileObjectName.toPlainText(),\
+                                       self.grasps_yaml_path)
+
+    def handle_file_save_grasps_as_button(self):
+        rospy.loginfo('saving grasps as!')
+        grasps_yaml_path_candidate = self.ask_yaml_path(initial_path=self.grasps_yaml_path, create_file=True)
+        if grasps_yaml_path_candidate is not None:
+            self.grasps_yaml_path = grasps_yaml_path_candidate
+            self.handle_file_save_grasps_button()
 
     def fix_displayed_text(self):
         '''
@@ -479,19 +496,28 @@ class RqtGrasplan(Plugin):
         self.publish_grasps()
         self.update_grasp_number_label()
 
-    def handle_select_obj_path_button(self):
+    def ask_yaml_path(self, initial_path=os.environ['HOME'], create_file=False):
+        open_file_dialog = OpenFileDialog(initial_path=initial_path)
+        if create_file:
+            grasps_yaml_path_candidate = open_file_dialog.saveFileNameDialog()
+        else:
+            grasps_yaml_path_candidate = open_file_dialog.openFileNameDialog()
+        if grasps_yaml_path_candidate is None:
+            rospy.loginfo('select grasps yaml path: operation cancelled by user')
+            return None
+        else:
+            rospy.loginfo(f'grasps yaml file selected: {grasps_yaml_path_candidate}')
+            return grasps_yaml_path_candidate
+
+    def handle_select_grasps_path_button(self):
         '''
         pop out a file dialog to select a new grasps yaml file path
         '''
-        rospy.loginfo('select object path button was pressed')
-        open_file_dialog = OpenFileDialog(initial_path=self.grasps_yaml_path)
-        grasps_yaml_path_cadidate = open_file_dialog.openFileNameDialog()
-        if grasps_yaml_path_cadidate is None:
-            rospy.loginfo('select object yaml path: operation cancelled by user')
-            return
-        self.grasps_yaml_path = grasps_yaml_path_cadidate
-        rospy.loginfo(f'grasps yaml file selected: {self.grasps_yaml_path}')
-        rospy.loginfo("Don't forget to click on load grasps next!")
+        rospy.loginfo('select grasps yaml path')
+        grasps_yaml_path_candidate = self.ask_yaml_path(initial_path=self.grasps_yaml_path)
+        if grasps_yaml_path_candidate is not None:
+            self.grasps_yaml_path = grasps_yaml_path_candidate
+            rospy.loginfo("Don't forget to click on load grasps next!")
 
     def handle_undo_button(self):
         rospy.loginfo('undo!')

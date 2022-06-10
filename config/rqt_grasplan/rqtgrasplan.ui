@@ -10,7 +10,7 @@
     <x>0</x>
     <y>0</y>
     <width>709</width>
-    <height>810</height>
+    <height>881</height>
    </rect>
   </property>
   <property name="cursor">
@@ -29,7 +29,7 @@
     </rect>
    </property>
    <property name="text">
-    <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;h2 style=&quot; margin-top:16px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-size:x-large; font-weight:600; color:#3366ff;&quot;&gt;rqt grasplan !&lt;/span&gt;&lt;/h2&gt;&lt;/body&gt;&lt;/html&gt;</string>
+    <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;h2 style=&quot; margin-top:16px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-size:x-large; font-weight:600; color:#3366ff;&quot;&gt;Grasp editor !&lt;/span&gt;&lt;/h2&gt;&lt;/body&gt;&lt;/html&gt;</string>
    </property>
    <property name="textFormat">
     <enum>Qt::RichText</enum>
@@ -653,7 +653,7 @@ p, li { white-space: pre-wrap; }
       <string>y</string>
      </property>
      <property name="checked">
-      <bool>true</bool>
+      <bool>false</bool>
      </property>
     </widget>
     <widget class="QCheckBox" name="chkEditGAxisX">
@@ -669,7 +669,7 @@ p, li { white-space: pre-wrap; }
       <string>x</string>
      </property>
      <property name="checked">
-      <bool>false</bool>
+      <bool>true</bool>
      </property>
     </widget>
    </widget>
@@ -775,7 +775,7 @@ p, li { white-space: pre-wrap; }
 &lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
 p, li { white-space: pre-wrap; }
 &lt;/style&gt;&lt;/head&gt;&lt;body style=&quot; font-family:'Ubuntu'; font-size:11pt; font-weight:400; font-style:normal;&quot;&gt;
-&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;9&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;3&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
     </property>
    </widget>
    <widget class="QLabel" name="lblGraspNumbers_16">
@@ -805,7 +805,7 @@ p, li { white-space: pre-wrap; }
 &lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
 p, li { white-space: pre-wrap; }
 &lt;/style&gt;&lt;/head&gt;&lt;body style=&quot; font-family:'Ubuntu'; font-size:11pt; font-weight:400; font-style:normal;&quot;&gt;
-&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;30.0&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;45.0&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
     </property>
    </widget>
    <widget class="QLabel" name="lblGraspNumbers_17">
@@ -858,6 +858,9 @@ p, li { white-space: pre-wrap; }
     </property>
     <property name="text">
      <string>All grasps</string>
+    </property>
+    <property name="checked">
+     <bool>false</bool>
     </property>
    </widget>
    <widget class="QTextEdit" name="txtGraspSGraspNumbers">
@@ -949,7 +952,7 @@ p, li { white-space: pre-wrap; }
      <x>10</x>
      <y>620</y>
      <width>331</width>
-     <height>171</height>
+     <height>221</height>
     </rect>
    </property>
    <property name="title">
@@ -1024,7 +1027,7 @@ p, li { white-space: pre-wrap; }
      <string>Print grasps</string>
     </property>
    </widget>
-   <widget class="QPushButton" name="cmdFileSelectObjPath">
+   <widget class="QPushButton" name="cmdFileSelectGraspsPath">
     <property name="geometry">
      <rect>
       <x>10</x>
@@ -1035,6 +1038,19 @@ p, li { white-space: pre-wrap; }
     </property>
     <property name="text">
      <string>Select file</string>
+    </property>
+   </widget>
+   <widget class="QPushButton" name="cmdFileSaveGAs">
+    <property name="geometry">
+     <rect>
+      <x>170</x>
+      <y>170</y>
+      <width>151</width>
+      <height>41</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Save grasps as</string>
     </property>
    </widget>
   </widget>
