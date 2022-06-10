@@ -428,6 +428,9 @@ class RqtGrasplan(Plugin):
 
     def handle_transform_apply_button(self):
         rospy.loginfo('apply transform!')
+        if self.grasps.no_grasp_is_selected():
+            self.log_error("can't apply transform, no grasps are selected")
+            return
         linear, angular_rpy, angular_q = self.read_transform(apply_rpy_to_q=True)
         self.grasps.transform_selected_grasps(linear, angular_rpy, replace=True)
         self.publish_grasps()
