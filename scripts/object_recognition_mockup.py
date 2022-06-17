@@ -5,7 +5,7 @@ import copy
 import rospy
 import tf
 from dynamic_reconfigure.server import Server
-from fake_object_recognition.cfg import objBoundsConfig
+from grasplan.cfg import objBoundsConfig
 
 from visualization_msgs.msg import Marker
 from geometry_msgs.msg import PoseStamped

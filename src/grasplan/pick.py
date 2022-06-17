@@ -6,19 +6,17 @@ example on how to pick an object using grasplan and moveit
 
 import sys
 import importlib
-import rospy
-import moveit_commander
-import tf
-from tf import TransformListener
 
+import rospy
+import tf
+import moveit_commander
+
+from tf import TransformListener
 from std_msgs.msg import String
-from std_srvs.srv import Empty
-from std_srvs.srv import SetBool
+from std_srvs.srv import Empty, SetBool
 from pose_selector.srv import ClassQuery
-from cob_perception_msgs.msg import DetectionArray
 from geometry_msgs.msg import PoseStamped
 from moveit_msgs.msg import MoveItErrorCodes
-from moveit_commander import PlanningSceneInterface
 from grasplan.common_grasp_tools import remove_object_id
 
 class objectToPick():
@@ -90,7 +88,7 @@ class PickTools():
         self.robot.arm.set_planning_time(planning_time)
         self.gripper = moveit_commander.MoveGroupCommander(gripper_group_name, wait_for_servers=10.0)
         self.arm.set_goal_tolerance(arm_goal_tolerance)
-        self.scene = PlanningSceneInterface()
+        self.scene = moveit_commander.PlanningSceneInterface()
 
         # keep memory about the last object we have grasped
         self.grasped_object = ''
