@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<launch>
+
+  <!-- Use cube fov marker publisher functionality from object_recognition_mockup to find the right parameters for the planning scene boxes -->
+
+  <node pkg="grasplan" type="object_recognition_mockup.py" name="object_recognition" output="log">
+    <!-- field of view box parameters -->
+    <param name="box_width" type="double" value="0.7" />
+    <param name="box_length" type="double" value="1.4" />
+    <param name="box_height" type="double" value="0.7" />
+    <param name="x_box_position" type="double" value="13.2" />
+    <param name="y_box_position" type="double" value="2.4" />
+    <param name="z_box_position" type="double" value="0.35" />
+    <param name="supress_warnings" type="bool" value="true" />
+  </node>
+
+</launch>
