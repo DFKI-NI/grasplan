@@ -24,13 +24,19 @@ from grasplan.common_grasp_tools import remove_object_id
 class objectToPick():
     def __init__(self, obj_class, id, any_obj):
         self.obj_class = obj_class
-        self.id = id
+        self.id = str(id)
         self.any_obj = any_obj
-        self.object_name = obj_class + '_' + id
+        if self.id is None:
+            self.object_name = obj_class
+        else:
+            self.object_name = obj_class + '_' + self.id
 
     def set_id(self, id):
-        self.id = id
-        self.object_name = self.obj_class + '_' + id
+        if id is None:
+            rospy.logerr("Can't set id to None, it must be a positive integer number")
+            return
+        self.id = str(id)
+        self.object_name = self.obj_class + '_' + self.id
 
 class PickTools():
     def __init__(self):
@@ -108,22 +114,6 @@ class PickTools():
         self.tf_listener.getLatestCommonTime(target_reference_frame, pose.header.frame_id)
         return self.tf_listener.transformPose(target_reference_frame, pose)
 
-    def offset_pose(self, pose_stamped):
-        '''
-        receive a pose stamped msg, apply a certain rotation
-        '''
-        quaternion = (pose_stamped.pose.orientation.x, pose_stamped.pose.orientation.y, pose_stamped.pose.orientation.z, pose_stamped.pose.orientation.w)
-        euler = tf.transformations.euler_from_quaternion(quaternion)
-        roll = euler[0] + 1.5708 # apply +roll 90 deg rotation
-        pitch = euler[1]
-        yaw = euler[2]
-        quaternion = tf.transformations.quaternion_from_euler(roll, pitch, yaw)
-        pose_stamped.pose.orientation.x = quaternion[0]
-        pose_stamped.pose.orientation.y = quaternion[1]
-        pose_stamped.pose.orientation.z = quaternion[2]
-        pose_stamped.pose.orientation.w = quaternion[3]
-        return pose_stamped
-
     def make_obj_pose_msg(self, obj_pose):
         object_pose = PoseStamped()
         object_pose.header.frame_id = 'map'
@@ -139,7 +129,7 @@ class PickTools():
         bounding_box_x = obj_pose.size.x
         bounding_box_y = obj_pose.size.y
         bounding_box_z = obj_pose.size.z
-        return self.offset_pose(object_pose), [bounding_box_x, bounding_box_y, bounding_box_z]
+        return object_pose, [bounding_box_x, bounding_box_y, bounding_box_z]
 
     def make_object_pose(self, object_to_pick):
         id = None
