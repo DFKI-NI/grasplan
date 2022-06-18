@@ -1,0 +1,34 @@
+#! /usr/bin/env python3
+
+import rospy
+import actionlib
+
+from pbr_msgs.msg import PickObjectAction, PickObjectGoal
+
+object_to_pick = 'multimeter'
+timeout = 50.0 # in seconds, default: 50.0
+
+if __name__ == '__main__':
+    rospy.init_node('pick_object_action_client')
+    pick_object_server_name = 'pick_object'
+    action_client = actionlib.SimpleActionClient(pick_object_server_name, PickObjectAction)
+    rospy.loginfo(f'waiting for {pick_object_server_name} action server')
+    if action_client.wait_for_server(timeout=rospy.Duration.from_sec(2.0)):
+        rospy.loginfo(f'found {pick_object_server_name} action server')
+        goal = PickObjectGoal()
+        goal.object_name = object_to_pick # pick "any" multimeter
+        #goal.object_name = 'multimeter_1' # pick a specific multimeter
+        rospy.loginfo(f'sending pick {object_to_pick} goal to {pick_object_server_name} action server')
+        action_client.send_goal(goal)
+        rospy.loginfo(f'waiting for result from {pick_object_server_name} action server')
+        if action_client.wait_for_result(rospy.Duration.from_sec(timeout)):
+            result = action_client.get_result()
+            rospy.loginfo(f'{pick_object_server_name} is done with execution, resuĺt was = "{result}"')
+            if result.success == True:
+                rospy.loginfo(f'Succesfully picked {object_to_pick}')
+            else:
+                rospy.logerr(f'Failed to pick {object_to_pick}')
+        else:
+            rospy.logerr(f'Failed to pick {object_to_pick}, timeout?')
+    else:
+        rospy.logerr(f'action server {pick_object_server_name} not available')

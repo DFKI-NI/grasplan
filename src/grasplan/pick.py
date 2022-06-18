@@ -8,6 +8,7 @@ import sys
 import importlib
 
 import rospy
+import actionlib
 import tf
 import moveit_commander
 
@@ -18,6 +19,7 @@ from pose_selector.srv import ClassQuery
 from geometry_msgs.msg import PoseStamped
 from moveit_msgs.msg import MoveItErrorCodes
 from grasplan.common_grasp_tools import remove_object_id
+from pbr_msgs.msg import PickObjectAction, PickObjectResult
 
 class objectToPick():
     def __init__(self, obj_class, id, any_obj):
@@ -71,6 +73,10 @@ class PickTools():
         self.event_out_pub = rospy.Publisher('~event_out', String, queue_size=1)
         self.trigger_perception_pub = rospy.Publisher('/object_recognition/event_in', String, queue_size=1)
 
+        # action lib server
+        self.pick_action_server = actionlib.SimpleActionServer('pick_object', PickObjectAction, self.pick_obj_action_callback, False)
+        self.pick_action_server.start()
+
         # service clients
         pose_selector_activate_name = '/pose_selector_activate'
         pose_selector_query_name = '/pose_selector_class_query'
@@ -97,6 +103,15 @@ class PickTools():
         self.obj_pose_pub = rospy.Publisher('~obj_pose', PoseStamped, queue_size=1)
 
         rospy.loginfo('pick node ready!')
+
+    def pick_obj_action_callback(self, goal):
+        resp = self.pick_object(goal.object_name, self.grasp_type)
+        if resp is None:
+            self.pick_action_server.set_aborted(PickObjectResult(success=False))
+        elif resp.data == 'e_success':
+            self.pick_action_server.set_succeeded(PickObjectResult(success=True))
+        elif resp.data == 'e_failure':
+            self.pick_action_server.set_aborted(PickObjectResult(success=False))
 
     def graspTypeCB(self, msg):
         self.grasp_type = msg.data
@@ -306,7 +321,7 @@ class PickTools():
         object_pose, bounding_box, id = self.make_object_pose(object_to_pick)
 
         if object_pose is None:
-            return
+            return String('e_failure')
 
         # this condition is when user only specified object class but no id, then we assign the first available id
         if id is not None:
@@ -346,8 +361,8 @@ class PickTools():
         return String('e_failure')
 
     def start_pick_node(self):
-        # wait for trigger
-        rospy.loginfo('ready to receive pick requests (publish object name on event_in topic)')
+        # wait for trigger via topic or action lib
+        rospy.loginfo('ready to receive pick requests')
         rospy.spin()
         # shutdown moveit cpp interface before exit
         moveit_commander.roscpp_shutdown()

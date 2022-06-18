@@ -24,6 +24,8 @@
   <exec_depend>trajectory_msgs</exec_depend>
   <exec_depend>rqt_gui</exec_depend>
   <exec_depend>rqt_gui_py</exec_depend>
+  <exec_depend>pbr_msgs</exec_depend>
+  <exec_depend>actionlib</exec_depend>
 
   <buildtool_depend>catkin</buildtool_depend>
 
