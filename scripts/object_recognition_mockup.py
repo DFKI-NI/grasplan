@@ -11,7 +11,7 @@ from visualization_msgs.msg import Marker
 from geometry_msgs.msg import PoseStamped
 from gazebo_msgs.msg import ModelStates
 from std_msgs.msg import String
-from grasplan.common_grasp_tools import remove_object_id
+from grasplan.common_grasp_tools import separate_object_class_from_id
 
 from cob_perception_msgs.msg import Detection, DetectionArray
 
@@ -125,7 +125,7 @@ class ObjRecognitionMockup:
                 detection.pose.pose = copy.deepcopy(pose_msg.pose)
 
                 # get bounding box from parameter yaml file
-                object_class = remove_object_id(model_name) # get object class from anchored object
+                object_class = separate_object_class_from_id(object_name)[0] # get object class from anchored object
                 if self.bounding_boxes:
                     if object_class in self.bounding_boxes:
                         detection.bounding_box_lwh.x = self.bounding_boxes[object_class]['box_x']

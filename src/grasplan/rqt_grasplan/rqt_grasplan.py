@@ -12,7 +12,6 @@ from python_qt_binding import loadUi
 from python_qt_binding.QtWidgets import QWidget, QFileDialog, QMessageBox
 
 from grasplan.rqt_grasplan.grasps import Grasps
-from grasplan.common_grasp_tools import remove_object_id
 from grasplan.visualisation.grasp_visualiser import GraspVisualiser
 
 from std_msgs.msg import Int8, String
@@ -73,7 +72,7 @@ class RqtGrasplan(Plugin):
         # variables
         self.grasps = Grasps() # stores all grasps
         self.grasps_yaml_path = None
-        self.object_name = None
+        self.object_class = None
         self.tab = '    ' # used in save function
         self.global_reference_frame = 'object'
 
@@ -86,18 +85,18 @@ class RqtGrasplan(Plugin):
         # parameters
         obj_pkg_name = rospy.get_param('obj_pkg_name', 'mobipick_gazebo')
         if rospy.has_param('~object_name'):
-            self.object_name = rospy.get_param('~object_name')
+            self.object_class = rospy.get_param('~object_name')
             # set object name to textbox
-            self._widget.txtFileObjectName.setText(self.object_name)
+            self._widget.txtFileObjectName.setText(self.object_class)
             if rospy.has_param('~grasps_yaml_path'):
-                self.grasps_yaml_path = rospy.get_param('~grasps_yaml_path') + f'/handcoded_grasp_planner_{self.object_name}.yaml'
-                self.grasps.add_grasps(self.load_grasps_from_yaml(self.object_name, self.grasps_yaml_path))
+                self.grasps_yaml_path = rospy.get_param('~grasps_yaml_path') + f'/handcoded_grasp_planner_{self.object_class}.yaml'
+                self.grasps.add_grasps(self.load_grasps_from_yaml(self.object_class, self.grasps_yaml_path))
             else:
                 rospy.logwarn('object name parameter is set but grasps_yaml_path param is missing, is this correct?')
 
         # publish object mesh to rviz with texture
         grasp_visualiser = GraspVisualiser()
-        mesh_path = f'package://{obj_pkg_name}/meshes/{self.object_name}.dae'
+        mesh_path = f'package://{obj_pkg_name}/meshes/{self.object_class}.dae'
         marker_msg = grasp_visualiser.make_mesh_marker_msg(mesh_path)
         grasp_visualiser.object_mesh_publisher.publish(marker_msg)
 
@@ -282,7 +281,7 @@ class RqtGrasplan(Plugin):
                      f'{self.tab}  rotation: [{grasp.orientation.x},{grasp.orientation.y},\
                                               {grasp.orientation.z},{grasp.orientation.w}]')
 
-    def load_grasps_from_yaml(self, object_name, grasps_yaml_path):
+    def load_grasps_from_yaml(self, object_class, grasps_yaml_path):
         rospy.loginfo(f'reloading grasps from file: {grasps_yaml_path}')
         grasps_as_pose_array = PoseArray()
         grasps_as_pose_array.header.frame_id = self.global_reference_frame
@@ -295,23 +294,22 @@ class RqtGrasplan(Plugin):
         if grasps_dic is None:
             return None
         # load grasps from param server
-        object_class = remove_object_id(object_name)
         if not object_class in grasps_dic:
             self.log_error(f'Object "{object_class}" not found in dictionary, check input yaml file: {grasps_yaml_path}')
             return None
         else:
-            rospy.loginfo(f'loading {object_name} grasps from yaml file: {grasps_yaml_path}')
+            rospy.loginfo(f'loading {object_class} grasps from yaml file: {grasps_yaml_path}')
             for transform in grasps_dic[object_class]['grasp_poses']:
                 pose_msg = self.list_to_pose_msg(transform['translation'], transform['rotation'])
                 grasps_as_pose_array.poses.append(pose_msg)
         # update object mesh in rviz
-        self.object_mesh_pub.publish(object_name)
+        self.object_mesh_pub.publish(object_class)
         return grasps_as_pose_array
 
     def handle_file_load_grasps_button(self):
         rospy.loginfo('reload!')
-        self.object_name = self._widget.txtFileObjectName.toPlainText()
-        grasps = self.load_grasps_from_yaml(self.object_name, self.grasps_yaml_path)
+        self.object_class = self._widget.txtFileObjectName.toPlainText()
+        grasps = self.load_grasps_from_yaml(self.object_class, self.grasps_yaml_path)
         if grasps is None:
             return
         self.grasps.remove_all_grasps()
@@ -331,9 +329,9 @@ class RqtGrasplan(Plugin):
                 return False
 
     def write_linear_to_tf_textbox(self, linear):
-        self._widget.txtTransformLinearX.setPlainText(str(round(linear[0], 2)))
-        self._widget.txtTransformLinearY.setPlainText(str(round(linear[1], 2)))
-        self._widget.txtTransformLinearZ.setPlainText(str(round(linear[2], 2)))
+        self._widget.txtTransformLinearX.setPlainText(str(round(linear[0], 3)))
+        self._widget.txtTransformLinearY.setPlainText(str(round(linear[1], 3)))
+        self._widget.txtTransformLinearZ.setPlainText(str(round(linear[2], 3)))
 
     def convert_rpy_rad_to_deg(self, rpy_in_rad):
         rpy_in_deg = []

@@ -18,25 +18,8 @@ from std_srvs.srv import Empty, SetBool
 from pose_selector.srv import ClassQuery
 from geometry_msgs.msg import PoseStamped
 from moveit_msgs.msg import MoveItErrorCodes
-from grasplan.common_grasp_tools import remove_object_id
 from pbr_msgs.msg import PickObjectAction, PickObjectResult
-
-class objectToPick():
-    def __init__(self, obj_class, id, any_obj):
-        self.obj_class = obj_class
-        self.id = str(id)
-        self.any_obj = any_obj
-        if self.id is None:
-            self.object_name = obj_class
-        else:
-            self.object_name = obj_class + '_' + self.id
-
-    def set_id(self, id):
-        if id is None:
-            rospy.logerr("Can't set id to None, it must be a positive integer number")
-            return
-        self.id = str(id)
-        self.object_name = self.obj_class + '_' + self.id
+from grasplan.common_grasp_tools import objectToPick
 
 class PickTools():
     def __init__(self):
@@ -153,7 +136,7 @@ class PickTools():
             return None, None, None
         object_pose = None
         bounding_box = None
-        if object_to_pick.any_obj:
+        if object_to_pick.any_obj_id:
             object_pose, bounding_box = self.make_obj_pose_msg(resp.poses[0])
             id = resp.poses[0].instance_id
         else:
@@ -246,18 +229,6 @@ class PickTools():
             self.gripper.detach_object(name=self.grasped_object)
             self.grasped_object = ''
 
-    def obj_string_to_obj(self, object_name):
-        any_obj = False
-        if '_' in object_name:
-            obj_class = remove_object_id(object_name)
-            id = object_name
-            id = id.replace(obj_class + '_', '')
-        else:
-            obj_class = object_name
-            any_obj = True
-            id = None
-        return objectToPick(obj_class, id, any_obj)
-
     def pick_object(self, object_name_as_string, grasp_type):
         '''
         1) move arm to a position where the attached camera can see the scene (octomap will be populated)
@@ -268,7 +239,7 @@ class PickTools():
         '''
         rospy.loginfo(f'picking object : {object_name_as_string}')
 
-        object_to_pick = self.obj_string_to_obj(object_name_as_string)
+        object_to_pick = objectToPick(object_name_as_string)
 
         # open gripper
         #rospy.loginfo('gripper will open now')
@@ -329,7 +300,8 @@ class PickTools():
 
         self.obj_pose_pub.publish(object_pose) # publish pose for debugging purposes
 
-        self.scene.add_box(object_to_pick.object_name, object_pose, (bounding_box[0], bounding_box[1], bounding_box[2]))
+        self.scene.add_box(object_to_pick.get_object_class_and_id_as_string(), object_pose,\
+                           (bounding_box[0], bounding_box[1], bounding_box[2]))
 
         # print objects that were added to the planning scene
         rospy.loginfo(f'planning scene objects: {self.scene.get_known_object_names()}')
@@ -342,18 +314,18 @@ class PickTools():
         rospy.loginfo(f'picking object now')
 
         # generate a list of moveit grasp messages, poses are also published for visualisation purposes
-        grasps = self.grasp_planner.make_grasps_msgs(object_to_pick.object_name, object_pose, self.arm.get_end_effector_link(), grasp_type)
+        grasps = self.grasp_planner.make_grasps_msgs(object_to_pick.get_object_class_and_id_as_string(), object_pose, self.arm.get_end_effector_link(), grasp_type)
 
         # remove octomap, table and object are added manually to planning scene
         self.clear_octomap()
 
         # try to pick object with moveit
-        result = self.robot.arm.pick(object_to_pick.object_name, grasps)
+        result = self.robot.arm.pick(object_to_pick.get_object_class_and_id_as_string(), grasps)
         rospy.loginfo(f'moveit result code: {result}')
         # handle moveit pick result
         if result == MoveItErrorCodes.SUCCESS:
-            rospy.loginfo(f'Successfully picked object : {object_to_pick.object_name}')
-            self.grasped_object = object_to_pick.object_name
+            rospy.loginfo(f'Successfully picked object : {object_to_pick.get_object_class_and_id_as_string()}')
+            self.grasped_object = object_to_pick.get_object_class_and_id_as_string()
             return String('e_success')
         else:
             rospy.logerr(f'grasp failed')

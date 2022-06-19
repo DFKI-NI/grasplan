@@ -9,7 +9,7 @@ import tf
 from grasplan.grasp_planning_core import GraspPlanningCore
 from geometry_msgs.msg import Pose, PoseArray
 
-from grasplan.common_grasp_tools import remove_object_id
+from grasplan.common_grasp_tools import separate_object_class_from_id
 
 class HandcodedGraspPlanner(GraspPlanningCore):
     '''
@@ -51,7 +51,7 @@ class HandcodedGraspPlanner(GraspPlanningCore):
         pose_array_msg.header.stamp = rospy.Time.now()
 
         # get object class from anchored object
-        object_class = remove_object_id(object_name)
+        object_class = separate_object_class_from_id(object_name)[0]
 
         # transform all poses from object reference frame to world reference frame
         if not object_class in self.grasp_poses:
