@@ -96,9 +96,7 @@ class RqtGrasplan(Plugin):
 
         # publish object mesh to rviz with texture
         grasp_visualiser = GraspVisualiser()
-        mesh_path = f'package://{obj_pkg_name}/meshes/{self.object_class}.dae'
-        marker_msg = grasp_visualiser.make_mesh_marker_msg(mesh_path)
-        grasp_visualiser.object_mesh_publisher.publish(marker_msg)
+        grasp_visualiser.update_mesh(object_name=self.object_class, object_pkg=obj_pkg_name)
 
         # visualise grasps at startup
         self.publish_grasps()
