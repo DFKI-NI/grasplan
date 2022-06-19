@@ -7,6 +7,14 @@
   <arg name="grasps_yaml_path" default="$(find mobipick_pick_n_place)/config/grasplan/object_grasps"/>
   <arg name="obj_pkg_name" default="mobipick_gazebo" />
 
+  <!-- apply a transform to the object -->
+  <arg name="object_transform_linear_x" default="0.0" />
+  <arg name="object_transform_linear_y" default="0.0"/>
+  <arg name="object_transform_linear_z" default="0.0"/>
+  <arg name="object_transform_angular_roll" default="0.0"/>
+  <arg name="object_transform_angular_pitch" default="0.0"/>
+  <arg name="object_transform_angular_yaw" default="0.0"/>
+
   <!-- rqt_grasplan does not work if use_sim_time is set to true -->
   <param name="/use_sim_time" value="False" />
 
@@ -14,6 +22,12 @@
   <node pkg="grasplan" type="rqt_grasplan" name="grasp_editor" output="screen" required="true" >
     <param name="grasps_yaml_path" value="$(arg grasps_yaml_path)" />
     <param name="object_name" value="$(arg object_name)" />
+    <param name="transform_linear_x" value="$(arg object_transform_linear_x)" />
+    <param name="transform_linear_y" value="$(arg object_transform_linear_y)" />
+    <param name="transform_linear_z" value="$(arg object_transform_linear_z)" />
+    <param name="transform_angular_roll" value="$(arg object_transform_angular_roll)" />
+    <param name="transform_angular_pitch" value="$(arg object_transform_angular_pitch)" />
+    <param name="transform_angular_yaw" value="$(arg object_transform_angular_yaw)" />
     <!-- the ros pkg where the object mesh can be found, {obj_pkg_name}/meshes/{object_name}.dae -->
     <param name="obj_pkg_name" value="$(arg obj_pkg_name)" />
   </node>

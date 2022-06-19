@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 
+import tf
 import rospy
 import std_msgs
 import geometry_msgs
@@ -17,6 +18,14 @@ class GraspVisualiser:
         self.object_name = rospy.get_param('~object_name', 'multimeter')
         self.object_pkg = rospy.get_param('~object_pkg', 'mobipick_gazebo')
         self.global_reference_frame = rospy.get_param('~global_reference_frame', 'object')
+        transform_linear_x = rospy.get_param('~transform_linear_x', 0.0)
+        transform_linear_y = rospy.get_param('~transform_linear_y', 0.0)
+        transform_linear_z = rospy.get_param('~transform_linear_z', 0.0)
+        self.transform_linear = [transform_linear_x, transform_linear_y, transform_linear_z]
+        transform_angular_roll = rospy.get_param('~transform_angular_roll', 0.0)
+        transform_angular_pitch = rospy.get_param('~transform_angular_pitch', 0.0)
+        transform_angular_yaw = rospy.get_param('~transform_angular_yaw', 0.0)
+        self.transform_angular = [transform_angular_roll, transform_angular_pitch, transform_angular_yaw]
         rospy.Subscriber('~update_object_mesh', std_msgs.msg.String, self.UpdateObjectMeshCB)
         # Publishers
         self.object_mesh_publisher = rospy.Publisher('object_mesh', Marker, queue_size=1, latch=True)
@@ -66,7 +75,10 @@ class GraspVisualiser:
 
     def update_mesh(self, object_name='multimeter', object_pkg='mobipick_gazebo'):
         mesh_path = f'package://{object_pkg}/meshes/{object_name}.dae'
-        marker_msg = self.make_mesh_marker_msg(mesh_path)
+        angular_q = tf.transformations.quaternion_from_euler(self.transform_angular[0],\
+                                                             self.transform_angular[1],\
+                                                             self.transform_angular[2])
+        marker_msg = self.make_mesh_marker_msg(mesh_path, position=self.transform_linear, orientation=angular_q)
         rospy.loginfo(f'publishing mesh:{mesh_path}')
         self.object_mesh_publisher.publish(marker_msg)
 
