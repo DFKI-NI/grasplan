@@ -25,6 +25,6 @@
     <remap from="pose_array" to="/grasp_editor/grasp_poses"/>
   </node>
 
-  <!--<node pkg="rviz" type="rviz" name="rviz" args="-d $(find grasplan)/config/visualisation/grasp_editor.rviz" required="true" />-->
+  <node pkg="rviz" type="rviz" name="rviz" args="-d $(find grasplan)/config/rviz/grasp_editor.rviz" required="true" />
 
 </launch>
