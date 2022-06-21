@@ -7,6 +7,8 @@ from geometry_msgs.msg import PoseArray, PoseStamped
 from moveit_msgs.msg import Grasp, GripperTranslation
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
+from grasplan.common_grasp_tools import separate_object_class_from_id
+
 class GraspPlanningCore:
     '''
     Abstract class that defines classes to interact with a grasp planning module
@@ -16,12 +18,13 @@ class GraspPlanningCore:
 
         # parameters
         self.gripper_joint_names = rospy.get_param('~gripper_joint_names')
-        gripper_close = rospy.get_param('~gripper_close')
+        self.gripper_close_angle = rospy.get_param('~gripper_close')
         gripper_open = rospy.get_param('~gripper_open')
         self.gripper_joint_efforts = rospy.get_param('~gripper_joint_efforts')
         self.grasp_quality = rospy.get_param('~grasp_quality', 1.0)
         self.object_padding = rospy.get_param('~object_padding', 0.04)
         self.max_contact_force = rospy.get_param('~max_contact_force', 1.0)
+        self.joint_value_obj_dic = rospy.get_param('~joint_value_obj_dic', None)
         # pregrasp parameters
         self.pre_grasp_approach_min_dist = rospy.get_param('~pre_grasp_approach/min_dist')
         self.pre_grasp_approach_desired = rospy.get_param('~pre_grasp_approach/desired')
@@ -33,12 +36,21 @@ class GraspPlanningCore:
         self.post_grasp_retreat_axis = rospy.get_param('~post_grasp_retreat/axis')
 
         self.gripper_open_trajectory = self.make_gripper_trajectory(gripper_open)
-        self.gripper_close_trajectory = self.make_gripper_trajectory(gripper_close)
 
         # publish grasp poses as pose array
         self.pose_array_pub = rospy.Publisher('~grasp_poses', PoseArray, queue_size=50)
 
-    def make_gripper_trajectory(self, joint_angles):
+    def get_joint_value_from_dic(self, joint_angles, object_class=None):
+        '''
+        query dictionary of objects vs how much should the gripper close to grasp them
+        TODO: at the moment this does not depend on the particular grasp but in general it should
+        if object_class is not found in dictionary then the default value is used
+        '''
+        if object_class is None or self.joint_value_obj_dic is None or object_class not in self.joint_value_obj_dic:
+            return joint_angles
+        return [self.joint_value_obj_dic[object_class]]
+
+    def make_gripper_trajectory(self, joint_angles, object_class=None):
         '''
         Set and return the gripper posture as a trajectory_msgs/JointTrajectory
         only one point is set which is the final gripper target
@@ -46,7 +58,7 @@ class GraspPlanningCore:
         trajectory = JointTrajectory()
         trajectory.joint_names = self.gripper_joint_names
         trajectory_point = JointTrajectoryPoint()
-        trajectory_point.positions = joint_angles
+        trajectory_point.positions = self.get_joint_value_from_dic(joint_angles, object_class=object_class)
         trajectory_point.effort = self.gripper_joint_efforts
         trajectory_point.time_from_start = rospy.Duration(1.0)
         trajectory.points.append(trajectory_point)
@@ -84,7 +96,8 @@ class GraspPlanningCore:
 
         # The internal posture of the hand for the grasp
         # positions and efforts are used
-        g.grasp_posture = self.gripper_close_trajectory
+        object_class = separate_object_class_from_id(object_name)[0]
+        g.grasp_posture = self.make_gripper_trajectory(self.gripper_close_angle, object_class=object_class)
 
         # The retreat direction to take after a grasp has been completed (object is attached)
         g.post_grasp_retreat = self.make_gripper_translation_msg(self.post_grasp_retreat_frame_id,
