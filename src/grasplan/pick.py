@@ -169,7 +169,11 @@ class PickTools():
         '''
         rospy.loginfo(f'moving arm to {arm_posture_name}')
         self.arm.set_named_target(arm_posture_name)
-        self.arm.go()
+        # attempt to move it 2 times, (sometimes fails with only 1 time)
+        if not self.arm.go():
+            rospy.logwarn(f'failed to move arm to posture: {arm_posture_name}, will retry one more time in 1 sec')
+            rospy.sleep(1.0)
+            self.arm.go()
 
     def move_gripper_to_posture(self, gripper_posture_name):
         '''
