@@ -125,7 +125,7 @@ class ObjRecognitionMockup:
                 detection.pose.pose = copy.deepcopy(pose_msg.pose)
 
                 # get bounding box from parameter yaml file
-                object_class = separate_object_class_from_id(object_name)[0] # get object class from anchored object
+                object_class = separate_object_class_from_id(model_name)[0] # get object class from anchored object
                 if self.bounding_boxes:
                     if object_class in self.bounding_boxes:
                         detection.bounding_box_lwh.x = self.bounding_boxes[object_class]['box_x']
