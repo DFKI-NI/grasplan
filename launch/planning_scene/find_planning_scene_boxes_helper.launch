@@ -5,6 +5,7 @@
 
   <node pkg="grasplan" type="object_recognition_mockup.py" name="object_recognition" output="log">
     <!-- field of view box parameters -->
+    <param name="objects_desired_reference_frame" type="string" value="map" />
     <param name="box_width" type="double" value="0.7" />
     <param name="box_length" type="double" value="1.4" />
     <param name="box_height" type="double" value="0.7" />
