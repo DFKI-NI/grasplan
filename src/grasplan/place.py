@@ -1,0 +1,399 @@
+#!/usr/bin/env python3
+
+'''
+example on how to place an object using grasplan and moveit
+'''
+
+import sys
+import copy
+import random
+import tf
+import rospy
+import actionlib
+import moveit_commander
+
+from std_msgs.msg import String
+from std_srvs.srv import Empty
+
+from geometry_msgs.msg import Vector3Stamped, PoseStamped, PoseArray, Pose
+from moveit_msgs.msg import PlaceAction, PlaceGoal, PlaceLocation, GripperTranslation, PlanningOptions, MoveItErrorCodes
+from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+
+def print_moveit_error_helper(error_code, moveit_error_code, moveit_error_string):
+    '''
+    function that helps print_moveit_error method to have less code
+    '''
+    if error_code.val == moveit_error_code:
+        rospy.logwarn(f'moveit says : {moveit_error_string}')
+
+def print_moveit_error(error_code):
+    '''
+    receive moveit result, compare with error codes, print what happened
+    '''
+    print_moveit_error_helper(error_code, MoveItErrorCodes.PLANNING_FAILED, 'PLANNING_FAILED')
+    print_moveit_error_helper(error_code, MoveItErrorCodes.INVALID_MOTION_PLAN, 'INVALID_MOTION_PLAN')
+    print_moveit_error_helper(error_code, MoveItErrorCodes.MOTION_PLAN_INVALIDATED_BY_ENVIRONMENT_CHANGE,\
+                                                                            'MOTION_PLAN_INVALIDATED_BY_ENVIRONMENT_CHANGE')
+    print_moveit_error_helper(error_code, MoveItErrorCodes.CONTROL_FAILED, 'CONTROL_FAILED')
+    print_moveit_error_helper(error_code, MoveItErrorCodes.UNABLE_TO_AQUIRE_SENSOR_DATA, 'UNABLE_TO_AQUIRE_SENSOR_DATA')
+    print_moveit_error_helper(error_code, MoveItErrorCodes.TIMED_OUT, 'TIMED_OUT')
+    print_moveit_error_helper(error_code, MoveItErrorCodes.PREEMPTED, 'PREEMPTED')
+
+    print_moveit_error_helper(error_code, MoveItErrorCodes.START_STATE_IN_COLLISION, 'START_STATE_IN_COLLISION')
+    print_moveit_error_helper(error_code, MoveItErrorCodes.START_STATE_VIOLATES_PATH_CONSTRAINTS, 'START_STATE_VIOLATES_PATH_CONSTRAINTS')
+
+    print_moveit_error_helper(error_code, MoveItErrorCodes.GOAL_IN_COLLISION, 'GOAL_IN_COLLISION')
+    print_moveit_error_helper(error_code, MoveItErrorCodes.GOAL_VIOLATES_PATH_CONSTRAINTS, 'GOAL_VIOLATES_PATH_CONSTRAINTS')
+    print_moveit_error_helper(error_code, MoveItErrorCodes.GOAL_CONSTRAINTS_VIOLATED, 'GOAL_CONSTRAINTS_VIOLATED')
+
+    print_moveit_error_helper(error_code, MoveItErrorCodes.INVALID_GROUP_NAME, 'INVALID_GROUP_NAME')
+    print_moveit_error_helper(error_code, MoveItErrorCodes.INVALID_GOAL_CONSTRAINTS, 'INVALID_GOAL_CONSTRAINTS')
+    print_moveit_error_helper(error_code, MoveItErrorCodes.INVALID_ROBOT_STATE, 'INVALID_ROBOT_STATE')
+    print_moveit_error_helper(error_code, MoveItErrorCodes.INVALID_LINK_NAME, 'INVALID_LINK_NAME')
+    print_moveit_error_helper(error_code, MoveItErrorCodes.INVALID_OBJECT_NAME, 'INVALID_OBJECT_NAME')
+
+    print_moveit_error_helper(error_code, MoveItErrorCodes.FRAME_TRANSFORM_FAILURE, 'FRAME_TRANSFORM_FAILURE')
+    print_moveit_error_helper(error_code, MoveItErrorCodes.COLLISION_CHECKING_UNAVAILABLE, 'COLLISION_CHECKING_UNAVAILABLE')
+    print_moveit_error_helper(error_code, MoveItErrorCodes.ROBOT_STATE_STALE, 'ROBOT_STATE_STALE')
+    print_moveit_error_helper(error_code, MoveItErrorCodes.SENSOR_INFO_STALE, 'SENSOR_INFO_STALE')
+    print_moveit_error_helper(error_code, MoveItErrorCodes.COMMUNICATION_FAILURE, 'COMMUNICATION_FAILURE')
+
+    print_moveit_error_helper(error_code, MoveItErrorCodes.NO_IK_SOLUTION, 'NO_IK_SOLUTION')
+
+class PlaceTools():
+    def __init__(self):
+        self.timeout = rospy.get_param('~timeout', 50.0) # in seconds
+        self.group_name = rospy.get_param('~group_name', 'arm')
+        self.gripper_joint_names = rospy.get_param('~gripper_joint_names')
+        self.gripper_joint_efforts = rospy.get_param('~gripper_joint_efforts')
+        self.place_object_server_name = rospy.get_param('~place_object_server_name', 'place') # /mobipick/place
+
+        moveit_commander.roscpp_initialize(sys.argv)
+        self.arm = moveit_commander.MoveGroupCommander(self.group_name, wait_for_servers=10.0)
+
+        rospy.Subscriber('~event_in', String, self.eventInCB)
+        self.place_poses_pub = rospy.Publisher('~place_poses', PoseArray, queue_size=50, latch=True)
+
+    def eventInCB(self, msg):
+        self.place_obj(msg.data)
+
+    def place_obj(self, object_name):
+        '''
+        create action lib client and call moveit place action server
+        '''
+        rospy.loginfo(f'received request to place object {object_name}')
+        action_client = actionlib.SimpleActionClient(self.place_object_server_name, PlaceAction)
+        rospy.loginfo(f'waiting for {self.place_object_server_name} action server')
+        object_to_pick = object_name
+
+        # moveit::planning_interface::MoveGroupInterface& group TODO: missing?
+        # group.setSupportSurfaceName('table_1');
+
+        # clear octomap before placing, this is experimental and not sure is needed
+        rospy.loginfo('clearing octomap')
+        rospy.ServiceProxy('clear_octomap', Empty)()
+
+        if action_client.wait_for_server(timeout=rospy.Duration.from_sec(2.0)):
+            rospy.loginfo(f'found {self.place_object_server_name} action server')
+            goal = self.make_place_goal_msg(object_name)
+
+            self.arm.set_support_surface_name('table_1') # TODO
+
+            rospy.loginfo(f'sending place {object_name} goal to {self.place_object_server_name} action server')
+            action_client.send_goal(goal)
+            rospy.loginfo(f'waiting for result from {self.place_object_server_name} action server')
+            if action_client.wait_for_result(rospy.Duration.from_sec(self.timeout)):
+                result = action_client.get_result()
+                # rospy.loginfo(f'{self.place_object_server_name} is done with execution, resuĺt was = "{result}"')
+
+                ## ------ result handling
+
+                ## The result of the place attempt
+                # MoveItErrorCodes error_code
+
+                ## The full starting state of the robot at the start of the trajectory
+                # RobotState trajectory_start
+
+                ## The trajectory that moved group produced for execution
+                # RobotTrajectory[] trajectory_stages
+
+                # string[] trajectory_descriptions
+
+                ## The successful place location, if any
+                # PlaceLocation place_location
+
+                ## The amount of time in seconds it took to complete the plan
+                # float64 planning_time
+
+                # ---
+
+                print_moveit_error(result.error_code)
+
+                # ---
+
+                # how to know if place was successful from result?
+                # if result.success == True:
+                    # rospy.loginfo(f'Succesfully placed {object_name}')
+                # else:
+                    # rospy.logerr(f'Failed to place {object_name}')
+            else:
+                rospy.logerr(f'Failed to place {object_name}, timeout?')
+        else:
+            rospy.logerr(f'action server {self.place_object_server_name} not available')
+
+    def gen_place_poses(self):
+        '''
+        TODO: this is a test function, remove!
+        x: from -0.4 to 0.7
+        y: from -1.1 to -0.5
+        z: from 0.72 to 1.0
+        '''
+        pose_array_msg = PoseArray()
+        pose_array_msg.header.frame_id = 'mobipick/base_link'
+        for i in range(1, 50):
+            pose_msg = Pose()
+            pose_msg.position.x = round(random.uniform(-0.4,   0.7), 2)
+            pose_msg.position.y = round(random.uniform(-1.1,  -0.5), 2)
+            pose_msg.position.z = round(random.uniform( 0.72,  1.0), 2)
+            # roll = round(random.uniform( 0.0,  3.1415), 2)
+            # pitch = round(random.uniform( 0.0,  3.1415), 2)
+            # yaw = round(random.uniform( 0.0,  3.1415), 2)
+            # angular_q = tf.transformations.quaternion_from_euler(roll, pitch, yaw)
+            # ---
+            # angular_q = [0,0,0,1] # powerdrill laying down
+            # ---
+            # works for powerdrill standing up correctly
+            roll = 1.5708
+            pitch = 0.0
+            yaw = 0.0
+            angular_q = tf.transformations.quaternion_from_euler(roll, pitch, yaw)
+            pose_msg.orientation.x = angular_q[0]
+            pose_msg.orientation.y = angular_q[1]
+            pose_msg.orientation.z = angular_q[2]
+            pose_msg.orientation.w = angular_q[3]
+            pose_array_msg.poses.append(copy.deepcopy(pose_msg))
+        self.place_poses_pub.publish(pose_array_msg)
+        return pose_array_msg
+
+    def make_place_goal_msg(self, object_name):
+        '''
+        fill goal, see: https://github.com/ros-planning/moveit_msgs/blob/master/action/Place.action
+        '''
+
+        goal = PlaceGoal()
+
+        goal.group_name = self.group_name
+
+        # the name of the attached object to place
+        goal.attached_object_name = object_name
+
+        # a list of possible transformations for placing the object
+        # NOTE: multiple place locations are possible to be defined, we just define 1 for now
+        # ---
+        place_locations = []
+        for pose in self.gen_place_poses().poses:
+            place_locations.append(self.make_place_location_msg([pose.position.x, pose.position.y, pose.position.z],\
+                                                                [pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w]))
+
+        # translation = [0.0, -0.9, 0.88] # works for simple pick n place demo
+        # rotation = [-0.5, -0.5, 0.5, 0.5]
+        goal.place_locations = place_locations
+
+        # if the user prefers setting the eef pose (same as in pick) rather than
+        # the location of the object, this flag should be set to true
+        # bool place_eef
+        goal.place_eef = False
+
+        # the name that the support surface (e.g. table) has in the collision world
+        # can be left empty if no name is available
+        # string support_surface_name
+        goal.support_surface_name = 'table_1' # TODO
+
+        # whether collisions between the gripper and the support surface should be acceptable
+        # during move from pre-place to place and during retreat. Collisions when moving to the
+        # pre-place location are still not allowed even if this is set to true.
+        # bool allow_gripper_support_collision
+        goal.allow_gripper_support_collision = True
+
+        # Optional constraints to be imposed on every point in the motion plan
+        # Constraints path_constraints
+        # NOTE: mobipick simple pick n place demo does indeed has this value set
+        # goal.path_constraints =
+
+        # The name of the motion planner to use. If no name is specified,
+        # a default motion planner will be used
+        # string planner_id
+        # goal.planner_id = 'RRTConnect'
+
+        # an optional list of obstacles that we have semantic information about
+        # and that can be touched/pushed/moved in the course of placing
+        # string[] allowed_touch_objects
+        goal.allowed_touch_objects = []
+
+        # The maximum amount of time the motion planner is allowed to plan for
+        # float64 allowed_planning_time
+        goal.allowed_planning_time = 20.0
+
+        # Planning options
+        # PlanningOptions planning_options
+        goal.planning_options = self.make_planning_options_msg()
+
+        return goal
+
+    def make_planning_options_msg(self):
+        '''
+        see: https://github.com/ros-planning/moveit_msgs/blob/master/msg/PlanningOptions.msg
+        '''
+        planning_options_msg = PlanningOptions()
+
+        # The diff to consider for the planning scene (optional)
+        # PlanningScene planning_scene_diff
+        # planning_options_msg.planning_scene_diff = 
+
+        # If this flag is set to true, the action
+        # returns an executable plan in the response but does not attempt execution
+        # bool plan_only
+        planning_options_msg.plan_only = False
+
+        # If this flag is set to true, the action of planning &
+        # executing is allowed to look around  (move sensors) if
+        # it seems that not enough information is available about
+        # the environment
+        # bool look_around
+        planning_options_msg.look_around = False
+
+        # If this value is positive, the action of planning & executing
+        # is allowed to look around for a maximum number of attempts;
+        # If the value is left as 0, the default value is used, as set
+        # with dynamic_reconfigure
+        # int32 look_around_attempts
+        planning_options_msg.look_around_attempts = 0
+
+        # If set and if look_around is true, this value is used as
+        # the maximum cost allowed for a path to be considered executable.
+        # If the cost of a path is higher than this value, more sensing or
+        # a new plan needed. If left as 0.0 but look_around is true, then
+        # the default value set via dynamic_reconfigure is used
+        # float64 max_safe_execution_cost
+        planning_options_msg.max_safe_execution_cost = 0.0
+
+        # If the plan becomes invalidated during execution, it is possible to have
+        # that plan recomputed and execution restarted. This flag enables this
+        # functionality
+        # bool replan
+        planning_options_msg.replan = False
+
+        # The maximum number of replanning attempts
+        # int32 replan_attempts
+        planning_options_msg.replan_attempts = 0
+
+        # The amount of time to wait in between replanning attempts (in seconds)
+        # float64 replan_delay
+        planning_options_msg.replan_delay = 2.0
+
+        return planning_options_msg
+
+    def make_place_location_msg(self, translation, rotation):
+        '''
+        see: https://github.com/ros-planning/moveit_msgs/blob/master/msg/PlaceLocation.msg
+        '''
+        place_msg = PlaceLocation()
+
+        # A name for this grasp
+        # string id
+        place_msg.id = '1'
+
+        # The internal posture of the hand for the grasp
+        # positions and efforts are used
+        # trajectory_msgs/JointTrajectory post_place_posture
+        place_msg.post_place_posture = self.make_gripper_trajectory_msg(0.6) # TODO: gripper release distance?
+        # NOTE in simple pick n place demo this value is 0.1
+
+        # The position of the end-effector for the grasp relative to a reference frame
+        # (that is always specified elsewhere, not in this message)
+        # geometry_msgs/PoseStamped place_pose
+        pose_msg = PoseStamped()
+        pose_msg.header.frame_id = 'mobipick/base_link'
+        pose_msg.pose.position.x = translation[0]
+        pose_msg.pose.position.y = translation[1]
+        pose_msg.pose.position.z = translation[2]
+        pose_msg.pose.orientation.x = rotation[0]
+        pose_msg.pose.orientation.y = rotation[1]
+        pose_msg.pose.orientation.z = rotation[2]
+        pose_msg.pose.orientation.w = rotation[3]
+        place_msg.place_pose = pose_msg
+
+        # The estimated probability of success for this place, or some other
+        # measure of how "good" it is.
+        # float64 quality
+        place_msg.quality = 1.0
+
+        # The approach motion
+        # GripperTranslation pre_place_approach
+        place_msg.pre_place_approach = self.make_gripper_translation_msg('mobipick/base_link', 0.2, vector_z=-1.0) # TODO
+
+        # The retreat motion
+        # GripperTranslation post_place_retreat
+        place_msg.post_place_retreat = self.make_gripper_translation_msg('mobipick/gripper_tcp', 0.25, vector_x=-1.0) # TODO
+
+        # an optional list of obstacles that we have semantic information about
+        # and that can be touched/pushed/moved in the course of grasping
+        # string[] allowed_touch_objects
+        place_msg.allowed_touch_objects = ['table_1'] # TODO, use 'table' for simple mobipick pick n place demo
+
+        return copy.deepcopy(place_msg)
+
+    def make_gripper_trajectory_msg(self, gripper_actuation_distance):
+        '''
+        Set and return the gripper posture as a trajectory_msgs/JointTrajectory
+        only one point is set which is the final gripper target
+        '''
+        trajectory = JointTrajectory()
+        trajectory.joint_names = self.gripper_joint_names
+        trajectory_point = JointTrajectoryPoint()
+        trajectory_point.positions = [gripper_actuation_distance]
+        trajectory_point.effort = self.gripper_joint_efforts
+        trajectory_point.time_from_start = rospy.Duration(1.0)
+        trajectory.points.append(trajectory_point)
+        return trajectory
+
+    def make_gripper_translation_msg(self, frame_id, distance, vector_x=0.0, vector_y=0.0, vector_z=0.0, min_distance=0.1):
+        '''
+        see: https://github.com/ros-planning/moveit_msgs/blob/master/msg/GripperTranslation.msg
+        '''
+        gripper_translation_msg = GripperTranslation()
+
+        # defines a translation for the gripper, used in pickup or place tasks
+        # for example for lifting an object off a table or approaching the table for placing
+
+        # the direction of the translation
+        # geometry_msgs/Vector3Stamped direction
+        vs = Vector3Stamped()
+        vs.header.frame_id = frame_id
+        vs.vector.x = vector_x
+        vs.vector.y = vector_y
+        vs.vector.z = vector_z
+        gripper_translation_msg.direction = vs
+
+        # the desired translation distance
+        # float32 desired_distance
+        gripper_translation_msg.desired_distance = distance
+
+        # the min distance that must be considered feasible before the
+        # grasp is even attempted
+        # float32 min_distance
+        gripper_translation_msg.min_distance = min_distance
+
+        return gripper_translation_msg
+
+    def start_pick_node(self):
+        # wait for trigger via topic or action lib
+        rospy.loginfo('ready to place objects')
+        rospy.spin()
+        # shutdown moveit cpp interface before exit
+        # moveit_commander.roscpp_shutdown()
+
+if __name__=='__main__':
+    rospy.init_node('place_object_node', anonymous=False)
+    place = PlaceTools()
+    place.start_pick_node()
