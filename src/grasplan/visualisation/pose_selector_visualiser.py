@@ -17,6 +17,7 @@ Query poses from pose selector and publish them as markers in rviz for visualisa
 
 class PoseSelectorVisualiser:
     def __init__(self, wait_for_pose_selector_srv=True):
+        self.color = rospy.get_param('~object_color_rgba', [0,0,0,0]) # 1.0, 0.0, 1.0, 1.0 : magenta
         self.objects_of_interest = rospy.get_param('~objects_of_interest', ['multimeter', 'klt', 'powerdrill_with_grip', 'screwdriver', 'relay'])
         self.object_pkg = rospy.get_param('~object_pkg', 'mobipick_gazebo')
         self.objects_mesh_publisher = rospy.Publisher('pose_selector_objects', MarkerArray, queue_size=1, latch=True)
@@ -30,7 +31,7 @@ class PoseSelectorVisualiser:
         rospy.sleep(0.5)
         rospy.loginfo('pose selector visualiser node started')
 
-    def make_mesh_marker_msg(self, mesh_path, mesh_pose, mesh_scale=[1,1,1], id=1):
+    def make_mesh_marker_msg(self, mesh_path, mesh_pose, mesh_scale=[1,1,1], id=1, color=[0,0,0,0]):
         assert isinstance(mesh_pose, PoseStamped)
         mesh_marker_msg = Marker()
         mesh_marker_msg.id = id
@@ -42,7 +43,7 @@ class PoseSelectorVisualiser:
         mesh_marker_msg.mesh_use_embedded_materials = True
         mesh_marker_msg.scale = Vector3(mesh_scale[0], mesh_scale[1], mesh_scale[2])
         # set rgba to 0 to allow mesh_use_embedded_materials to work
-        mesh_marker_msg.color = std_msgs.msg.ColorRGBA(0, 0, 0, 0)
+        mesh_marker_msg.color = std_msgs.msg.ColorRGBA(*color)
         mesh_marker_msg.mesh_resource = mesh_path
         return mesh_marker_msg
 
@@ -61,9 +62,9 @@ class PoseSelectorVisualiser:
         assert isinstance(object_name, str)
         assert isinstance(mesh_pose, PoseStamped)
         if object_name == 'powerdrill_with_grip':
-            mesh_pose = self.rotate_pose(mesh_pose, roll=3.1415)
+            mesh_pose = self.rotate_pose(mesh_pose, roll=3.1415) # TODO manage better
         mesh_path = f'package://{self.object_pkg}/meshes/{object_name}.dae'
-        marker_msg = self.make_mesh_marker_msg(mesh_path, mesh_pose, id=id)
+        marker_msg = self.make_mesh_marker_msg(mesh_path, mesh_pose, id=id, color=self.color)
         return marker_msg
 
     def update_object_poses(self):
