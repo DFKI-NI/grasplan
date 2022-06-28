@@ -160,9 +160,9 @@ class PlaceTools():
             # yaw = round(random.uniform( 0.0,  3.1415), 2)
             # angular_q = tf.transformations.quaternion_from_euler(roll, pitch, yaw)
             # ---
-            # angular_q = [0,0,0,1] # powerdrill laying down
+            # angular_q = [0,0,0,1] # power_drill laying down
             # ---
-            # works for powerdrill standing up correctly
+            # works for power_drill standing up correctly
             roll = 1.5708
             pitch = 0.0
             yaw = 0.0
