@@ -263,7 +263,7 @@ class PickTools():
             # populate pose selector with pose information
             resp = self.activate_pose_selector_srv(True)
             # wait until pose selector gets updates
-            rospy.sleep(1.0)
+            rospy.sleep(10.0)
             # deactivate pose selector detections
             resp = self.activate_pose_selector_srv(False)
 
