@@ -36,7 +36,7 @@ class PickTools():
         # if true the arm is moved to a pose where objects are inside fov and pose selector is triggered to accept obj pose updates
         self.perceive_object = rospy.get_param('~perceive_object', True)
         # the arm pose where the objects are inside the fov (used to move the arm to perceive objs right after)
-        self.arm_pose_with_objs_in_fov = rospy.get_param('~arm_pose_with_objs_in_fov', 'observe100cm_left')
+        self.arm_pose_with_objs_in_fov = rospy.get_param('~arm_pose_with_objs_in_fov', 'observe100cm_right')
         # configure the desired grasp planner to use
         import_file = rospy.get_param('~import_file', 'grasp_planner.simple_pregrasp_planner')
         import_class = rospy.get_param('~import_class', 'SimpleGraspPlanner')
