@@ -326,7 +326,7 @@ class PickTools():
         self.obj_pose_pub.publish(object_pose) # publish pose for debugging purposes
 
         self.scene.add_box(object_to_pick.get_object_class_and_id_as_string(), object_pose,\
-                           (bounding_box[0], bounding_box[1], bounding_box[2] + 2))
+                           (bounding_box[0], bounding_box[1], bounding_box[2]))
 
         # print objects that were added to the planning scene
         rospy.loginfo(f'planning scene objects: {self.scene.get_known_object_names()}')
