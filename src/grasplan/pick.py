@@ -43,9 +43,6 @@ class PickTools():
         import_class = rospy.get_param('~import_class', 'SimpleGraspPlanner')
         # TODO: include octomap
 
-        # keep memory about the last object we have grasped
-        self.grasped_object = ''
-
         # to be able to transform PoseStamped later in the code
         #self.transformer = tf.listener.TransformerROS()
         self.tf_listener = TransformListener()
@@ -246,13 +243,8 @@ class PickTools():
         self.print_moveit_error_helper(error_code, MoveItErrorCodes.NO_IK_SOLUTION, 'NO_IK_SOLUTION')
 
     def detach_all_objects(self):
-        '''
-        usually self.gripper.detach_object() should do the trick, however it doesn't work
-        therefore we keep in memory the objects we grasped in the past and deattached them by their name explicitely
-        '''
-        if self.grasped_object != '':
-            self.gripper.detach_object(name=self.grasped_object)
-            self.grasped_object = ''
+        for attached_object in self.scene.get_attached_objects().keys():
+            self.gripper.detach_object(name=attached_object)
 
     def pick_object(self, object_name_as_string, grasp_type):
         '''
@@ -345,12 +337,12 @@ class PickTools():
         self.clear_octomap()
 
         # try to pick object with moveit
+        ### TODO self.scene set support surface name
         result = self.robot.arm.pick(object_to_pick.get_object_class_and_id_as_string(), grasps)
         rospy.loginfo(f'moveit result code: {result}')
         # handle moveit pick result
         if result == MoveItErrorCodes.SUCCESS:
             rospy.loginfo(f'Successfully picked object : {object_to_pick.get_object_class_and_id_as_string()}')
-            self.grasped_object = object_to_pick.get_object_class_and_id_as_string()
             return String('e_success')
         else:
             rospy.logerr(f'grasp failed')
