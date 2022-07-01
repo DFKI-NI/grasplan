@@ -6,6 +6,7 @@ example on how to pick an object using grasplan and moveit
 
 import sys
 import importlib
+import traceback
 
 import rospy
 import actionlib
@@ -61,23 +62,32 @@ class PickTools():
         self.pick_action_server.start()
 
         # service clients
-        pose_selector_activate_name = '/pose_selector_activate'
-        pose_selector_query_name = '/pose_selector_class_query'
-        rospy.loginfo(f'waiting for pose selector services: {pose_selector_activate_name}, {pose_selector_query_name}')
-        rospy.wait_for_service(pose_selector_activate_name, 2.0)
-        rospy.wait_for_service(pose_selector_query_name, 2.0)
-        self.activate_pose_selector_srv = rospy.ServiceProxy(pose_selector_activate_name, SetBool)
-        self.pose_selector_class_query_srv = rospy.ServiceProxy(pose_selector_query_name, ClassQuery)
-        rospy.loginfo('found pose selector services')
+        try:
+            pose_selector_activate_name = '/pose_selector_activate'
+            pose_selector_query_name = '/pose_selector_class_query'
+            rospy.loginfo(f'waiting for pose selector services: {pose_selector_activate_name}, {pose_selector_query_name}')
+            rospy.wait_for_service(pose_selector_activate_name, 2.0)
+            rospy.wait_for_service(pose_selector_query_name, 2.0)
+            self.activate_pose_selector_srv = rospy.ServiceProxy(pose_selector_activate_name, SetBool)
+            self.pose_selector_class_query_srv = rospy.ServiceProxy(pose_selector_query_name, ClassQuery)
+            rospy.loginfo('found pose selector services')
+        except rospy.exceptions.ROSException:
+            rospy.logfatal('grasplan pick server could not find pose selector services in time, exiting! \n' + traceback.format_exc())
+            rospy.signal_shutdown('fatal error')
 
-        moveit_commander.roscpp_initialize(sys.argv)
-
-        self.robot = moveit_commander.RobotCommander()
-        self.arm = moveit_commander.MoveGroupCommander(arm_group_name, wait_for_servers=10.0)
-        self.robot.arm.set_planning_time(planning_time)
-        self.gripper = moveit_commander.MoveGroupCommander(gripper_group_name, wait_for_servers=10.0)
-        self.arm.set_goal_tolerance(arm_goal_tolerance)
-        self.scene = moveit_commander.PlanningSceneInterface()
+        try:
+            rospy.loginfo('waiting for move_group action server')
+            moveit_commander.roscpp_initialize(sys.argv)
+            self.robot = moveit_commander.RobotCommander()
+            self.arm = moveit_commander.MoveGroupCommander(arm_group_name, wait_for_servers=10.0)
+            self.robot.arm.set_planning_time(planning_time)
+            self.gripper = moveit_commander.MoveGroupCommander(gripper_group_name, wait_for_servers=10.0)
+            self.arm.set_goal_tolerance(arm_goal_tolerance)
+            self.scene = moveit_commander.PlanningSceneInterface()
+            rospy.loginfo('found move_group action server')
+        except RuntimeError:
+            rospy.logfatal('grasplan pick server could not connect to Moveit in time, exiting! \n' + traceback.format_exc())
+            rospy.signal_shutdown('fatal error')
 
         # keep memory about the last object we have grasped
         self.grasped_object = ''
@@ -305,7 +315,7 @@ class PickTools():
         self.obj_pose_pub.publish(object_pose) # publish pose for debugging purposes
 
         self.scene.add_box(object_to_pick.get_object_class_and_id_as_string(), object_pose,\
-                           (bounding_box[0], bounding_box[1], bounding_box[2]))
+                           (bounding_box[0], bounding_box[1], bounding_box[2] + 2))
 
         # print objects that were added to the planning scene
         rospy.loginfo(f'planning scene objects: {self.scene.get_known_object_names()}')
