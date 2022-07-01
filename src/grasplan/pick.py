@@ -43,23 +43,15 @@ class PickTools():
         import_class = rospy.get_param('~import_class', 'SimpleGraspPlanner')
         # TODO: include octomap
 
+        # keep memory about the last object we have grasped
+        self.grasped_object = ''
+
         # to be able to transform PoseStamped later in the code
         #self.transformer = tf.listener.TransformerROS()
         self.tf_listener = TransformListener()
 
         # import grasp planner and make object out of it
         self.grasp_planner = getattr(importlib.import_module(import_file), import_class)()
-
-        # subscriptions and publications
-        rospy.Subscriber('~event_in', String, self.eventInCB)
-        rospy.Subscriber('~grasp_type', String, self.graspTypeCB) # TODO remove, get from actionlib
-        self.grasp_type = 'side_grasp' # TODO remove, get from actionlib
-        self.event_out_pub = rospy.Publisher('~event_out', String, queue_size=1)
-        self.trigger_perception_pub = rospy.Publisher('/object_recognition/event_in', String, queue_size=1)
-
-        # action lib server
-        self.pick_action_server = actionlib.SimpleActionServer('pick_object', PickObjectAction, self.pick_obj_action_callback, False)
-        self.pick_action_server.start()
 
         # service clients
         try:
@@ -89,11 +81,21 @@ class PickTools():
             rospy.logfatal('grasplan pick server could not connect to Moveit in time, exiting! \n' + traceback.format_exc())
             rospy.signal_shutdown('fatal error')
 
-        # keep memory about the last object we have grasped
-        self.grasped_object = ''
-
         # to publish object pose for debugging purposes
         self.obj_pose_pub = rospy.Publisher('~obj_pose', PoseStamped, queue_size=1)
+
+        # publishers
+        self.event_out_pub = rospy.Publisher('~event_out', String, queue_size=1)
+        self.trigger_perception_pub = rospy.Publisher('/object_recognition/event_in', String, queue_size=1)
+
+        # subscribers
+        self.grasp_type = 'side_grasp' # TODO remove, get from actionlib
+        rospy.Subscriber('~event_in', String, self.eventInCB)
+        rospy.Subscriber('~grasp_type', String, self.graspTypeCB) # TODO remove, get from actionlib
+
+        # action lib server
+        self.pick_action_server = actionlib.SimpleActionServer('pick_object', PickObjectAction, self.pick_obj_action_callback, False)
+        self.pick_action_server.start()
 
         rospy.loginfo('pick node ready!')
 
