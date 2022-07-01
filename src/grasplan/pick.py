@@ -66,8 +66,8 @@ class PickTools():
             pose_selector_activate_name = '/pose_selector_activate'
             pose_selector_query_name = '/pose_selector_class_query'
             rospy.loginfo(f'waiting for pose selector services: {pose_selector_activate_name}, {pose_selector_query_name}')
-            rospy.wait_for_service(pose_selector_activate_name, 2.0)
-            rospy.wait_for_service(pose_selector_query_name, 2.0)
+            rospy.wait_for_service(pose_selector_activate_name, 30.0)
+            rospy.wait_for_service(pose_selector_query_name, 30.0)
             self.activate_pose_selector_srv = rospy.ServiceProxy(pose_selector_activate_name, SetBool)
             self.pose_selector_class_query_srv = rospy.ServiceProxy(pose_selector_query_name, ClassQuery)
             rospy.loginfo('found pose selector services')
@@ -79,9 +79,9 @@ class PickTools():
             rospy.loginfo('waiting for move_group action server')
             moveit_commander.roscpp_initialize(sys.argv)
             self.robot = moveit_commander.RobotCommander()
-            self.arm = moveit_commander.MoveGroupCommander(arm_group_name, wait_for_servers=10.0)
+            self.arm = moveit_commander.MoveGroupCommander(arm_group_name, wait_for_servers=30.0)
             self.robot.arm.set_planning_time(planning_time)
-            self.gripper = moveit_commander.MoveGroupCommander(gripper_group_name, wait_for_servers=10.0)
+            self.gripper = moveit_commander.MoveGroupCommander(gripper_group_name, wait_for_servers=30.0)
             self.arm.set_goal_tolerance(arm_goal_tolerance)
             self.scene = moveit_commander.PlanningSceneInterface()
             rospy.loginfo('found move_group action server')
