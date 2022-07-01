@@ -189,7 +189,16 @@ class PickTools():
 
     def move_gripper_to_posture(self, gripper_posture_name):
         '''
-        use moveit commander to send the gripper to a predefined arm configuration
+        WARNING, THIS FUNCTION SHOULD NOT BE USED!
+
+        The gripper configurations in the SRDF are in radians, but the actual
+        gripper action server (/mobipick/gripper_hw, type
+        control_msgs/GripperCommand) expects values in meters. This means that
+        when this function is used to send the gripper to the "opened"
+        position, it will close and vice versa. Use the GripperCommand action
+        server directly instead.
+
+        use moveit commander to send the gripper to a predefined configuration
         defined in srdf
         '''
         self.gripper.set_named_target(gripper_posture_name)
