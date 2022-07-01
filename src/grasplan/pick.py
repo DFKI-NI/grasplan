@@ -68,10 +68,8 @@ class PickTools():
             rospy.loginfo('waiting for move_group action server')
             moveit_commander.roscpp_initialize(sys.argv)
             self.robot = moveit_commander.RobotCommander()
-            self.arm = moveit_commander.MoveGroupCommander(arm_group_name, wait_for_servers=30.0)
             self.robot.arm.set_planning_time(planning_time)
-            self.gripper = moveit_commander.MoveGroupCommander(gripper_group_name, wait_for_servers=30.0)
-            self.arm.set_goal_tolerance(arm_goal_tolerance)
+            self.robot.arm.set_goal_tolerance(arm_goal_tolerance)
             self.scene = moveit_commander.PlanningSceneInterface()
             rospy.loginfo('found move_group action server')
         except RuntimeError:
@@ -177,12 +175,12 @@ class PickTools():
         defined in srdf
         '''
         rospy.loginfo(f'moving arm to {arm_posture_name}')
-        self.arm.set_named_target(arm_posture_name)
+        self.robot.arm.set_named_target(arm_posture_name)
         # attempt to move it 2 times, (sometimes fails with only 1 time)
-        if not self.arm.go():
+        if not self.robot.arm.go():
             rospy.logwarn(f'failed to move arm to posture: {arm_posture_name}, will retry one more time in 1 sec')
             rospy.sleep(1.0)
-            self.arm.go()
+            self.robot.arm.go()
 
     def move_gripper_to_posture(self, gripper_posture_name):
         '''
@@ -198,8 +196,8 @@ class PickTools():
         use moveit commander to send the gripper to a predefined configuration
         defined in srdf
         '''
-        self.gripper.set_named_target(gripper_posture_name)
-        self.gripper.go()
+        self.robot.gripper.set_named_target(gripper_posture_name)
+        self.robot.gripper.go()
 
     def print_moveit_error_helper(self, error_code, moveit_error_code, moveit_error_string):
         '''
@@ -244,7 +242,7 @@ class PickTools():
 
     def detach_all_objects(self):
         for attached_object in self.scene.get_attached_objects().keys():
-            self.gripper.detach_object(name=attached_object)
+            self.robot.gripper.detach_object(name=attached_object)
 
     def pick_object(self, object_name_as_string, grasp_type):
         '''
@@ -331,7 +329,7 @@ class PickTools():
         rospy.loginfo(f'picking object now')
 
         # generate a list of moveit grasp messages, poses are also published for visualisation purposes
-        grasps = self.grasp_planner.make_grasps_msgs(object_to_pick.get_object_class_and_id_as_string(), object_pose, self.arm.get_end_effector_link(), grasp_type)
+        grasps = self.grasp_planner.make_grasps_msgs(object_to_pick.get_object_class_and_id_as_string(), object_pose, self.robot.arm.get_end_effector_link(), grasp_type)
 
         # remove octomap, table and object are added manually to planning scene
         self.clear_octomap()
