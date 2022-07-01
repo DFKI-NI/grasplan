@@ -95,7 +95,7 @@ class PickTools():
         rospy.loginfo('pick node ready!')
 
     def pick_obj_action_callback(self, goal):
-        resp = self.pick_object(goal.object_name, self.grasp_type)
+        resp = self.pick_object(goal.object_name, goal.support_surface_name, self.grasp_type)
         if resp is None:
             self.pick_action_server.set_aborted(PickObjectResult(success=False))
         elif resp.data == 'e_success':
@@ -244,7 +244,7 @@ class PickTools():
         for attached_object in self.scene.get_attached_objects().keys():
             self.robot.gripper.detach_object(name=attached_object)
 
-    def pick_object(self, object_name_as_string, grasp_type):
+    def pick_object(self, object_name_as_string, support_surface_name, grasp_type):
         '''
         1) move arm to a position where the attached camera can see the scene (octomap will be populated)
         2) clear octomap
@@ -335,7 +335,7 @@ class PickTools():
         self.clear_octomap()
 
         # try to pick object with moveit
-        ### TODO self.scene set support surface name
+        self.robot.arm.set_support_surface_name(support_surface_name)
         result = self.robot.arm.pick(object_to_pick.get_object_class_and_id_as_string(), grasps)
         rospy.loginfo(f'moveit result code: {result}')
         # handle moveit pick result

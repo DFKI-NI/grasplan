@@ -8,13 +8,16 @@ from pbr_msgs.msg import PickObjectAction, PickObjectGoal
 
 if __name__ == '__main__':
     rospy.init_node('pick_object_action_client')
-    rospy.loginfo(f'arguments given : {len(sys.argv)}')
-    object_to_pick = 'multimeter'
     if len(sys.argv) > 1:
         if sys.argv[1] != '__ns:=mobipick':
             rospy.logwarn('have you run this node without the mobipick as namespace? if so, it might not work!')
-        if len(sys.argv) > 2:
-            object_to_pick = sys.argv[2]
+
+        myargv = rospy.myargv()
+        if len(myargv) != 3:
+            rospy.logfatal(f'Usage: {myargv[0]} object_to_pick support_surface_name')
+            sys.exit(1)
+        object_to_pick = myargv[1]
+        support_surface_name = myargv[2]
     else:
         rospy.logwarn('you have run this node without arguments, at least the mobipick namespace is expected! ( __ns:=mobipick )')
     timeout = 50.0 # in seconds, default: 50.0
@@ -25,6 +28,7 @@ if __name__ == '__main__':
         rospy.loginfo(f'found {pick_object_server_name} action server')
         goal = PickObjectGoal()
         goal.object_name = object_to_pick # pick "any" multimeter
+        goal.support_surface_name = support_surface_name
         #goal.object_name = 'multimeter_1' # pick a specific multimeter
         rospy.loginfo(f'sending pick {object_to_pick} goal to {pick_object_server_name} action server')
         action_client.send_goal(goal)
