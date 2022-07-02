@@ -6,6 +6,7 @@ example on how to pick an object using grasplan and moveit
 
 import sys
 import importlib
+import traceback
 
 import rospy
 import actionlib
@@ -50,12 +51,43 @@ class PickTools():
         # import grasp planner and make object out of it
         self.grasp_planner = getattr(importlib.import_module(import_file), import_class)()
 
-        # subscriptions and publications
-        rospy.Subscriber('~event_in', String, self.eventInCB)
-        rospy.Subscriber('~grasp_type', String, self.graspTypeCB) # TODO remove, get from actionlib
-        self.grasp_type = 'side_grasp' # TODO remove, get from actionlib
+        # service clients
+        try:
+            pose_selector_activate_name = '/pose_selector_activate'
+            pose_selector_query_name = '/pose_selector_class_query'
+            rospy.loginfo(f'waiting for pose selector services: {pose_selector_activate_name}, {pose_selector_query_name}')
+            rospy.wait_for_service(pose_selector_activate_name, 30.0)
+            rospy.wait_for_service(pose_selector_query_name, 30.0)
+            self.activate_pose_selector_srv = rospy.ServiceProxy(pose_selector_activate_name, SetBool)
+            self.pose_selector_class_query_srv = rospy.ServiceProxy(pose_selector_query_name, ClassQuery)
+            rospy.loginfo('found pose selector services')
+        except rospy.exceptions.ROSException:
+            rospy.logfatal('grasplan pick server could not find pose selector services in time, exiting! \n' + traceback.format_exc())
+            rospy.signal_shutdown('fatal error')
+
+        try:
+            rospy.loginfo('waiting for move_group action server')
+            moveit_commander.roscpp_initialize(sys.argv)
+            self.robot = moveit_commander.RobotCommander()
+            self.robot.arm.set_planning_time(planning_time)
+            self.robot.arm.set_goal_tolerance(arm_goal_tolerance)
+            self.scene = moveit_commander.PlanningSceneInterface()
+            rospy.loginfo('found move_group action server')
+        except RuntimeError:
+            rospy.logfatal('grasplan pick server could not connect to Moveit in time, exiting! \n' + traceback.format_exc())
+            rospy.signal_shutdown('fatal error')
+
+        # to publish object pose for debugging purposes
+        self.obj_pose_pub = rospy.Publisher('~obj_pose', PoseStamped, queue_size=1)
+
+        # publishers
         self.event_out_pub = rospy.Publisher('~event_out', String, queue_size=1)
         self.trigger_perception_pub = rospy.Publisher('/object_recognition/event_in', String, queue_size=1)
+
+        # subscribers
+        self.grasp_type = 'side_grasp' # TODO remove, get from actionlib
+        rospy.Subscriber('~event_in', String, self.eventInCB)
+        rospy.Subscriber('~grasp_type', String, self.graspTypeCB) # TODO remove, get from actionlib
 
         # action lib server
         self.pick_action_server = actionlib.SimpleActionServer('pick_object', PickObjectAction, self.pick_obj_action_callback, False)
@@ -89,7 +121,7 @@ class PickTools():
         rospy.loginfo('pick node ready!')
 
     def pick_obj_action_callback(self, goal):
-        resp = self.pick_object(goal.object_name, self.grasp_type)
+        resp = self.pick_object(goal.object_name, goal.support_surface_name, self.grasp_type)
         if resp is None:
             self.pick_action_server.set_aborted(PickObjectResult(success=False))
         elif resp.data == 'e_success':
@@ -170,31 +202,35 @@ class PickTools():
         defined in srdf
         '''
         rospy.loginfo(f'moving arm to {arm_posture_name}')
-        self.arm.set_named_target(arm_posture_name)
+        self.robot.arm.set_named_target(arm_posture_name)
         # attempt to move it 2 times, (sometimes fails with only 1 time)
-        if not self.arm.go():
+        if not self.robot.arm.go():
             rospy.logwarn(f'failed to move arm to posture: {arm_posture_name}, will retry one more time in 1 sec')
             rospy.sleep(1.0)
-            self.arm.go()
+            self.robot.arm.go()
 
     def move_gripper_to_posture(self, gripper_posture_name):
         '''
-        use moveit commander to send the gripper to a predefined arm configuration
+        WARNING, THIS FUNCTION SHOULD NOT BE USED!
+
+        The gripper configurations in the SRDF are in radians, but the actual
+        gripper action server (/mobipick/gripper_hw, type
+        control_msgs/GripperCommand) expects values in meters. This means that
+        when this function is used to send the gripper to the "opened"
+        position, it will close and vice versa. Use the GripperCommand action
+        server directly instead.
+
+        use moveit commander to send the gripper to a predefined configuration
         defined in srdf
         '''
-        self.gripper.set_named_target(gripper_posture_name)
-        self.gripper.go()
+        self.robot.gripper.set_named_target(gripper_posture_name)
+        self.robot.gripper.go()
 
     def detach_all_objects(self):
-        '''
-        usually self.gripper.detach_object() should do the trick, however it doesn't work
-        therefore we keep in memory the objects we grasped in the past and deattached them by their name explicitely
-        '''
-        if self.grasped_object != '':
-            self.gripper.detach_object(name=self.grasped_object)
-            self.grasped_object = ''
+        for attached_object in self.scene.get_attached_objects().keys():
+            self.robot.gripper.detach_object(name=attached_object)
 
-    def pick_object(self, object_name_as_string, grasp_type):
+    def pick_object(self, object_name_as_string, support_surface_name, grasp_type):
         '''
         1) move arm to a position where the attached camera can see the scene (octomap will be populated)
         2) clear octomap
@@ -224,7 +260,7 @@ class PickTools():
             # populate pose selector with pose information
             resp = self.activate_pose_selector_srv(True)
             # wait until pose selector gets updates
-            rospy.sleep(1.0)
+            rospy.sleep(10.0)
             # deactivate pose selector detections
             resp = self.activate_pose_selector_srv(False)
 
@@ -279,18 +315,18 @@ class PickTools():
         rospy.loginfo(f'picking object now')
 
         # generate a list of moveit grasp messages, poses are also published for visualisation purposes
-        grasps = self.grasp_planner.make_grasps_msgs(object_to_pick.get_object_class_and_id_as_string(), object_pose, self.arm.get_end_effector_link(), grasp_type)
+        grasps = self.grasp_planner.make_grasps_msgs(object_to_pick.get_object_class_and_id_as_string(), object_pose, self.robot.arm.get_end_effector_link(), grasp_type)
 
         # remove octomap, table and object are added manually to planning scene
         self.clear_octomap()
 
         # try to pick object with moveit
+        self.robot.arm.set_support_surface_name(support_surface_name)
         result = self.robot.arm.pick(object_to_pick.get_object_class_and_id_as_string(), grasps)
         rospy.loginfo(f'moveit result code: {result}')
         # handle moveit pick result
         if result == MoveItErrorCodes.SUCCESS:
             rospy.loginfo(f'Successfully picked object : {object_to_pick.get_object_class_and_id_as_string()}')
-            self.grasped_object = object_to_pick.get_object_class_and_id_as_string()
             return String('e_success')
         else:
             rospy.logerr(f'grasp failed')

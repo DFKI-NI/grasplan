@@ -18,7 +18,7 @@ class TestCommonGraspTools(unittest.TestCase):
         self.assertEquals(separate_object_class_from_id('power_drill_with_grip_3'), ('power_drill_with_grip', 3))
 
     def test_underscore_with_id_and_num_middle(self):
-        self.assertEquals(separate_object_class_from_id('powerdrill2_34with_grip_3'), ('powerdrill2_34with_grip', 3))
+        self.assertEquals(separate_object_class_from_id('power_drill2_34with_grip_3'), ('power_drill2_34with_grip', 3))
 
     def test_klt_2(self):
         self.assertEquals(separate_object_class_from_id('klt_2'), ('klt', 2))
@@ -29,8 +29,8 @@ class TestCommonGraspTools(unittest.TestCase):
     def test_power_drill_with_grip_1(self):
         self.assertEquals(separate_object_class_from_id('power_drill_with_grip_1'), ('power_drill_with_grip', 1))
 
-    def test_powerdrill(self):
-        self.assertEquals(separate_object_class_from_id('powerdrill'), ('powerdrill', None))
+    def test_power_drill(self):
+        self.assertEquals(separate_object_class_from_id('power_drill'), ('power_drill', None))
 
     def test_screwdriver_1(self):
         self.assertEquals(separate_object_class_from_id('screwdriver_1'), ('screwdriver', 1))
