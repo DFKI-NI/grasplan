@@ -17,16 +17,15 @@ Query poses from pose selector and publish them as markers in rviz for visualisa
 
 class PoseSelectorVisualiser:
     def __init__(self, wait_for_pose_selector_srv=True):
-        self.color = rospy.get_param('~object_color_rgba', [0,0,0,0]) # 1.0, 0.0, 1.0, 1.0 : magenta
-        self.objects_of_interest = rospy.get_param('~objects_of_interest', ['multimeter', 'klt', 'powerdrill_with_grip', 'screwdriver', 'relay'])
+        self.color = rospy.get_param('~object_color_rgba', [0,0,0,0])
+        self.objects_of_interest = rospy.get_param('~objects_of_interest', ['multimeter', 'klt', 'power_drill_with_grip', 'screwdriver', 'relay'])
         self.object_pkg = rospy.get_param('~object_pkg', 'mobipick_gazebo')
         self.objects_mesh_publisher = rospy.Publisher('pose_selector_objects', MarkerArray, queue_size=1, latch=True)
-        self.object_mesh_publisher_test = rospy.Publisher('pose_selector_object_test', Marker, queue_size=1, latch=True)
-        pose_selector_query_name = '/pose_selector_class_query'
-        rospy.loginfo(f'waiting for pose selector service: {pose_selector_query_name}')
+        pose_selector_query_srv_name = rospy.get_param('~pose_selector_query_srv_name', '/pose_selector_class_query')
+        rospy.loginfo(f'waiting for pose selector service: {pose_selector_query_srv_name}')
         if wait_for_pose_selector_srv:
-            rospy.wait_for_service(pose_selector_query_name, 2.0)
-        self.pose_selector_class_query_srv = rospy.ServiceProxy(pose_selector_query_name, ClassQuery)
+            rospy.wait_for_service(pose_selector_query_srv_name, 2.0)
+        self.pose_selector_class_query_srv = rospy.ServiceProxy(pose_selector_query_srv_name, ClassQuery)
         rospy.loginfo('found pose selector services')
         rospy.sleep(0.5)
         rospy.loginfo('pose selector visualiser node started')
@@ -61,8 +60,8 @@ class PoseSelectorVisualiser:
     def make_obj_marker_msg(self, object_name, mesh_pose, id=1):
         assert isinstance(object_name, str)
         assert isinstance(mesh_pose, PoseStamped)
-        if object_name == 'powerdrill_with_grip':
-            mesh_pose = self.rotate_pose(mesh_pose, roll=3.1415) # TODO manage better
+        if object_name == 'power_drill_with_grip':
+            mesh_pose = self.rotate_pose(mesh_pose, roll=3.1415) # HACK
         mesh_path = f'package://{self.object_pkg}/meshes/{object_name}.dae'
         marker_msg = self.make_mesh_marker_msg(mesh_path, mesh_pose, id=id, color=self.color)
         return marker_msg
@@ -84,7 +83,8 @@ class PoseSelectorVisualiser:
                     id += 1
             else:
                 rospy.logdebug(f'Object of class {object_of_interest} is not in pose selector')
-        self.objects_mesh_publisher.publish(marker_array_msg)
+        if len(marker_array_msg.markers) > 0:
+            self.objects_mesh_publisher.publish(marker_array_msg)
 
     def start_pose_selector_visualiser(self):
         while not rospy.is_shutdown():

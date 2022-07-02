@@ -4,6 +4,7 @@ import tf
 import rospy
 import std_msgs
 import geometry_msgs
+from pose_selector.srv import ClassQuery
 from geometry_msgs.msg import PoseStamped, PoseArray
 from visualization_msgs.msg import Marker
 from grasplan.grasp_planner.handcoded_grasp_planner import HandcodedGraspPlanner
