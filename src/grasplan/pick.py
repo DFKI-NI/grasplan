@@ -17,6 +17,7 @@ from std_msgs.msg import String
 from std_srvs.srv import Empty, SetBool
 from pose_selector.srv import ClassQuery
 from geometry_msgs.msg import PoseStamped
+from grasplan.tools.moveit_errors import print_moveit_error
 from moveit_msgs.msg import MoveItErrorCodes
 from pbr_msgs.msg import PickObjectAction, PickObjectResult
 from grasplan.common_grasp_tools import objectToPick
@@ -36,7 +37,7 @@ class PickTools():
         # if true the arm is moved to a pose where objects are inside fov and pose selector is triggered to accept obj pose updates
         self.perceive_object = rospy.get_param('~perceive_object', True)
         # the arm pose where the objects are inside the fov (used to move the arm to perceive objs right after)
-        self.arm_pose_with_objs_in_fov = rospy.get_param('~arm_pose_with_objs_in_fov', 'observe100cm_left')
+        self.arm_pose_with_objs_in_fov = rospy.get_param('~arm_pose_with_objs_in_fov', 'observe100cm_right')
         # configure the desired grasp planner to use
         import_file = rospy.get_param('~import_file', 'grasp_planner.simple_pregrasp_planner')
         import_class = rospy.get_param('~import_class', 'SimpleGraspPlanner')
@@ -61,8 +62,8 @@ class PickTools():
         self.pick_action_server.start()
 
         # service clients
-        pose_selector_activate_name = '/pose_selector_activate'
-        pose_selector_query_name = '/pose_selector_class_query'
+        pose_selector_activate_name = rospy.get_param('~pose_selector_activate_srv_name', '/pose_selector_activate')
+        pose_selector_query_name = rospy.get_param('~pose_selector_class_query_srv_name', '/pose_selector_class_query')
         rospy.loginfo(f'waiting for pose selector services: {pose_selector_activate_name}, {pose_selector_query_name}')
         rospy.wait_for_service(pose_selector_activate_name, 2.0)
         rospy.wait_for_service(pose_selector_query_name, 2.0)
@@ -95,6 +96,7 @@ class PickTools():
             self.pick_action_server.set_succeeded(PickObjectResult(success=True))
         elif resp.data == 'e_failure':
             self.pick_action_server.set_aborted(PickObjectResult(success=False))
+        self.pick_action_server.set_aborted(PickObjectResult(success=False))
 
     def graspTypeCB(self, msg):
         self.grasp_type = msg.data
@@ -182,47 +184,6 @@ class PickTools():
         '''
         self.gripper.set_named_target(gripper_posture_name)
         self.gripper.go()
-
-    def print_moveit_error_helper(self, error_code, moveit_error_code, moveit_error_string):
-        '''
-        function that helps print_moveit_error method to have less code
-        '''
-        if error_code == moveit_error_code:
-            rospy.logwarn(f'moveit says : {moveit_error_string}')
-
-    def print_moveit_error(self, error_code):
-        '''
-        receive moveit result, compare with error codes, print what happened
-        '''
-        self.print_moveit_error_helper(error_code, MoveItErrorCodes.PLANNING_FAILED, 'PLANNING_FAILED')
-        self.print_moveit_error_helper(error_code, MoveItErrorCodes.INVALID_MOTION_PLAN, 'INVALID_MOTION_PLAN')
-        self.print_moveit_error_helper(error_code, MoveItErrorCodes.MOTION_PLAN_INVALIDATED_BY_ENVIRONMENT_CHANGE,\
-                                                                                'MOTION_PLAN_INVALIDATED_BY_ENVIRONMENT_CHANGE')
-        self.print_moveit_error_helper(error_code, MoveItErrorCodes.CONTROL_FAILED, 'CONTROL_FAILED')
-        self.print_moveit_error_helper(error_code, MoveItErrorCodes.UNABLE_TO_AQUIRE_SENSOR_DATA, 'UNABLE_TO_AQUIRE_SENSOR_DATA')
-        self.print_moveit_error_helper(error_code, MoveItErrorCodes.TIMED_OUT, 'TIMED_OUT')
-        self.print_moveit_error_helper(error_code, MoveItErrorCodes.PREEMPTED, 'PREEMPTED')
-
-        self.print_moveit_error_helper(error_code, MoveItErrorCodes.START_STATE_IN_COLLISION, 'START_STATE_IN_COLLISION')
-        self.print_moveit_error_helper(error_code, MoveItErrorCodes.START_STATE_VIOLATES_PATH_CONSTRAINTS, 'START_STATE_VIOLATES_PATH_CONSTRAINTS')
-
-        self.print_moveit_error_helper(error_code, MoveItErrorCodes.GOAL_IN_COLLISION, 'GOAL_IN_COLLISION')
-        self.print_moveit_error_helper(error_code, MoveItErrorCodes.GOAL_VIOLATES_PATH_CONSTRAINTS, 'GOAL_VIOLATES_PATH_CONSTRAINTS')
-        self.print_moveit_error_helper(error_code, MoveItErrorCodes.GOAL_CONSTRAINTS_VIOLATED, 'GOAL_CONSTRAINTS_VIOLATED')
-
-        self.print_moveit_error_helper(error_code, MoveItErrorCodes.INVALID_GROUP_NAME, 'INVALID_GROUP_NAME')
-        self.print_moveit_error_helper(error_code, MoveItErrorCodes.INVALID_GOAL_CONSTRAINTS, 'INVALID_GOAL_CONSTRAINTS')
-        self.print_moveit_error_helper(error_code, MoveItErrorCodes.INVALID_ROBOT_STATE, 'INVALID_ROBOT_STATE')
-        self.print_moveit_error_helper(error_code, MoveItErrorCodes.INVALID_LINK_NAME, 'INVALID_LINK_NAME')
-        self.print_moveit_error_helper(error_code, MoveItErrorCodes.INVALID_OBJECT_NAME, 'INVALID_OBJECT_NAME')
-
-        self.print_moveit_error_helper(error_code, MoveItErrorCodes.FRAME_TRANSFORM_FAILURE, 'FRAME_TRANSFORM_FAILURE')
-        self.print_moveit_error_helper(error_code, MoveItErrorCodes.COLLISION_CHECKING_UNAVAILABLE, 'COLLISION_CHECKING_UNAVAILABLE')
-        self.print_moveit_error_helper(error_code, MoveItErrorCodes.ROBOT_STATE_STALE, 'ROBOT_STATE_STALE')
-        self.print_moveit_error_helper(error_code, MoveItErrorCodes.SENSOR_INFO_STALE, 'SENSOR_INFO_STALE')
-        self.print_moveit_error_helper(error_code, MoveItErrorCodes.COMMUNICATION_FAILURE, 'COMMUNICATION_FAILURE')
-
-        self.print_moveit_error_helper(error_code, MoveItErrorCodes.NO_IK_SOLUTION, 'NO_IK_SOLUTION')
 
     def detach_all_objects(self):
         '''
@@ -333,7 +294,7 @@ class PickTools():
             return String('e_success')
         else:
             rospy.logerr(f'grasp failed')
-            self.print_moveit_error(result)
+            print_moveit_error(result)
         return String('e_failure')
 
     def start_pick_node(self):
