@@ -173,7 +173,7 @@ class PickTools():
         '''
         call service to clear octomap
         '''
-        rospy.loginfo('clearing octomap')
+        rospy.logwarn('Clearing octomap')
         rospy.ServiceProxy(octomap_srv_name, Empty)()
 
     def move_arm_to_posture(self, arm_posture_name):
@@ -299,7 +299,6 @@ class PickTools():
 
         # clear octomap from the planning scene if needed
         if self.clear_octomap_flag:
-            rospy.logwarn('Clearing octomap')
             self.clear_octomap()
 
         # try to pick object with moveit
