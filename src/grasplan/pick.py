@@ -52,12 +52,12 @@ class PickTools():
         self.grasp_planner = getattr(importlib.import_module(import_file), import_class)()
 
         # service clients
+        pose_selector_activate_name = rospy.get_param('~pose_selector_activate_srv_name', '/pose_selector_activate')
+        pose_selector_query_name = rospy.get_param('~pose_selector_class_query_srv_name', '/pose_selector_class_query')
+        rospy.loginfo(f'waiting for pose selector services: {pose_selector_activate_name}, {pose_selector_query_name}')
+        rospy.wait_for_service(pose_selector_activate_name, 30.0)
+        rospy.wait_for_service(pose_selector_query_name, 30.0)
         try:
-            pose_selector_activate_name = '/pose_selector_activate'
-            pose_selector_query_name = '/pose_selector_class_query'
-            rospy.loginfo(f'waiting for pose selector services: {pose_selector_activate_name}, {pose_selector_query_name}')
-            rospy.wait_for_service(pose_selector_activate_name, 30.0)
-            rospy.wait_for_service(pose_selector_query_name, 30.0)
             self.activate_pose_selector_srv = rospy.ServiceProxy(pose_selector_activate_name, SetBool)
             self.pose_selector_class_query_srv = rospy.ServiceProxy(pose_selector_query_name, ClassQuery)
             rospy.loginfo('found pose selector services')
