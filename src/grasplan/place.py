@@ -22,6 +22,8 @@ from geometry_msgs.msg import Vector3Stamped, PoseStamped, Pose
 from moveit_msgs.msg import PlaceAction, PlaceGoal, PlaceLocation, GripperTranslation, PlanningOptions
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from visualization_msgs.msg import Marker
+from pbr_msgs.msg import PlaceObjectAction, PlaceObjectResult
+from moveit_msgs.msg import MoveItErrorCodes
 
 class PlaceTools():
     def __init__(self):
@@ -46,16 +48,43 @@ class PlaceTools():
 
         self.plane_vis_pub = rospy.Publisher('~support_plane_as_marker', Marker, queue_size=1, latch=True)
         self.place_poses_pub = rospy.Publisher('~place_poses', ObjectList, queue_size=50, latch=True)
-        rospy.Subscriber('~event_in', String, self.eventInCB)
 
-    def eventInCB(self, msg):
-        self.place_obj('power_drill_with_grip_2', support_object=msg.data)
+        try:
+            rospy.loginfo('waiting for move_group action server')
+            moveit_commander.roscpp_initialize(sys.argv)
+            #self.robot = moveit_commander.RobotCommander()
+            #self.robot.arm.set_planning_time(planning_time)
+            #self.robot.arm.set_goal_tolerance(arm_goal_tolerance)
+            self.scene = moveit_commander.PlanningSceneInterface()
+            rospy.loginfo('found move_group action server')
+        except RuntimeError:
+            rospy.logfatal('grasplan place server could not connect to Moveit in time, exiting! \n' + traceback.format_exc())
+            rospy.signal_shutdown('fatal error')
 
-    def place_obj(self, object_to_be_placed, support_object='table_2'):
+        # offer action lib server for object placing
+        self.place_action_server = actionlib.SimpleActionServer('place_object', PlaceObjectAction, self.place_obj_action_callback, False)
+        self.place_action_server.start()
+
+    def place_obj_action_callback(self, goal):
+        if self.place_object(goal.support_surface_name):
+            self.place_action_server.set_succeeded(PlaceObjectResult(success=True))
+        else:
+            self.place_action_server.set_aborted(PlaceObjectResult(success=False))
+
+    def place_object(self, support_object):
         '''
         create action lib client and call moveit place action server
         '''
-        rospy.loginfo(f'received request to place object {object_to_be_placed}')
+        rospy.loginfo('received request to place object')
+
+        if len(self.scene.get_attached_objects().keys()) == 0:
+            rospy.logerr("the robot is not currently holding any object, can't place")
+            return False
+
+        # deduce object_to_be_placed by querying which object the gripper currently has attached to its gripper
+        object_to_be_placed = list(self.scene.get_attached_objects().keys())[0]
+        rospy.loginfo(f'received request to place the object that the robot is currently holding : {object_to_be_placed}')
+
         action_client = actionlib.SimpleActionClient(self.place_object_server_name, PlaceAction)
         rospy.loginfo(f'waiting for {self.place_object_server_name} action server')
         object_to_pick = object_to_be_placed
@@ -114,19 +143,26 @@ class PlaceTools():
 
                 # ---
 
-                print_moveit_error(result.error_code.val)
-
-                # ---
-
                 # how to know if place was successful from result?
                 # if result.success == True:
                     # rospy.loginfo(f'Succesfully placed {object_to_be_placed}')
                 # else:
                     # rospy.logerr(f'Failed to place {object_to_be_placed}')
-            else:
-                rospy.logerr(f'Failed to place {object_to_be_placed}, timeout?')
+
+                # ---
+
+                # handle moveit pick result
+                if result.error_code.val == MoveItErrorCodes.SUCCESS:
+                    rospy.loginfo(f'Successfully placed object')
+                    return True
+                else:
+                    rospy.logerr(f'place object failed')
+                    print_moveit_error(result.error_code.val)
+                return False
         else:
             rospy.logerr(f'action server {self.place_object_server_name} not available')
+            return False
+        return False
 
     def gen_place_poses(self):
         '''

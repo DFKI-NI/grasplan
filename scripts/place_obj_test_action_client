@@ -1,0 +1,43 @@
+#! /usr/bin/env python3
+
+import sys
+import rospy
+import actionlib
+
+from pbr_msgs.msg import PlaceObjectAction, PlaceObjectGoal
+
+if __name__ == '__main__':
+    rospy.init_node('place_object_action_client')
+    if len(sys.argv) > 1:
+        if sys.argv[1] != '__ns:=mobipick':
+            rospy.logwarn('have you run this node without the mobipick as namespace? if so, it might not work!')
+
+        myargv = rospy.myargv()
+        if len(myargv) != 2:
+            rospy.logfatal(f'Usage: {myargv[0]} support_surface_name')
+            sys.exit(1)
+        support_surface_name = myargv[1]
+    else:
+        rospy.logwarn('you have run this node without arguments, at least the mobiplace namespace is expected! ( __ns:=mobiplace )')
+    timeout = 50.0 # in seconds, default: 50.0
+    place_object_server_name = 'place_object'
+    action_client = actionlib.SimpleActionClient(place_object_server_name, PlaceObjectAction)
+    rospy.loginfo(f'waiting for {place_object_server_name} action server')
+    if action_client.wait_for_server(timeout=rospy.Duration.from_sec(10.0)):
+        rospy.loginfo(f'found {place_object_server_name} action server')
+        goal = PlaceObjectGoal()
+        goal.support_surface_name = support_surface_name
+        rospy.loginfo(f'sending place goal to {place_object_server_name} action server')
+        action_client.send_goal(goal)
+        rospy.loginfo(f'waiting for result from {place_object_server_name} action server')
+        if action_client.wait_for_result(rospy.Duration.from_sec(timeout)):
+            result = action_client.get_result()
+            rospy.loginfo(f'{place_object_server_name} is done with execution, resuĺt was = "{result}"')
+            if result.success == True:
+                rospy.loginfo(f'Succesfully placed object')
+            else:
+                rospy.logerr(f'Failed to place object')
+        else:
+            rospy.logerr(f'Failed to place object, timeout?')
+    else:
+        rospy.logerr(f'action server {place_object_server_name} not available')
