@@ -5,6 +5,7 @@ example on how to pick an object using grasplan and moveit
 '''
 
 import sys
+import copy
 import importlib
 import traceback
 
@@ -27,6 +28,8 @@ class PickTools():
     def __init__(self):
 
         # parameters
+        self.global_reference_frame = rospy.get_param('~global_reference_frame', 'map')
+        self.objects_of_interest = rospy.get_param('~objects_of_interest', ['multimeter', 'klt', 'power_drill_with_grip', 'screwdriver', 'relay'])
         arm_group_name = rospy.get_param('~arm_group_name', 'arm')
         gripper_group_name = rospy.get_param('~gripper_group_name', 'gripper')
         arm_goal_tolerance = rospy.get_param('~arm_goal_tolerance', 0.01)
@@ -124,43 +127,56 @@ class PickTools():
         self.tf_listener.getLatestCommonTime(target_reference_frame, pose.header.frame_id)
         return self.tf_listener.transformPose(target_reference_frame, pose)
 
-    def make_obj_pose_msg(self, obj_pose):
-        object_pose = PoseStamped()
-        object_pose.header.frame_id = 'map'
-        object_pose.pose.position.x = obj_pose.pose.position.x
-        object_pose.pose.position.y = obj_pose.pose.position.y
-        # set the collision model 5mm higher to avoid repeated collisions with the surface
-        padding = self.grasp_planner.get_object_padding()
-        object_pose.pose.position.z = obj_pose.pose.position.z + 0.005 + padding / 2.0
-        object_pose.pose.orientation.x = obj_pose.pose.orientation.x
-        object_pose.pose.orientation.y = obj_pose.pose.orientation.y
-        object_pose.pose.orientation.z = obj_pose.pose.orientation.z
-        object_pose.pose.orientation.w = obj_pose.pose.orientation.w
-        bounding_box_x = obj_pose.size.x
-        bounding_box_y = obj_pose.size.y
-        bounding_box_z = obj_pose.size.z
-        return object_pose, [bounding_box_x, bounding_box_y, bounding_box_z]
-
-    def make_object_pose(self, object_to_pick):
-        id = None
+    def make_object_pose_and_add_objs_to_planning_scene(self, object_to_pick):
+        assert isinstance(object_to_pick, objectToPick)
         # query pose selector
         resp = self.pose_selector_class_query_srv(object_to_pick.obj_class)
         if len(resp.poses) == 0:
             rospy.logerr(f'Object of class {object_to_pick.obj_class} was not perceived, therefore its pose is not available and cannot be picked')
             return None, None, None
-        object_pose = None
-        bounding_box = None
-        if object_to_pick.any_obj_id:
-            object_pose, bounding_box = self.make_obj_pose_msg(resp.poses[0])
-            id = resp.poses[0].instance_id
-        else:
-            for obj_pose in resp.poses:
-                if obj_pose.instance_id == object_to_pick.id:
-                    object_pose, bounding_box = self.make_obj_pose_msg(obj_pose)
-        if object_pose is None or bounding_box is None:
-            rospy.logerr(f'Found {object_to_pick.obj_class} but not the one you want to pick, with id: {object_to_pick.id}')
+        # at least one object of the same class as the object we want to pick was perceived, continue
+        object_to_pick_id = object_to_pick.id
+        object_to_pick_pose = None
+        object_to_pick_bounding_box = None
+        object_found = False
+        for object_of_interest in self.objects_of_interest:
+            # query pose selector
+            resp = self.pose_selector_class_query_srv(object_of_interest)
+            if len(resp.poses) > 0:
+                for pose_selector_object in resp.poses:
+                    # object name
+                    object_name = pose_selector_object.class_id + '_' + str(pose_selector_object.instance_id)
+                    pose_selector_object.instance_id
+                    # object pose
+                    pose_stamped_msg = PoseStamped()
+                    pose_stamped_msg.header.frame_id = self.global_reference_frame
+                    pose_stamped_msg.pose.position = pose_selector_object.pose.position
+                    pose_stamped_msg.pose.orientation = pose_selector_object.pose.orientation
+                    # bounding box
+                    object_bounding_box = []
+                    object_bounding_box.append(pose_selector_object.size.x)
+                    object_bounding_box.append(pose_selector_object.size.y)
+                    object_bounding_box.append(pose_selector_object.size.z)
+                    if object_to_pick.any_obj_id and object_to_pick.obj_class == pose_selector_object.class_id:
+                        object_to_pick_pose = copy.deepcopy(pose_stamped_msg)
+                        object_to_pick_bounding_box = copy.deepcopy(object_bounding_box)
+                        object_to_pick_id = copy.deepcopy(pose_selector_object.instance_id)
+                        object_found = True
+                        rospy.loginfo(f'found an instance of the object class you want to pick in pose selector: {object_name}')
+                    elif object_to_pick.get_object_class_and_id_as_string() == object_name:
+                        object_to_pick_pose = copy.deepcopy(pose_stamped_msg)
+                        object_to_pick_bounding_box = copy.deepcopy(object_bounding_box)
+                        object_to_pick_id = copy.deepcopy(pose_selector_object.instance_id)
+                        object_found = True
+                        rospy.loginfo(f'found specific object to be picked in pose selector: {object_name}')
+                    # add all perceived objects to planning scene (one at at time)
+                    self.scene.add_box(object_name, pose_stamped_msg, object_bounding_box)
+            else:
+                rospy.logdebug(f'object of class {object_of_interest} is not in pose selector')
+        if not object_found:
+            rospy.logerr(f'the specific object you want to pick was not found : {object_to_pick.get_object_class_and_id_as_string()}')
             return None, None, None
-        return self.transform_pose(object_pose, self.robot.get_planning_frame()), bounding_box, id
+        return self.transform_pose(object_to_pick_pose, self.robot.get_planning_frame()), object_to_pick_bounding_box, object_to_pick_id
 
     def clean_scene(self):
         '''
@@ -269,8 +285,8 @@ class PickTools():
             table_pose.pose.orientation.w = planning_scene_box['box_orientation_w']
             self.scene.add_box(planning_scene_box['scene_name'], table_pose, (box_x, box_y, box_z))
 
-        # add an object to be grasped, data comes from perception
-        object_pose, bounding_box, id = self.make_object_pose(object_to_pick)
+        # add all perceived objects of interest to planning scene and return the pose, bb, and id of the object to be picked
+        object_pose, bounding_box, id = self.make_object_pose_and_add_objs_to_planning_scene(object_to_pick)
 
         if object_pose is None:
             return False
@@ -281,8 +297,6 @@ class PickTools():
 
         self.obj_pose_pub.publish(object_pose) # publish pose for debugging purposes
 
-        self.scene.add_box(object_to_pick.get_object_class_and_id_as_string(), object_pose,\
-                           (bounding_box[0], bounding_box[1], bounding_box[2]))
 
         # print objects that were added to the planning scene
         rospy.loginfo(f'planning scene objects: {self.scene.get_known_object_names()}')
