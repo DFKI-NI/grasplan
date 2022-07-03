@@ -106,14 +106,10 @@ class PickTools():
         rospy.loginfo('pick node ready!')
 
     def pick_obj_action_callback(self, goal):
-        resp = self.pick_object(goal.object_name, goal.support_surface_name, self.grasp_type)
-        if resp is None:
-            self.pick_action_server.set_aborted(PickObjectResult(success=False))
-        elif resp.data == 'e_success':
+        if self.pick_object(goal.object_name, goal.support_surface_name, self.grasp_type):
             self.pick_action_server.set_succeeded(PickObjectResult(success=True))
-        elif resp.data == 'e_failure':
+        else:
             self.pick_action_server.set_aborted(PickObjectResult(success=False))
-        self.pick_action_server.set_aborted(PickObjectResult(success=False))
 
     def graspTypeCB(self, msg):
         self.grasp_type = msg.data
@@ -278,7 +274,7 @@ class PickTools():
         object_pose, bounding_box, id = self.make_object_pose(object_to_pick)
 
         if object_pose is None:
-            return String('e_failure')
+            return False
 
         # this condition is when user only specified object class but no id, then we assign the first available id
         if id is not None:
@@ -316,11 +312,11 @@ class PickTools():
         # handle moveit pick result
         if result == MoveItErrorCodes.SUCCESS:
             rospy.loginfo(f'Successfully picked object : {object_to_pick.get_object_class_and_id_as_string()}')
-            return String('e_success')
+            return True
         else:
             rospy.logerr(f'grasp failed')
             print_moveit_error(result)
-        return String('e_failure')
+        return False
 
     def start_pick_node(self):
         # wait for trigger via topic or action lib
