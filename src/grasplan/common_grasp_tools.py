@@ -46,8 +46,8 @@ class objectToPick():
         if id is None:
             self.any_obj_id = True
             return
-        self.id = str(id)
-        self.object_name = self.obj_class + '_' + self.id
+        self.id = id
+        self.object_name = self.obj_class + '_' + str(self.id)
 
     def set_any_object(self, value):
         assert isinstance(value, bool)

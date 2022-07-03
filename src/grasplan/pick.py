@@ -155,7 +155,7 @@ class PickTools():
             id = resp.poses[0].instance_id
         else:
             for obj_pose in resp.poses:
-                if str(obj_pose.instance_id) == str(object_to_pick.id):
+                if obj_pose.instance_id == object_to_pick.id:
                     object_pose, bounding_box = self.make_obj_pose_msg(obj_pose)
         if object_pose is None or bounding_box is None:
             rospy.logerr(f'Found {object_to_pick.obj_class} but not the one you want to pick, with id: {object_to_pick.id}')
