@@ -86,7 +86,7 @@ class PlaceTools():
         rospy.loginfo(f'received request to place the object that the robot is currently holding : {object_to_be_placed}')
 
         action_client = actionlib.SimpleActionClient(self.place_object_server_name, PlaceAction)
-        rospy.loginfo(f'waiting for {self.place_object_server_name} action server')
+        rospy.loginfo(f'sending place goal to {self.place_object_server_name} action server')
         object_to_pick = object_to_be_placed
 
         # moveit::planning_interface::MoveGroupInterface& group TODO: missing?
