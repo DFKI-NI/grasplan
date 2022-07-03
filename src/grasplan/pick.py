@@ -46,7 +46,6 @@ class PickTools():
         # TODO: include octomap
 
         # to be able to transform PoseStamped later in the code
-        #self.transformer = tf.listener.TransformerROS()
         self.tf_listener = TransformListener()
 
         # import grasp planner and make object out of it
