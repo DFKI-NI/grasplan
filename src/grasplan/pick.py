@@ -16,7 +16,7 @@ import moveit_commander
 from tf import TransformListener
 from std_msgs.msg import String
 from std_srvs.srv import Empty, SetBool
-from pose_selector.srv import ClassQuery
+from pose_selector.srv import ClassQuery, PoseDelete
 from geometry_msgs.msg import PoseStamped
 from grasplan.tools.moveit_errors import print_moveit_error
 from moveit_msgs.msg import MoveItErrorCodes
@@ -54,12 +54,15 @@ class PickTools():
         # service clients
         pose_selector_activate_name = rospy.get_param('~pose_selector_activate_srv_name', '/pose_selector_activate')
         pose_selector_query_name = rospy.get_param('~pose_selector_class_query_srv_name', '/pose_selector_class_query')
+        pose_selector_delete_name = rospy.get_param('~pose_selector_delete_srv_name', '/pose_selector_delete')
         rospy.loginfo(f'waiting for pose selector services: {pose_selector_activate_name}, {pose_selector_query_name}')
         rospy.wait_for_service(pose_selector_activate_name, 30.0)
         rospy.wait_for_service(pose_selector_query_name, 30.0)
+        rospy.wait_for_service(pose_selector_delete_name, 30.0)
         try:
             self.activate_pose_selector_srv = rospy.ServiceProxy(pose_selector_activate_name, SetBool)
             self.pose_selector_class_query_srv = rospy.ServiceProxy(pose_selector_query_name, ClassQuery)
+            self.pose_selector_delete_srv = rospy.ServiceProxy(pose_selector_delete_name, PoseDelete)
             rospy.loginfo('found pose selector services')
         except rospy.exceptions.ROSException:
             rospy.logfatal('grasplan pick server could not find pose selector services in time, exiting! \n' + traceback.format_exc())
@@ -305,6 +308,8 @@ class PickTools():
         rospy.loginfo(f'moveit result code: {result}')
         # handle moveit pick result
         if result == MoveItErrorCodes.SUCCESS:
+            # remove picked object pose from pose selector
+            self.pose_selector_delete_srv(class_id=object_to_pick.obj_class, instance_id=object_to_pick.id)
             rospy.loginfo(f'Successfully picked object : {object_to_pick.get_object_class_and_id_as_string()}')
             return True
         else:
