@@ -234,7 +234,7 @@ class PickTools():
         4) generate a list of grasp configurations
         5) call pick moveit functionality
         '''
-        rospy.loginfo(f'picking object : {object_name_as_string}')
+        rospy.loginfo(f'attempting to pick object : {object_name_as_string}')
 
         object_to_pick = objectToPick(object_name_as_string)
 
@@ -295,8 +295,7 @@ class PickTools():
         if id is not None:
             object_to_pick.set_id(id)
 
-        self.obj_pose_pub.publish(object_pose) # publish pose for debugging purposes
-
+        self.obj_pose_pub.publish(object_pose) # publish object pose for visualisation purposes
 
         # print objects that were added to the planning scene
         rospy.loginfo(f'planning scene objects: {self.scene.get_known_object_names()}')
@@ -318,7 +317,6 @@ class PickTools():
         # try to pick object with moveit
         self.robot.arm.set_support_surface_name(support_surface_name)
         result = self.robot.arm.pick(object_to_pick.get_object_class_and_id_as_string(), grasps)
-        rospy.loginfo(f'moveit result code: {result}')
         # handle moveit pick result
         if result == MoveItErrorCodes.SUCCESS:
             # remove picked object pose from pose selector
