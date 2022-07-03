@@ -77,32 +77,6 @@ class PickTools():
             rospy.logfatal('grasplan pick server could not connect to Moveit in time, exiting! \n' + traceback.format_exc())
             rospy.signal_shutdown('fatal error')
 
-        # to publish object pose for debugging purposes
-        self.obj_pose_pub = rospy.Publisher('~obj_pose', PoseStamped, queue_size=1)
-
-        # publishers
-        self.event_out_pub = rospy.Publisher('~event_out', String, queue_size=1)
-        self.trigger_perception_pub = rospy.Publisher('/object_recognition/event_in', String, queue_size=1)
-
-        # subscribers
-        self.grasp_type = 'side_grasp' # TODO remove, get from actionlib
-        rospy.Subscriber('~event_in', String, self.eventInCB)
-        rospy.Subscriber('~grasp_type', String, self.graspTypeCB) # TODO remove, get from actionlib
-
-        # action lib server
-        self.pick_action_server = actionlib.SimpleActionServer('pick_object', PickObjectAction, self.pick_obj_action_callback, False)
-        self.pick_action_server.start()
-
-        # service clients
-        pose_selector_activate_name = rospy.get_param('~pose_selector_activate_srv_name', '/pose_selector_activate')
-        pose_selector_query_name = rospy.get_param('~pose_selector_class_query_srv_name', '/pose_selector_class_query')
-        rospy.loginfo(f'waiting for pose selector services: {pose_selector_activate_name}, {pose_selector_query_name}')
-        rospy.wait_for_service(pose_selector_activate_name, 2.0)
-        rospy.wait_for_service(pose_selector_query_name, 2.0)
-        self.activate_pose_selector_srv = rospy.ServiceProxy(pose_selector_activate_name, SetBool)
-        self.pose_selector_class_query_srv = rospy.ServiceProxy(pose_selector_query_name, ClassQuery)
-        rospy.loginfo('found pose selector services')
-
         moveit_commander.roscpp_initialize(sys.argv)
 
         self.robot = moveit_commander.RobotCommander()
@@ -118,6 +92,17 @@ class PickTools():
         # to publish object pose for debugging purposes
         self.obj_pose_pub = rospy.Publisher('~obj_pose', PoseStamped, queue_size=1)
 
+        # publishers
+        self.event_out_pub = rospy.Publisher('~event_out', String, queue_size=1)
+        self.trigger_perception_pub = rospy.Publisher('/object_recognition/event_in', String, queue_size=1)
+
+        # subscribers
+        self.grasp_type = 'side_grasp' # TODO remove, get from actionlib
+        rospy.Subscriber('~grasp_type', String, self.graspTypeCB) # TODO remove, get from actionlib
+
+        # offer action lib server
+        self.pick_action_server = actionlib.SimpleActionServer('pick_object', PickObjectAction, self.pick_obj_action_callback, False)
+        self.pick_action_server.start()
         rospy.loginfo('pick node ready!')
 
     def pick_obj_action_callback(self, goal):
