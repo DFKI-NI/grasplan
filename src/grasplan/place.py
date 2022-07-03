@@ -54,7 +54,6 @@ class PlaceTools():
     def place_obj(self, object_to_be_placed, support_object='table_2'):
         '''
         create action lib client and call moveit place action server
-        object_to_be_placed = 'power_drill_with_grip' remove!
         '''
         rospy.loginfo(f'received request to place object {object_to_be_placed}')
         action_client = actionlib.SimpleActionClient(self.place_object_server_name, PlaceAction)
