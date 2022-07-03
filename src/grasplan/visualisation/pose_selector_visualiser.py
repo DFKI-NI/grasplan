@@ -46,22 +46,9 @@ class PoseSelectorVisualiser:
         mesh_marker_msg.mesh_resource = mesh_path
         return mesh_marker_msg
 
-    def rotate_pose(self, pose_stamped, roll=0.0, pitch=0.0, yaw=0.0):
-        q_orig = np.array([pose_stamped.pose.orientation.x, pose_stamped.pose.orientation.y,\
-                           pose_stamped.pose.orientation.z, pose_stamped.pose.orientation.w])
-        q_rot = tf.transformations.quaternion_from_euler(roll, pitch, yaw)
-        q_new = quaternion_multiply(q_rot, q_orig)
-        pose_stamped.pose.orientation.x = q_new[0]
-        pose_stamped.pose.orientation.y = q_new[1]
-        pose_stamped.pose.orientation.z = q_new[2]
-        pose_stamped.pose.orientation.w = q_new[3]
-        return pose_stamped
-
     def make_obj_marker_msg(self, object_name, mesh_pose, id=1):
         assert isinstance(object_name, str)
         assert isinstance(mesh_pose, PoseStamped)
-        if object_name == 'power_drill_with_grip':
-            mesh_pose = self.rotate_pose(mesh_pose, roll=3.1415) # HACK
         mesh_path = f'package://{self.object_pkg}/meshes/{object_name}.dae'
         marker_msg = self.make_mesh_marker_msg(mesh_path, mesh_pose, id=id, color=self.color)
         return marker_msg
