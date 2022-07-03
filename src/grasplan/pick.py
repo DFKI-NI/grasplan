@@ -30,6 +30,7 @@ class PickTools():
         # parameters
         self.global_reference_frame = rospy.get_param('~global_reference_frame', 'map')
         self.objects_of_interest = rospy.get_param('~objects_of_interest', ['multimeter', 'klt', 'power_drill_with_grip', 'screwdriver', 'relay'])
+        self.detach_all_objects = rospy.get_param('~detach_all_objects', False)
         arm_group_name = rospy.get_param('~arm_group_name', 'arm')
         gripper_group_name = rospy.get_param('~gripper_group_name', 'gripper')
         arm_goal_tolerance = rospy.get_param('~arm_goal_tolerance', 0.01)
@@ -236,6 +237,10 @@ class PickTools():
         '''
         rospy.loginfo(f'attempting to pick object : {object_name_as_string}')
 
+        if len(self.scene.get_attached_objects().keys()) > 0:
+            rospy.logerr('cannot pick object, another object is currently attached to the gripper already')
+            return False
+
         object_to_pick = objectToPick(object_name_as_string)
 
         # open gripper
@@ -243,7 +248,8 @@ class PickTools():
         #self.move_gripper_to_posture('open')
 
         # detach (all) object if any from the gripper
-        self.detach_all_objects()
+        if self.detach_all_objects:
+            self.detach_all_objects()
 
         # flag to keep track of the state of the grasp
         success = False
