@@ -35,6 +35,7 @@ class PickTools():
         self.pregrasp_posture = rospy.get_param('~pregrasp_posture', 'home')
         self.planning_scene_boxes = rospy.get_param('~planning_scene_boxes', [])
         self.clear_planning_scene = rospy.get_param('~clear_planning_scene', False)
+        self.clear_octomap_flag = rospy.get_param('~clear_octomap', False)
         # if true the arm is moved to a pose where objects are inside fov and pose selector is triggered to accept obj pose updates
         self.perceive_object = rospy.get_param('~perceive_object', True)
         # the arm pose where the objects are inside the fov (used to move the arm to perceive objs right after)
@@ -319,6 +320,10 @@ class PickTools():
 
         # remove octomap, table and object are added manually to planning scene
         self.clear_octomap()
+        # clear octomap from the planning scene if needed
+        if self.clear_octomap_flag:
+            rospy.logwarn('Clearing octomap')
+            self.clear_octomap()
 
         # try to pick object with moveit
         self.robot.arm.set_support_surface_name(support_surface_name)
