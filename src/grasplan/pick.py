@@ -86,9 +86,9 @@ class PickTools():
         moveit_commander.roscpp_initialize(sys.argv)
 
         self.robot = moveit_commander.RobotCommander()
-        self.arm = moveit_commander.MoveGroupCommander(arm_group_name, wait_for_servers=10.0)
+        self.arm = moveit_commander.MoveGroupCommander(arm_group_name, wait_for_servers=20.0)
         self.robot.arm.set_planning_time(planning_time)
-        self.gripper = moveit_commander.MoveGroupCommander(gripper_group_name, wait_for_servers=10.0)
+        self.gripper = moveit_commander.MoveGroupCommander(gripper_group_name, wait_for_servers=20.0)
         self.arm.set_goal_tolerance(arm_goal_tolerance)
         self.scene = moveit_commander.PlanningSceneInterface()
 
