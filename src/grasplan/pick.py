@@ -114,10 +114,6 @@ class PickTools():
     def graspTypeCB(self, msg):
         self.grasp_type = msg.data
 
-    def eventInCB(self, msg):
-        # TODO: task is missing, only object name can be specified now
-        self.event_out_pub.publish(self.pick_object(msg.data, self.grasp_type))
-
     def transform_pose(self, pose, target_reference_frame):
         '''
         transform a pose from any rerence frame into the target reference frame
