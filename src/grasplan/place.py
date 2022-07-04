@@ -26,6 +26,7 @@ from visualization_msgs.msg import Marker
 from pbr_msgs.msg import PlaceObjectAction, PlaceObjectResult
 from moveit_msgs.msg import MoveItErrorCodes
 from pose_selector.srv import ClassQuery, PoseDelete
+from visualization_msgs.msg import Marker, MarkerArray
 
 class PlaceTools():
     def __init__(self):
@@ -48,6 +49,7 @@ class PlaceTools():
 
         self.plane_vis_pub = rospy.Publisher('~support_plane_as_marker', Marker, queue_size=1, latch=True)
         self.place_poses_pub = rospy.Publisher('~place_poses', ObjectList, queue_size=50, latch=True)
+        self.marker_array_pub = rospy.Publisher('/place_pose_selector_objects', MarkerArray, queue_size=1)
 
         # service clients
         place_pose_selector_activate_srv_name = rospy.get_param('~place_pose_selector_activate_srv_name', '/place_pose_selector_activate')
@@ -88,6 +90,15 @@ class PlaceTools():
         # offer action lib server for object placing
         self.place_action_server = actionlib.SimpleActionServer('place_object', PlaceObjectAction, self.place_obj_action_callback, False)
         self.place_action_server.start()
+
+    def clear_place_poses_markers(self):
+        marker_array_msg = MarkerArray()
+        marker = Marker()
+        marker.id = 0
+        marker.ns = 'object'
+        marker.action = Marker.DELETEALL
+        marker_array_msg.markers.append(marker)
+        self.marker_array_pub.publish(marker_array_msg)
 
     def add_objs_to_planning_scene(self):
         for object_of_interest in self.objects_of_interest:
@@ -224,6 +235,8 @@ class PlaceTools():
                 if result.error_code.val == MoveItErrorCodes.SUCCESS:
                     rospy.loginfo(f'Successfully placed object')
                     self.clear_place_pose_selector(place_poses_as_object_list_msg)
+                    # clear possible place poses markers in rviz
+                    self.clear_place_poses_markers()
                     return True
                 else:
                     rospy.logerr(f'place object failed')

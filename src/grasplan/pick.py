@@ -23,6 +23,7 @@ from grasplan.tools.moveit_errors import print_moveit_error
 from moveit_msgs.msg import MoveItErrorCodes
 from pbr_msgs.msg import PickObjectAction, PickObjectResult
 from grasplan.common_grasp_tools import objectToPick
+from visualization_msgs.msg import Marker, MarkerArray
 
 class PickTools():
     def __init__(self):
@@ -92,6 +93,7 @@ class PickTools():
         # publishers
         self.event_out_pub = rospy.Publisher('~event_out', String, queue_size=1)
         self.trigger_perception_pub = rospy.Publisher('/object_recognition/event_in', String, queue_size=1)
+        self.marker_array_pub = rospy.Publisher('/gripper', MarkerArray, queue_size=1)
 
         # subscribers
         self.grasp_type = 'side_grasp' # TODO remove, get from actionlib
@@ -217,6 +219,15 @@ class PickTools():
         for attached_object in self.scene.get_attached_objects().keys():
             self.robot.gripper.detach_object(name=attached_object)
 
+    def clear_grasp_poses_markers(self):
+        marker_array_msg = MarkerArray()
+        marker = Marker()
+        marker.id = 0
+        marker.ns = 'grasp_poses'
+        marker.action = Marker.DELETEALL
+        marker_array_msg.markers.append(marker)
+        self.marker_array_pub.publish(marker_array_msg)
+
     def pick_object(self, object_name_as_string, support_surface_name, grasp_type):
         '''
         1) move arm to a position where the attached camera can see the scene (octomap will be populated)
@@ -318,6 +329,8 @@ class PickTools():
             # remove picked object pose from pose selector
             self.pose_selector_delete_srv(class_id=object_to_pick.obj_class, instance_id=object_to_pick.id)
             rospy.loginfo(f'Successfully picked object : {object_to_pick.get_object_class_and_id_as_string()}')
+            # clear possible grasps shown as mesh in rviz
+            self.clear_grasp_poses_markers()
             return True
         else:
             rospy.logerr(f'grasp failed')
