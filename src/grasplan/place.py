@@ -11,6 +11,7 @@ import tf
 import rospy
 import actionlib
 import moveit_commander
+import traceback
 
 from grasplan.tools.support_plane_tools import obj_to_plane, reduce_plane_area, gen_place_poses_from_plane, make_plane_marker_msg
 from grasplan.common_grasp_tools import separate_object_class_from_id
@@ -24,10 +25,13 @@ from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from visualization_msgs.msg import Marker
 from pbr_msgs.msg import PlaceObjectAction, PlaceObjectResult
 from moveit_msgs.msg import MoveItErrorCodes
+from pose_selector.srv import ClassQuery
 
 class PlaceTools():
     def __init__(self):
         self.global_reference_frame = rospy.get_param('~global_reference_frame', 'map')
+        self.arm_pose_with_objs_in_fov = rospy.get_param('~arm_pose_with_objs_in_fov', 'observe100cm_right')
+        self.objects_of_interest = rospy.get_param('~objects_of_interest', ['multimeter', 'klt', 'power_drill_with_grip', 'screwdriver', 'relay'])
         self.timeout = rospy.get_param('~timeout', 50.0) # in seconds
         self.min_dist = rospy.get_param('~min_dist', 0.2)
         self.ignore_min_dist_list = rospy.get_param('~ignore_min_dist_list', ['foo_obj'])
@@ -36,14 +40,8 @@ class PlaceTools():
         self.gripper_joint_efforts = rospy.get_param('~gripper_joint_efforts')
         self.place_object_server_name = rospy.get_param('~place_object_server_name', 'place') # /mobipick/place
         self.gripper_release_distance = rospy.get_param('gripper_release_distance', 0.1)
-
-        pose_selector_activate_name = rospy.get_param('~pose_selector_activate_srv_name', '/pose_selector_activate')
-        rospy.loginfo(f'waiting for pose selector service: {pose_selector_activate_name}')
-        rospy.wait_for_service(pose_selector_activate_name, 2.0)
-        self.activate_pose_selector_srv = rospy.ServiceProxy(pose_selector_activate_name, SetBool)
-        rospy.loginfo(f'found pose selector services: {pose_selector_activate_name  }')
-        # activate place pose selector to be ready to store the place poses
-        resp = self.activate_pose_selector_srv(True)
+        planning_time = rospy.get_param('~planning_time', 20.0)
+        arm_goal_tolerance = rospy.get_param('~arm_goal_tolerance', 0.01)
 
         moveit_commander.roscpp_initialize(sys.argv)
         self.arm = moveit_commander.MoveGroupCommander(self.group_name, wait_for_servers=20.0)
@@ -51,12 +49,33 @@ class PlaceTools():
         self.plane_vis_pub = rospy.Publisher('~support_plane_as_marker', Marker, queue_size=1, latch=True)
         self.place_poses_pub = rospy.Publisher('~place_poses', ObjectList, queue_size=50, latch=True)
 
+        # service clients
+        place_pose_selector_activate_srv_name = rospy.get_param('~place_pose_selector_activate_srv_name', '/place_pose_selector_activate')
+        pick_pose_selector_activate_srv_name = rospy.get_param('~pick_pose_selector_activate_srv_name', '/pick_pose_selector_activate')
+        pick_pose_selector_class_query_srv_name = rospy.get_param('~pick_pose_selector_class_query_srv_name', '/pick_pose_selector_query')
+        rospy.loginfo(f'waiting for pose selector services: {place_pose_selector_activate_srv_name},\
+                      {pick_pose_selector_activate_srv_name}, {pick_pose_selector_class_query_srv_name}')
+        rospy.wait_for_service(place_pose_selector_activate_srv_name, 30.0)
+        rospy.wait_for_service(pick_pose_selector_activate_srv_name, 30.0)
+        rospy.wait_for_service(pick_pose_selector_class_query_srv_name, 30.0)
+        try:
+            self.activate_place_pose_selector_srv = rospy.ServiceProxy(place_pose_selector_activate_srv_name, SetBool)
+            self.activate_pick_pose_selector_srv = rospy.ServiceProxy(pick_pose_selector_activate_srv_name, SetBool)
+            self.pick_pose_selector_class_query_srv = rospy.ServiceProxy(pick_pose_selector_class_query_srv_name, ClassQuery)
+            rospy.loginfo('found pose selector services')
+        except rospy.exceptions.ROSException:
+            rospy.logfatal('grasplan place server could not find pose selector services in time, exiting! \n' + traceback.format_exc())
+            rospy.signal_shutdown('fatal error')
+
+        # activate place pose selector to be ready to store the place poses
+        resp = self.activate_place_pose_selector_srv(True)
+
         try:
             rospy.loginfo('waiting for move_group action server')
             moveit_commander.roscpp_initialize(sys.argv)
-            #self.robot = moveit_commander.RobotCommander()
-            #self.robot.arm.set_planning_time(planning_time)
-            #self.robot.arm.set_goal_tolerance(arm_goal_tolerance)
+            self.robot = moveit_commander.RobotCommander()
+            self.robot.arm.set_planning_time(planning_time)
+            self.robot.arm.set_goal_tolerance(arm_goal_tolerance)
             self.scene = moveit_commander.PlanningSceneInterface()
             rospy.loginfo('found move_group action server')
         except RuntimeError:
@@ -66,6 +85,41 @@ class PlaceTools():
         # offer action lib server for object placing
         self.place_action_server = actionlib.SimpleActionServer('place_object', PlaceObjectAction, self.place_obj_action_callback, False)
         self.place_action_server.start()
+
+    def add_objs_to_planning_scene(self):
+        for object_of_interest in self.objects_of_interest:
+            # query pose selector
+            resp = self.pick_pose_selector_class_query_srv(object_of_interest)
+            if len(resp.poses) > 0:
+                for pose_selector_object in resp.poses:
+                    # object name
+                    object_name = pose_selector_object.class_id + '_' + str(pose_selector_object.instance_id)
+                    pose_selector_object.instance_id
+                    # object pose
+                    pose_stamped_msg = PoseStamped()
+                    pose_stamped_msg.header.frame_id = self.global_reference_frame
+                    pose_stamped_msg.pose.position = pose_selector_object.pose.position
+                    pose_stamped_msg.pose.orientation = pose_selector_object.pose.orientation
+                    # bounding box
+                    object_bounding_box = []
+                    object_bounding_box.append(pose_selector_object.size.x)
+                    object_bounding_box.append(pose_selector_object.size.y)
+                    object_bounding_box.append(pose_selector_object.size.z)
+                    # add all perceived objects to planning scene (one at at time)
+                    self.scene.add_box(object_name, pose_stamped_msg, object_bounding_box)
+
+    def move_arm_to_posture(self, arm_posture_name):
+        '''
+        use moveit commander to send the arm to a predefined arm configuration
+        defined in srdf
+        '''
+        rospy.loginfo(f'moving arm to {arm_posture_name}')
+        self.robot.arm.set_named_target(arm_posture_name)
+        # attempt to move it 2 times, (sometimes fails with only 1 time)
+        if not self.robot.arm.go():
+            rospy.logwarn(f'failed to move arm to posture: {arm_posture_name}, will retry one more time in 1 sec')
+            rospy.sleep(1.0)
+            self.robot.arm.go()
 
     def place_obj_action_callback(self, goal):
         if self.place_object(goal.support_surface_name):
@@ -86,6 +140,14 @@ class PlaceTools():
         # deduce object_to_be_placed by querying which object the gripper currently has attached to its gripper
         object_to_be_placed = list(self.scene.get_attached_objects().keys())[0]
         rospy.loginfo(f'received request to place the object that the robot is currently holding : {object_to_be_placed}')
+
+        # find free space in table: look at table, update planning scene
+        self.move_arm_to_posture(self.arm_pose_with_objs_in_fov)
+        # activate pick pose selector to observe table
+        resp = self.activate_pick_pose_selector_srv(True)
+        rospy.sleep(1.0) # give some time to observe
+        resp = self.activate_pick_pose_selector_srv(False)
+        self.add_objs_to_planning_scene()
 
         action_client = actionlib.SimpleActionClient(self.place_object_server_name, PlaceAction)
         rospy.loginfo(f'sending place goal to {self.place_object_server_name} action server')
