@@ -17,7 +17,7 @@ from grasplan.tools.support_plane_tools import obj_to_plane, reduce_plane_area, 
 from grasplan.common_grasp_tools import separate_object_class_from_id
 from grasplan.tools.moveit_errors import print_moveit_error
 from std_msgs.msg import String
-from std_srvs.srv import Empty, SetBool
+from std_srvs.srv import Empty, SetBool, Trigger
 from object_pose_msgs.msg import ObjectList, ObjectPose
 from geometry_msgs.msg import Vector3Stamped, PoseStamped, Pose
 from moveit_msgs.msg import PlaceAction, PlaceGoal, PlaceLocation, GripperTranslation, PlanningOptions
@@ -25,7 +25,7 @@ from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from visualization_msgs.msg import Marker
 from pbr_msgs.msg import PlaceObjectAction, PlaceObjectResult
 from moveit_msgs.msg import MoveItErrorCodes
-from pose_selector.srv import ClassQuery, PoseDelete
+from pose_selector.srv import ClassQuery
 from visualization_msgs.msg import Marker, MarkerArray
 
 class PlaceTools():
@@ -53,18 +53,18 @@ class PlaceTools():
 
         # service clients
         place_pose_selector_activate_srv_name = rospy.get_param('~place_pose_selector_activate_srv_name', '/place_pose_selector_activate')
-        place_pose_selector_delete_srv_name = rospy.get_param('~place_pose_selector_delete_srv_name', '/place_pose_selector_delete')
+        place_pose_selector_clear_srv_name = rospy.get_param('~place_pose_selector_clear_srv_name', '/place_pose_selector_clear')
         pick_pose_selector_activate_srv_name = rospy.get_param('~pick_pose_selector_activate_srv_name', '/pick_pose_selector_activate')
         pick_pose_selector_class_query_srv_name = rospy.get_param('~pick_pose_selector_class_query_srv_name', '/pick_pose_selector_query')
         rospy.loginfo(f'waiting for pose selector services: {place_pose_selector_activate_srv_name},\
                       {pick_pose_selector_activate_srv_name}, {pick_pose_selector_class_query_srv_name}')
         rospy.wait_for_service(place_pose_selector_activate_srv_name, 30.0)
-        rospy.wait_for_service(place_pose_selector_delete_srv_name, 30.0)
+        rospy.wait_for_service(place_pose_selector_clear_srv_name, 30.0)
         rospy.wait_for_service(pick_pose_selector_activate_srv_name, 30.0)
         rospy.wait_for_service(pick_pose_selector_class_query_srv_name, 30.0)
         try:
             self.activate_place_pose_selector_srv = rospy.ServiceProxy(place_pose_selector_activate_srv_name, SetBool)
-            self.place_pose_selector_delete_srv = rospy.ServiceProxy(place_pose_selector_delete_srv_name, PoseDelete)
+            self.place_pose_selector_clear_srv = rospy.ServiceProxy(place_pose_selector_clear_srv_name, Trigger)
             self.activate_pick_pose_selector_srv = rospy.ServiceProxy(pick_pose_selector_activate_srv_name, SetBool)
             self.pick_pose_selector_class_query_srv = rospy.ServiceProxy(pick_pose_selector_class_query_srv_name, ClassQuery)
             rospy.loginfo('found pose selector services')
@@ -234,7 +234,7 @@ class PlaceTools():
                 # handle moveit pick result
                 if result.error_code.val == MoveItErrorCodes.SUCCESS:
                     rospy.loginfo(f'Successfully placed object')
-                    self.clear_place_pose_selector(place_poses_as_object_list_msg)
+                    self.place_pose_selector_clear_srv()
                     # clear possible place poses markers in rviz
                     self.clear_place_poses_markers()
                     return True
@@ -246,10 +246,6 @@ class PlaceTools():
             rospy.logerr(f'action server {self.place_object_server_name} not available')
             return False
         return False
-
-    def clear_place_pose_selector(self, place_poses_as_object_list_msg):
-        for obj in place_poses_as_object_list_msg.objects:
-            self.place_pose_selector_delete_srv(class_id=obj.class_id, instance_id=obj.instance_id)
 
     def gen_place_poses(self):
         '''
