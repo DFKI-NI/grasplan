@@ -17,7 +17,7 @@ import moveit_commander
 from tf import TransformListener
 from std_msgs.msg import String
 from std_srvs.srv import Empty, SetBool
-from pose_selector.srv import ClassQuery, PoseDelete
+from pose_selector.srv import ClassQuery, PoseDelete, GetPoses
 from geometry_msgs.msg import PoseStamped
 from grasplan.tools.moveit_errors import print_moveit_error
 from moveit_msgs.msg import MoveItErrorCodes
@@ -30,7 +30,6 @@ class PickTools():
 
         # parameters
         self.global_reference_frame = rospy.get_param('~global_reference_frame', 'map')
-        self.objects_of_interest = rospy.get_param('~objects_of_interest', ['multimeter', 'klt', 'power_drill_with_grip', 'screwdriver', 'relay'])
         self.detach_all_objects_flag = rospy.get_param('~detach_all_objects', False)
         arm_group_name = rospy.get_param('~arm_group_name', 'arm')
         gripper_group_name = rospy.get_param('~gripper_group_name', 'gripper')
@@ -57,19 +56,23 @@ class PickTools():
         self.grasp_planner = getattr(importlib.import_module(import_file), import_class)()
 
         # service clients
-        pose_selector_activate_name = rospy.get_param('~pose_selector_activate_srv_name', '/pose_selector_activate')
-        pose_selector_query_name = rospy.get_param('~pose_selector_class_query_srv_name', '/pose_selector_class_query')
-        pose_selector_delete_name = rospy.get_param('~pose_selector_delete_srv_name', '/pose_selector_delete')
-        rospy.loginfo(f'waiting for pose selector services: {pose_selector_activate_name}, {pose_selector_query_name}')
+        pose_selector_activate_srv_name = rospy.get_param('~pose_selector_activate_srv_name', '/pose_selector_activate')
+        pose_selector_class_query_srv_name = rospy.get_param('~pose_selector_class_query_srv_name', '/pose_selector_class_query')
+        pose_selector_get_all_poses_srv_name = rospy.get_param('~pose_selector_get_all_poses_srv_name', '/pose_selector_get_all')
+        pose_selector_delete_srv_name = rospy.get_param('~pose_selector_delete_srv_name', '/pose_selector_delete')
+        rospy.loginfo(f'waiting for pose selector services: {pose_selector_activate_srv_name}, {pose_selector_class_query_srv_name},\
+                                                            {pose_selector_get_all_poses_srv_name}, {pose_selector_delete_srv_name}')
         # if wait_for_service fails, it will throw a
         # rospy.exceptions.ROSException, and the node will exit (as long as
         # this happens before moveit_commander.roscpp_initialize()).
-        rospy.wait_for_service(pose_selector_activate_name, 30.0)
-        rospy.wait_for_service(pose_selector_query_name, 30.0)
-        rospy.wait_for_service(pose_selector_delete_name, 30.0)
-        self.activate_pose_selector_srv = rospy.ServiceProxy(pose_selector_activate_name, SetBool)
-        self.pose_selector_class_query_srv = rospy.ServiceProxy(pose_selector_query_name, ClassQuery)
-        self.pose_selector_delete_srv = rospy.ServiceProxy(pose_selector_delete_name, PoseDelete)
+        rospy.wait_for_service(pose_selector_activate_srv_name, 30.0)
+        rospy.wait_for_service(pose_selector_class_query_srv_name, 30.0)
+        rospy.wait_for_service(pose_selector_get_all_poses_srv_name, 30.0)
+        rospy.wait_for_service(pose_selector_delete_srv_name, 30.0)
+        self.activate_pose_selector_srv = rospy.ServiceProxy(pose_selector_activate_srv_name, SetBool)
+        self.pose_selector_class_query_srv = rospy.ServiceProxy(pose_selector_class_query_srv_name, ClassQuery)
+        self.pose_selector_get_all_poses_srv = rospy.ServiceProxy(pose_selector_get_all_poses_srv_name, GetPoses)
+        self.pose_selector_delete_srv = rospy.ServiceProxy(pose_selector_delete_srv_name, PoseDelete)
         rospy.loginfo('found pose selector services')
 
         try:
@@ -132,40 +135,37 @@ class PickTools():
         object_to_pick_pose = None
         object_to_pick_bounding_box = None
         object_found = False
-        for object_of_interest in self.objects_of_interest:
-            # query pose selector
-            resp = self.pose_selector_class_query_srv(object_of_interest)
-            if len(resp.poses) > 0:
-                for pose_selector_object in resp.poses:
-                    # object name
-                    object_name = pose_selector_object.class_id + '_' + str(pose_selector_object.instance_id)
-                    pose_selector_object.instance_id
-                    # object pose
-                    pose_stamped_msg = PoseStamped()
-                    pose_stamped_msg.header.frame_id = self.global_reference_frame
-                    pose_stamped_msg.pose.position = pose_selector_object.pose.position
-                    pose_stamped_msg.pose.orientation = pose_selector_object.pose.orientation
-                    # bounding box
-                    object_bounding_box = []
-                    object_bounding_box.append(pose_selector_object.size.x)
-                    object_bounding_box.append(pose_selector_object.size.y)
-                    object_bounding_box.append(pose_selector_object.size.z)
-                    if object_to_pick.any_obj_id and object_to_pick.obj_class == pose_selector_object.class_id:
-                        object_to_pick_pose = copy.deepcopy(pose_stamped_msg)
-                        object_to_pick_bounding_box = copy.deepcopy(object_bounding_box)
-                        object_to_pick_id = copy.deepcopy(pose_selector_object.instance_id)
-                        object_found = True
-                        rospy.loginfo(f'found an instance of the object class you want to pick in pose selector: {object_name}')
-                    elif object_to_pick.get_object_class_and_id_as_string() == object_name:
-                        object_to_pick_pose = copy.deepcopy(pose_stamped_msg)
-                        object_to_pick_bounding_box = copy.deepcopy(object_bounding_box)
-                        object_to_pick_id = copy.deepcopy(pose_selector_object.instance_id)
-                        object_found = True
-                        rospy.loginfo(f'found specific object to be picked in pose selector: {object_name}')
-                    # add all perceived objects to planning scene (one at at time)
-                    self.scene.add_box(object_name, pose_stamped_msg, object_bounding_box)
-            else:
-                rospy.logdebug(f'object of class {object_of_interest} is not in pose selector')
+        # query pose selector
+        resp = self.pose_selector_get_all_poses_srv()
+        if len(resp.poses.objects) > 0:
+            for pose_selector_object in resp.poses.objects:
+                # object name
+                object_name = pose_selector_object.class_id + '_' + str(pose_selector_object.instance_id)
+                pose_selector_object.instance_id
+                # object pose
+                pose_stamped_msg = PoseStamped()
+                pose_stamped_msg.header.frame_id = self.global_reference_frame
+                pose_stamped_msg.pose.position = pose_selector_object.pose.position
+                pose_stamped_msg.pose.orientation = pose_selector_object.pose.orientation
+                # bounding box
+                object_bounding_box = []
+                object_bounding_box.append(pose_selector_object.size.x)
+                object_bounding_box.append(pose_selector_object.size.y)
+                object_bounding_box.append(pose_selector_object.size.z)
+                if object_to_pick.any_obj_id and object_to_pick.obj_class == pose_selector_object.class_id:
+                    object_to_pick_pose = copy.deepcopy(pose_stamped_msg)
+                    object_to_pick_bounding_box = copy.deepcopy(object_bounding_box)
+                    object_to_pick_id = copy.deepcopy(pose_selector_object.instance_id)
+                    object_found = True
+                    rospy.loginfo(f'found an instance of the object class you want to pick in pose selector: {object_name}')
+                elif object_to_pick.get_object_class_and_id_as_string() == object_name:
+                    object_to_pick_pose = copy.deepcopy(pose_stamped_msg)
+                    object_to_pick_bounding_box = copy.deepcopy(object_bounding_box)
+                    object_to_pick_id = copy.deepcopy(pose_selector_object.instance_id)
+                    object_found = True
+                    rospy.loginfo(f'found specific object to be picked in pose selector: {object_name}')
+                # add all perceived objects to planning scene (one at at time)
+                self.scene.add_box(object_name, pose_stamped_msg, object_bounding_box)
         if not object_found:
             rospy.logerr(f'the specific object you want to pick was not found : {object_to_pick.get_object_class_and_id_as_string()}')
             return None, None, None

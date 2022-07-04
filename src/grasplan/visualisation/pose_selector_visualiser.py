@@ -9,7 +9,7 @@ import std_msgs
 from tf.transformations import quaternion_multiply
 from geometry_msgs.msg import PoseStamped, PoseArray, Vector3, Pose
 from visualization_msgs.msg import Marker, MarkerArray
-from pose_selector.srv import ClassQuery
+from pose_selector.srv import GetPoses
 
 '''
 Query poses from pose selector and publish them as markers in rviz for visualisation purposes
@@ -18,14 +18,13 @@ Query poses from pose selector and publish them as markers in rviz for visualisa
 class PoseSelectorVisualiser:
     def __init__(self, wait_for_pose_selector_srv=True):
         self.color = rospy.get_param('~object_color_rgba', [0,0,0,0])
-        self.objects_of_interest = rospy.get_param('~objects_of_interest', ['multimeter', 'klt', 'power_drill_with_grip', 'screwdriver', 'relay'])
         self.object_pkg = rospy.get_param('~object_pkg', 'mobipick_gazebo')
         self.objects_mesh_publisher = rospy.Publisher('pose_selector_objects', MarkerArray, queue_size=1, latch=True)
-        pose_selector_query_srv_name = rospy.get_param('~pose_selector_query_srv_name', '/pose_selector_class_query')
-        rospy.loginfo(f'waiting for pose selector service: {pose_selector_query_srv_name}')
+        pose_selector_get_all_poses_srv_name = rospy.get_param('~pose_selector_get_all_poses_srv_name', '/pose_selector_get_all')
+        rospy.loginfo(f'waiting for pose selector service: {pose_selector_get_all_poses_srv_name}')
         if wait_for_pose_selector_srv:
-            rospy.wait_for_service(pose_selector_query_srv_name, 2.0)
-        self.pose_selector_class_query_srv = rospy.ServiceProxy(pose_selector_query_srv_name, ClassQuery)
+            rospy.wait_for_service(pose_selector_get_all_poses_srv_name, 2.0)
+        self.pose_selector_get_all_poses_srv = rospy.ServiceProxy(pose_selector_get_all_poses_srv_name, GetPoses)
         rospy.loginfo('found pose selector services')
         rospy.sleep(0.5)
         rospy.loginfo('pose selector visualiser node started')
@@ -56,20 +55,17 @@ class PoseSelectorVisualiser:
     def update_object_poses(self):
         marker_array_msg = MarkerArray()
         id = 0
-        for object_of_interest in self.objects_of_interest:
-            # query pose selector
-            resp = self.pose_selector_class_query_srv(object_of_interest)
-            if len(resp.poses) > 0:
-                for obj_pose in resp.poses:
-                    rospy.logdebug(f'obj found: {obj_pose}')
-                    pose_stamped_msg = PoseStamped()
-                    pose_stamped_msg.header.frame_id = 'map'
-                    pose_stamped_msg.pose.position = obj_pose.pose.position
-                    pose_stamped_msg.pose.orientation = obj_pose.pose.orientation
-                    marker_array_msg.markers.append(self.make_obj_marker_msg(obj_pose.class_id, pose_stamped_msg, id=id))
-                    id += 1
-            else:
-                rospy.logdebug(f'Object of class {object_of_interest} is not in pose selector')
+        # query pose selector
+        resp = self.pose_selector_get_all_poses_srv()
+        if len(resp.poses.objects) > 0:
+            for obj_pose in resp.poses.objects:
+                rospy.logdebug(f'obj found: {obj_pose}')
+                pose_stamped_msg = PoseStamped()
+                pose_stamped_msg.header.frame_id = 'map'
+                pose_stamped_msg.pose.position = obj_pose.pose.position
+                pose_stamped_msg.pose.orientation = obj_pose.pose.orientation
+                marker_array_msg.markers.append(self.make_obj_marker_msg(obj_pose.class_id, pose_stamped_msg, id=id))
+                id += 1
         if len(marker_array_msg.markers) > 0:
             self.objects_mesh_publisher.publish(marker_array_msg)
 

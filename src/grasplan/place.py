@@ -25,14 +25,13 @@ from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from visualization_msgs.msg import Marker
 from pbr_msgs.msg import PlaceObjectAction, PlaceObjectResult
 from moveit_msgs.msg import MoveItErrorCodes
-from pose_selector.srv import ClassQuery
+from pose_selector.srv import GetPoses
 from visualization_msgs.msg import Marker, MarkerArray
 
 class PlaceTools():
     def __init__(self):
         self.global_reference_frame = rospy.get_param('~global_reference_frame', 'map')
         self.arm_pose_with_objs_in_fov = rospy.get_param('~arm_pose_with_objs_in_fov', 'observe100cm_right')
-        self.objects_of_interest = rospy.get_param('~objects_of_interest', ['multimeter', 'klt', 'power_drill_with_grip', 'screwdriver', 'relay'])
         self.timeout = rospy.get_param('~timeout', 50.0) # in seconds
         self.min_dist = rospy.get_param('~min_dist', 0.2)
         self.ignore_min_dist_list = rospy.get_param('~ignore_min_dist_list', ['foo_obj'])
@@ -55,18 +54,18 @@ class PlaceTools():
         place_pose_selector_activate_srv_name = rospy.get_param('~place_pose_selector_activate_srv_name', '/place_pose_selector_activate')
         place_pose_selector_clear_srv_name = rospy.get_param('~place_pose_selector_clear_srv_name', '/place_pose_selector_clear')
         pick_pose_selector_activate_srv_name = rospy.get_param('~pick_pose_selector_activate_srv_name', '/pick_pose_selector_activate')
-        pick_pose_selector_class_query_srv_name = rospy.get_param('~pick_pose_selector_class_query_srv_name', '/pick_pose_selector_query')
-        rospy.loginfo(f'waiting for pose selector services: {place_pose_selector_activate_srv_name},\
-                      {pick_pose_selector_activate_srv_name}, {pick_pose_selector_class_query_srv_name}')
+        pick_pose_selector_get_all_poses_srv_name = rospy.get_param('~pick_pose_selector_get_all_poses_srv_name', '/pose_selector_get_all')
+        rospy.loginfo(f'waiting for pose selector services: {place_pose_selector_activate_srv_name}, {place_pose_selector_clear_srv_name}\
+                      {pick_pose_selector_activate_srv_name}, {pick_pose_selector_get_all_poses_srv_name}')
         rospy.wait_for_service(place_pose_selector_activate_srv_name, 30.0)
         rospy.wait_for_service(place_pose_selector_clear_srv_name, 30.0)
         rospy.wait_for_service(pick_pose_selector_activate_srv_name, 30.0)
-        rospy.wait_for_service(pick_pose_selector_class_query_srv_name, 30.0)
+        rospy.wait_for_service(pick_pose_selector_get_all_poses_srv_name, 30.0)
         try:
             self.activate_place_pose_selector_srv = rospy.ServiceProxy(place_pose_selector_activate_srv_name, SetBool)
             self.place_pose_selector_clear_srv = rospy.ServiceProxy(place_pose_selector_clear_srv_name, Trigger)
             self.activate_pick_pose_selector_srv = rospy.ServiceProxy(pick_pose_selector_activate_srv_name, SetBool)
-            self.pick_pose_selector_class_query_srv = rospy.ServiceProxy(pick_pose_selector_class_query_srv_name, ClassQuery)
+            self.get_all_poses_pick_pose_selector_srv = rospy.ServiceProxy(pick_pose_selector_get_all_poses_srv_name, GetPoses)
             rospy.loginfo('found pose selector services')
         except rospy.exceptions.ROSException:
             rospy.logfatal('grasplan place server could not find pose selector services in time, exiting! \n' + traceback.format_exc())
@@ -101,26 +100,25 @@ class PlaceTools():
         self.marker_array_pub.publish(marker_array_msg)
 
     def add_objs_to_planning_scene(self):
-        for object_of_interest in self.objects_of_interest:
-            # query pose selector
-            resp = self.pick_pose_selector_class_query_srv(object_of_interest)
-            if len(resp.poses) > 0:
-                for pose_selector_object in resp.poses:
-                    # object name
-                    object_name = pose_selector_object.class_id + '_' + str(pose_selector_object.instance_id)
-                    pose_selector_object.instance_id
-                    # object pose
-                    pose_stamped_msg = PoseStamped()
-                    pose_stamped_msg.header.frame_id = self.global_reference_frame
-                    pose_stamped_msg.pose.position = pose_selector_object.pose.position
-                    pose_stamped_msg.pose.orientation = pose_selector_object.pose.orientation
-                    # bounding box
-                    object_bounding_box = []
-                    object_bounding_box.append(pose_selector_object.size.x)
-                    object_bounding_box.append(pose_selector_object.size.y)
-                    object_bounding_box.append(pose_selector_object.size.z)
-                    # add all perceived objects to planning scene (one at at time)
-                    self.scene.add_box(object_name, pose_stamped_msg, object_bounding_box)
+        # query all poses available in pose selector
+        resp = self.get_all_poses_pick_pose_selector_srv()
+        if len(resp.poses.objects) > 0:
+            for pose_selector_object in resp.poses.objects:
+                # object name
+                object_name = pose_selector_object.class_id + '_' + str(pose_selector_object.instance_id)
+                pose_selector_object.instance_id
+                # object pose
+                pose_stamped_msg = PoseStamped()
+                pose_stamped_msg.header.frame_id = self.global_reference_frame
+                pose_stamped_msg.pose.position = pose_selector_object.pose.position
+                pose_stamped_msg.pose.orientation = pose_selector_object.pose.orientation
+                # bounding box
+                object_bounding_box = []
+                object_bounding_box.append(pose_selector_object.size.x)
+                object_bounding_box.append(pose_selector_object.size.y)
+                object_bounding_box.append(pose_selector_object.size.z)
+                # add all perceived objects to planning scene (one at at time)
+                self.scene.add_box(object_name, pose_stamped_msg, object_bounding_box)
 
     def move_arm_to_posture(self, arm_posture_name):
         '''
