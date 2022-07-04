@@ -411,7 +411,7 @@ class PlaceTools():
         # positions and efforts are used
         # trajectory_msgs/JointTrajectory post_place_posture
         place_msg.post_place_posture = self.make_gripper_trajectory_msg(self.gripper_release_distance)
-        # NOTE in simple pick n place demo this value is 0.1
+        # NOTE in simple pick n place demo this value is 0.1 m
 
         # The position of the end-effector for the grasp relative to a reference frame
         # (that is always specified elsewhere, not in this message)
@@ -443,13 +443,18 @@ class PlaceTools():
         '''
         Set and return the gripper posture as a trajectory_msgs/JointTrajectory
         only one point is set which is the final gripper target
+
+        Warning: Contrary to the definition of trajectory_msgs/JointTrajectory,
+        the position is the gripper opening gap in meters, not the joint angle
+        in radian, if MoveIt is configured with a control_msgs/GripperCommand
+        controller (e.g., on Mobipick).
         '''
         trajectory = JointTrajectory()
         trajectory.joint_names = self.gripper_joint_names
         trajectory_point = JointTrajectoryPoint()
         trajectory_point.positions = [gripper_actuation_distance]
         trajectory_point.effort = self.gripper_joint_efforts
-        trajectory_point.time_from_start = rospy.Duration(1.0)
+        trajectory_point.time_from_start = rospy.Duration(1.0)  # NOTE in simple pick n place demo this value is 5 s
         trajectory.points.append(trajectory_point)
         return trajectory
 

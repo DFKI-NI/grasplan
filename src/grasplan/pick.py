@@ -30,7 +30,7 @@ class PickTools():
         # parameters
         self.global_reference_frame = rospy.get_param('~global_reference_frame', 'map')
         self.objects_of_interest = rospy.get_param('~objects_of_interest', ['multimeter', 'klt', 'power_drill_with_grip', 'screwdriver', 'relay'])
-        self.detach_all_objects = rospy.get_param('~detach_all_objects', False)
+        self.detach_all_objects_flag = rospy.get_param('~detach_all_objects', False)
         arm_group_name = rospy.get_param('~arm_group_name', 'arm')
         gripper_group_name = rospy.get_param('~gripper_group_name', 'gripper')
         arm_goal_tolerance = rospy.get_param('~arm_goal_tolerance', 0.01)
@@ -60,17 +60,16 @@ class PickTools():
         pose_selector_query_name = rospy.get_param('~pose_selector_class_query_srv_name', '/pose_selector_class_query')
         pose_selector_delete_name = rospy.get_param('~pose_selector_delete_srv_name', '/pose_selector_delete')
         rospy.loginfo(f'waiting for pose selector services: {pose_selector_activate_name}, {pose_selector_query_name}')
+        # if wait_for_service fails, it will throw a
+        # rospy.exceptions.ROSException, and the node will exit (as long as
+        # this happens before moveit_commander.roscpp_initialize()).
         rospy.wait_for_service(pose_selector_activate_name, 30.0)
         rospy.wait_for_service(pose_selector_query_name, 30.0)
         rospy.wait_for_service(pose_selector_delete_name, 30.0)
-        try:
-            self.activate_pose_selector_srv = rospy.ServiceProxy(pose_selector_activate_name, SetBool)
-            self.pose_selector_class_query_srv = rospy.ServiceProxy(pose_selector_query_name, ClassQuery)
-            self.pose_selector_delete_srv = rospy.ServiceProxy(pose_selector_delete_name, PoseDelete)
-            rospy.loginfo('found pose selector services')
-        except rospy.exceptions.ROSException:
-            rospy.logfatal('grasplan pick server could not find pose selector services in time, exiting! \n' + traceback.format_exc())
-            rospy.signal_shutdown('fatal error')
+        self.activate_pose_selector_srv = rospy.ServiceProxy(pose_selector_activate_name, SetBool)
+        self.pose_selector_class_query_srv = rospy.ServiceProxy(pose_selector_query_name, ClassQuery)
+        self.pose_selector_delete_srv = rospy.ServiceProxy(pose_selector_delete_name, PoseDelete)
+        rospy.loginfo('found pose selector services')
 
         try:
             rospy.loginfo('waiting for move_group action server')
@@ -81,20 +80,11 @@ class PickTools():
             self.scene = moveit_commander.PlanningSceneInterface()
             rospy.loginfo('found move_group action server')
         except RuntimeError:
+            # moveit_commander.roscpp_initialize overwrites the signal handler,
+            # so if a RuntimeError occurs here, we have to manually call
+            # signal_shutdown() in order for the node to properly exit.
             rospy.logfatal('grasplan pick server could not connect to Moveit in time, exiting! \n' + traceback.format_exc())
             rospy.signal_shutdown('fatal error')
-
-        moveit_commander.roscpp_initialize(sys.argv)
-
-        self.robot = moveit_commander.RobotCommander()
-        self.arm = moveit_commander.MoveGroupCommander(arm_group_name, wait_for_servers=20.0)
-        self.robot.arm.set_planning_time(planning_time)
-        self.gripper = moveit_commander.MoveGroupCommander(gripper_group_name, wait_for_servers=20.0)
-        self.arm.set_goal_tolerance(arm_goal_tolerance)
-        self.scene = moveit_commander.PlanningSceneInterface()
-
-        # keep memory about the last object we have grasped
-        self.grasped_object = ''
 
         # to publish object pose for debugging purposes
         self.obj_pose_pub = rospy.Publisher('~obj_pose', PoseStamped, queue_size=1)
@@ -248,7 +238,7 @@ class PickTools():
         #self.move_gripper_to_posture('open')
 
         # detach (all) object if any from the gripper
-        if self.detach_all_objects:
+        if self.detach_all_objects_flag:
             self.detach_all_objects()
 
         # flag to keep track of the state of the grasp
