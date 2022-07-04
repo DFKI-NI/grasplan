@@ -86,18 +86,6 @@ class PickTools():
             rospy.logfatal('grasplan pick server could not connect to Moveit in time, exiting! \n' + traceback.format_exc())
             rospy.signal_shutdown('fatal error')
 
-        moveit_commander.roscpp_initialize(sys.argv)
-
-        self.robot = moveit_commander.RobotCommander()
-        self.arm = moveit_commander.MoveGroupCommander(arm_group_name, wait_for_servers=20.0)
-        self.robot.arm.set_planning_time(planning_time)
-        self.gripper = moveit_commander.MoveGroupCommander(gripper_group_name, wait_for_servers=20.0)
-        self.arm.set_goal_tolerance(arm_goal_tolerance)
-        self.scene = moveit_commander.PlanningSceneInterface()
-
-        # keep memory about the last object we have grasped
-        self.grasped_object = ''
-
         # to publish object pose for debugging purposes
         self.obj_pose_pub = rospy.Publisher('~obj_pose', PoseStamped, queue_size=1)
 
