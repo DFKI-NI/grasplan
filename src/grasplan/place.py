@@ -134,15 +134,16 @@ class PlaceTools():
             self.robot.arm.go()
 
     def place_obj_action_callback(self, goal):
-        if self.place_object(goal.support_surface_name):
+        if self.place_object(goal.support_surface_name, observe_before_place=goal.observe_before_place):
             self.place_action_server.set_succeeded(PlaceObjectResult(success=True))
         else:
             self.place_action_server.set_aborted(PlaceObjectResult(success=False))
 
-    def place_object(self, support_object):
+    def place_object(self, support_object, observe_before_place=False):
         '''
         create action lib client and call moveit place action server
         '''
+        assert isinstance(observe_before_place, bool)
         rospy.loginfo('received request to place object')
 
         if len(self.scene.get_attached_objects().keys()) == 0:
@@ -153,13 +154,14 @@ class PlaceTools():
         object_to_be_placed = list(self.scene.get_attached_objects().keys())[0]
         rospy.loginfo(f'received request to place the object that the robot is currently holding : {object_to_be_placed}')
 
-        # find free space in table: look at table, update planning scene
-        self.move_arm_to_posture(self.arm_pose_with_objs_in_fov)
-        # activate pick pose selector to observe table
-        resp = self.activate_pick_pose_selector_srv(True)
-        rospy.sleep(1.0) # give some time to observe
-        resp = self.activate_pick_pose_selector_srv(False)
-        self.add_objs_to_planning_scene()
+        if observe_before_place:
+            # optionally find free space in table: look at table, update planning scene
+            self.move_arm_to_posture(self.arm_pose_with_objs_in_fov)
+            # activate pick pose selector to observe table
+            resp = self.activate_pick_pose_selector_srv(True)
+            rospy.sleep(0.5) # give some time to observe
+            resp = self.activate_pick_pose_selector_srv(False)
+            self.add_objs_to_planning_scene()
 
         action_client = actionlib.SimpleActionClient(self.place_object_server_name, PlaceAction)
         rospy.loginfo(f'sending place goal to {self.place_object_server_name} action server')

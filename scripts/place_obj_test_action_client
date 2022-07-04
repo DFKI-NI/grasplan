@@ -13,10 +13,14 @@ if __name__ == '__main__':
             rospy.logwarn('have you run this node without the mobipick as namespace? if so, it might not work!')
 
         myargv = rospy.myargv()
-        if len(myargv) != 2:
-            rospy.logfatal(f'Usage: {myargv[0]} support_surface_name')
+        if len(myargv) != 3:
+            rospy.logfatal(f'Usage: {myargv[0]} support_surface_name observe_before_placing')
             sys.exit(1)
         support_surface_name = myargv[1]
+        if myargv[2] == 'true' or myargv[2] == 'True':
+            observe_before_place = True
+        elif myargv[2] == 'false' or myargv[2] == 'False':
+            observe_before_place = False
     else:
         rospy.logwarn('you have run this node without arguments, at least the mobiplace namespace is expected! ( __ns:=mobiplace )')
     timeout = 50.0 # in seconds, default: 50.0
@@ -27,6 +31,7 @@ if __name__ == '__main__':
         rospy.loginfo(f'found {place_object_server_name} action server')
         goal = PlaceObjectGoal()
         goal.support_surface_name = support_surface_name
+        goal.observe_before_place = observe_before_place
         rospy.loginfo(f'sending place goal to {place_object_server_name} action server')
         action_client.send_goal(goal)
         rospy.loginfo(f'waiting for result from {place_object_server_name} action server')
