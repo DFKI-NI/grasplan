@@ -40,18 +40,44 @@ def make_plane_marker_msg(ref_frame, plane):
     marker_msg.color = ColorRGBA(1.0, 0.61, 0.16, 1.0) # orange
     return marker_msg
 
-def gen_place_poses_from_plane(object_class, plane, frame_id='map', number_of_poses=10, obj_height=0.8):
+def well_separated(x_y_list, candidate_x, candidate_y, min_dist=0.2):
+    if len(x_y_list) == 0:
+        return True
+    true_count = 0
+    for p in x_y_list:
+        if math.dist([candidate_x, candidate_y], p) > min_dist:
+            true_count += 1
+    if true_count == len(x_y_list):
+        return True
+    return False
+
+def gen_place_poses_from_plane(object_class, plane, frame_id='map', number_of_poses=10, obj_height=0.8, min_dist=0.2, ignore_min_dist_list=[]):
     '''
     random sample poses within a plane and populate object list msg with the result
     '''
     object_list_msg = ObjectList()
     object_list_msg.header.frame_id = frame_id
+    x_y_list = []
     for i in range(1, number_of_poses + 1):
         object_pose_msg = ObjectPose()
         object_pose_msg.class_id = object_class
         object_pose_msg.instance_id = i
-        object_pose_msg.pose.position.x = round(random.uniform(plane[0].x, plane[1].x), 4)
-        object_pose_msg.pose.position.y = round(random.uniform(plane[0].y, plane[3].y), 4)
+        count = 0
+        while 1:
+            candidate_x = round(random.uniform(plane[0].x, plane[1].x), 4)
+            candidate_y = round(random.uniform(plane[0].y, plane[3].y), 4)
+            if object_class in ignore_min_dist_list:
+                rospy.logwarn(f'ignoring min dist param for object: {object_class}')
+                break
+            if well_separated(x_y_list, candidate_x, candidate_y, min_dist=min_dist):
+                break
+            count += 1
+            if count > 50000: # avoid an infinite loop, cap the max attempts
+                rospy.logwarn(f'Could not generate poses too much separated from each other, min dist : {min_dist}')
+                break
+        x_y_list.append([candidate_x, candidate_y])
+        object_pose_msg.pose.position.x = candidate_x
+        object_pose_msg.pose.position.y = candidate_y
         object_pose_msg.pose.position.z = obj_height
         roll = 1.5708 # necessary only for power_drill_with_grip, comment out after pulling changes, the drill rotation was removed
         pitch = 0.0

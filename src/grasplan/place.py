@@ -29,6 +29,8 @@ class PlaceTools():
     def __init__(self):
         self.global_reference_frame = rospy.get_param('~global_reference_frame', 'map')
         self.timeout = rospy.get_param('~timeout', 50.0) # in seconds
+        self.min_dist = rospy.get_param('~min_dist', 0.2)
+        self.ignore_min_dist_list = rospy.get_param('~ignore_min_dist_list', ['foo_obj'])
         self.group_name = rospy.get_param('~group_name', 'arm')
         self.gripper_joint_names = rospy.get_param('~gripper_joint_names')
         self.gripper_joint_efforts = rospy.get_param('~gripper_joint_efforts')
@@ -101,7 +103,9 @@ class PlaceTools():
         # generate random place poses within a plane
         object_class_tbp = separate_object_class_from_id(object_to_be_placed)[0]
         # TODO: compute object height
-        place_poses_as_object_list_msg = gen_place_poses_from_plane(object_class_tbp, plane, frame_id=self.global_reference_frame, number_of_poses=5, obj_height=0.85) # 0.83
+        place_poses_as_object_list_msg = gen_place_poses_from_plane(object_class_tbp, plane,\
+                frame_id=self.global_reference_frame, number_of_poses=5, obj_height=0.85, min_dist=self.min_dist,\
+                ignore_min_dist_list=self.ignore_min_dist_list)
         # send places poses to place pose selector for visualisation purposes
         self.place_poses_pub.publish(place_poses_as_object_list_msg)
 
