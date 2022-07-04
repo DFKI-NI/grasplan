@@ -96,7 +96,8 @@ class PickTools():
         # publishers
         self.event_out_pub = rospy.Publisher('~event_out', String, queue_size=1)
         self.trigger_perception_pub = rospy.Publisher('/object_recognition/event_in', String, queue_size=1)
-        self.marker_array_pub = rospy.Publisher('/gripper', MarkerArray, queue_size=1)
+        self.pick_grasps_marker_array_pub = rospy.Publisher('/gripper', MarkerArray, queue_size=1)
+        self.pose_selector_objects_marker_array_pub = rospy.Publisher('/pose_selector_objects', MarkerArray, queue_size=1)
 
         # subscribers
         self.grasp_type = 'side_grasp' # TODO remove, get from actionlib
@@ -219,14 +220,14 @@ class PickTools():
         for attached_object in self.scene.get_attached_objects().keys():
             self.robot.gripper.detach_object(name=attached_object)
 
-    def clear_grasp_poses_markers(self):
+    def clear_mesh_markers(self, namespace, publisher):
         marker_array_msg = MarkerArray()
         marker = Marker()
         marker.id = 0
-        marker.ns = 'grasp_poses'
+        marker.ns = namespace
         marker.action = Marker.DELETEALL
         marker_array_msg.markers.append(marker)
-        self.marker_array_pub.publish(marker_array_msg)
+        publisher.publish(marker_array_msg)
 
     def pick_object(self, object_name_as_string, support_surface_name, grasp_type):
         '''
@@ -330,7 +331,8 @@ class PickTools():
             self.pose_selector_delete_srv(class_id=object_to_pick.obj_class, instance_id=object_to_pick.id)
             rospy.loginfo(f'Successfully picked object : {object_to_pick.get_object_class_and_id_as_string()}')
             # clear possible grasps shown as mesh in rviz
-            self.clear_grasp_poses_markers()
+            self.clear_mesh_markers(namespace='grasp_poses', publisher=self.pick_grasps_marker_array_pub)
+            self.clear_mesh_markers(namespace='object', publisher=self.pose_selector_objects_marker_array_pub)
             return True
         else:
             rospy.logerr(f'grasp failed')
