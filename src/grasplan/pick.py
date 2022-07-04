@@ -60,17 +60,16 @@ class PickTools():
         pose_selector_query_name = rospy.get_param('~pose_selector_class_query_srv_name', '/pose_selector_class_query')
         pose_selector_delete_name = rospy.get_param('~pose_selector_delete_srv_name', '/pose_selector_delete')
         rospy.loginfo(f'waiting for pose selector services: {pose_selector_activate_name}, {pose_selector_query_name}')
+        # if wait_for_service fails, it will throw a
+        # rospy.exceptions.ROSException, and the node will exit (as long as
+        # this happens before moveit_commander.roscpp_initialize()).
         rospy.wait_for_service(pose_selector_activate_name, 30.0)
         rospy.wait_for_service(pose_selector_query_name, 30.0)
         rospy.wait_for_service(pose_selector_delete_name, 30.0)
-        try:
-            self.activate_pose_selector_srv = rospy.ServiceProxy(pose_selector_activate_name, SetBool)
-            self.pose_selector_class_query_srv = rospy.ServiceProxy(pose_selector_query_name, ClassQuery)
-            self.pose_selector_delete_srv = rospy.ServiceProxy(pose_selector_delete_name, PoseDelete)
-            rospy.loginfo('found pose selector services')
-        except rospy.exceptions.ROSException:
-            rospy.logfatal('grasplan pick server could not find pose selector services in time, exiting! \n' + traceback.format_exc())
-            rospy.signal_shutdown('fatal error')
+        self.activate_pose_selector_srv = rospy.ServiceProxy(pose_selector_activate_name, SetBool)
+        self.pose_selector_class_query_srv = rospy.ServiceProxy(pose_selector_query_name, ClassQuery)
+        self.pose_selector_delete_srv = rospy.ServiceProxy(pose_selector_delete_name, PoseDelete)
+        rospy.loginfo('found pose selector services')
 
         try:
             rospy.loginfo('waiting for move_group action server')
@@ -81,6 +80,9 @@ class PickTools():
             self.scene = moveit_commander.PlanningSceneInterface()
             rospy.loginfo('found move_group action server')
         except RuntimeError:
+            # moveit_commander.roscpp_initialize overwrites the signal handler,
+            # so if a RuntimeError occurs here, we have to manually call
+            # signal_shutdown() in order for the node to properly exit.
             rospy.logfatal('grasplan pick server could not connect to Moveit in time, exiting! \n' + traceback.format_exc())
             rospy.signal_shutdown('fatal error')
 
