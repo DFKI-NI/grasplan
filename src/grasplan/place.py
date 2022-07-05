@@ -39,7 +39,7 @@ class PlaceTools():
         self.gripper_joint_names = rospy.get_param('~gripper_joint_names')
         self.gripper_joint_efforts = rospy.get_param('~gripper_joint_efforts')
         self.place_object_server_name = rospy.get_param('~place_object_server_name', 'place') # /mobipick/place
-        self.gripper_release_distance = rospy.get_param('gripper_release_distance', 0.1)
+        self.gripper_release_distance = rospy.get_param('~gripper_release_distance', 0.1)
         planning_time = rospy.get_param('~planning_time', 20.0)
         arm_goal_tolerance = rospy.get_param('~arm_goal_tolerance', 0.01)
 
