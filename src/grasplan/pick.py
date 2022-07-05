@@ -239,7 +239,7 @@ class PickTools():
         '''
         rospy.loginfo(f'attempting to pick object : {object_name_as_string}')
 
-        if len(self.scene.get_attached_objects().keys()) > 0:
+        if not self.detach_all_objects_flag and len(self.scene.get_attached_objects().keys()) > 0:
             rospy.logerr('cannot pick object, another object is currently attached to the gripper already')
             return False
 
