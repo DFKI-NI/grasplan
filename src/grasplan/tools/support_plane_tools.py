@@ -51,7 +51,7 @@ def well_separated(x_y_list, candidate_x, candidate_y, min_dist=0.2):
         return True
     return False
 
-def gen_place_poses_from_plane(object_class, plane, frame_id='map', number_of_poses=10, obj_height=0.8, min_dist=0.2, ignore_min_dist_list=[]):
+def gen_place_poses_from_plane(object_class, support_object, plane, frame_id='map', number_of_poses=10, obj_height=0.8, min_dist=0.2, ignore_min_dist_list=[]):
     '''
     random sample poses within a plane and populate object list msg with the result
     '''
@@ -66,7 +66,7 @@ def gen_place_poses_from_plane(object_class, plane, frame_id='map', number_of_po
         while 1:
             candidate_x = round(random.uniform(plane[0].x, plane[1].x), 4)
             candidate_y = round(random.uniform(plane[0].y, plane[3].y), 4)
-            if object_class in ignore_min_dist_list:
+            if support_object in ignore_min_dist_list:
                 rospy.logwarn(f'ignoring min dist param for object: {object_class}')
                 break
             if well_separated(x_y_list, candidate_x, candidate_y, min_dist=min_dist):
