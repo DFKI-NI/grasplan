@@ -138,6 +138,17 @@ def obj_to_plane(support_obj):
         return [Point(0,0,0), Point(1,0,0), Point(1,1,0), Point(0,1,0)] # TODO
     return [None, None, None, None, None]
 
+def compute_object_height(object_class):
+    if object_class == 'power_drill_with_grip':
+        return 0.8474679967880249
+    if object_class == 'klt':
+        return 0.8034999990463256
+    if object_class == 'multimeter':
+        # return 0.7510319999605417 # planning failed, but it shouldn't , maybe is an error of not adding the table?
+        return 0.76 # works
+    rospy.logerr('compute_object_height failed!')
+    return 0.85 # better to return a high value than to fail?
+
 # Example usage
 if __name__ == '__main__':
     rospy.init_node('plane_visualiser', anonymous=False)
