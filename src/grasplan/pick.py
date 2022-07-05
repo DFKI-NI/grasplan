@@ -20,7 +20,7 @@ from std_srvs.srv import Empty, SetBool
 from pose_selector.srv import ClassQuery, PoseDelete, GetPoses
 from geometry_msgs.msg import PoseStamped
 from grasplan.tools.moveit_errors import print_moveit_error
-from moveit_msgs.msg import MoveItErrorCodes
+from moveit_msgs.msg import MoveItErrorCodes, PickupAction, PickupGoal
 from pbr_msgs.msg import PickObjectAction, PickObjectResult
 from grasplan.common_grasp_tools import objectToPick
 from visualization_msgs.msg import Marker, MarkerArray
@@ -31,10 +31,10 @@ class PickTools():
         # parameters
         self.global_reference_frame = rospy.get_param('~global_reference_frame', 'map')
         self.detach_all_objects_flag = rospy.get_param('~detach_all_objects', False)
-        arm_group_name = rospy.get_param('~arm_group_name', 'arm')
+        self.arm_group_name = rospy.get_param('~arm_group_name', 'arm')
         gripper_group_name = rospy.get_param('~gripper_group_name', 'gripper')
         arm_goal_tolerance = rospy.get_param('~arm_goal_tolerance', 0.01)
-        planning_time = rospy.get_param('~planning_time', 20.0)
+        self.planning_time = rospy.get_param('~planning_time', 20.0)
         self.pregrasp_posture_required = rospy.get_param('~pregrasp_posture_required', False)
         self.pregrasp_posture = rospy.get_param('~pregrasp_posture', 'home')
         self.planning_scene_boxes = rospy.get_param('~planning_scene_boxes', [])
@@ -79,7 +79,7 @@ class PickTools():
             rospy.loginfo('waiting for move_group action server')
             moveit_commander.roscpp_initialize(sys.argv)
             self.robot = moveit_commander.RobotCommander()
-            self.robot.arm.set_planning_time(planning_time)
+            self.robot.arm.set_planning_time(self.planning_time)
             self.robot.arm.set_goal_tolerance(arm_goal_tolerance)
             self.scene = moveit_commander.PlanningSceneInterface()
             rospy.loginfo('found move_group action server')
@@ -323,8 +323,8 @@ class PickTools():
             self.clear_octomap()
 
         # try to pick object with moveit
-        self.robot.arm.set_support_surface_name(support_surface_name)
-        result = self.robot.arm.pick(object_to_pick.get_object_class_and_id_as_string(), grasps)
+        #result = self._pick_with_moveit_commander(object_to_pick, grasps, support_surface_name)
+        result = self._pick_with_action(object_to_pick, grasps, support_surface_name)
         # handle moveit pick result
         if result == MoveItErrorCodes.SUCCESS:
             # remove picked object pose from pose selector
@@ -338,6 +338,45 @@ class PickTools():
             rospy.logerr(f'grasp failed')
             print_moveit_error(result)
         return False
+
+    def _pick_with_moveit_commander(self, object_to_pick, grasps, support_surface_name):
+        self.robot.arm.set_support_surface_name(support_surface_name)
+        result = self.robot.arm.pick(object_to_pick.get_object_class_and_id_as_string(), grasps)
+        return result
+
+    def _pick_with_action(self, object_to_pick, grasps, support_surface_name):
+        """
+        Picks the object using the action client directly, bypassing the moveit_commander.
+        This is so we can set the support_surface_name without also setting allow_gripper_support_collision to "true",
+        otherwise there will be collisions.
+        """
+        PICK_OBJECT_SERVER_NAME = 'pickup'
+
+        action_client = actionlib.SimpleActionClient(PICK_OBJECT_SERVER_NAME, PickupAction)
+        if action_client.wait_for_server(timeout=rospy.Duration.from_sec(2.0)):
+            rospy.loginfo(f'found {rospy.resolve_name(PICK_OBJECT_SERVER_NAME)} action server')
+            goal = PickupGoal()
+            goal.target_name = object_to_pick.get_object_class_and_id_as_string()
+            goal.group_name = self.arm_group_name
+            goal.possible_grasps = grasps
+            goal.support_surface_name = support_surface_name
+            goal.allowed_planning_time = self.planning_time
+            goal.planning_options.planning_scene_diff.is_diff = True
+            goal.planning_options.planning_scene_diff.robot_state.is_diff = True
+            goal.planning_options.replan_delay = 2.0
+
+            rospy.loginfo(f'sending pick {object_to_pick.get_object_class_and_id_as_string()} goal '
+                          f'to {rospy.resolve_name(PICK_OBJECT_SERVER_NAME)} action server')
+            action_client.send_goal(goal)
+            rospy.loginfo(f'waiting for result from {rospy.resolve_name(PICK_OBJECT_SERVER_NAME)} action server')
+            if action_client.wait_for_result(rospy.Duration.from_sec(60.0)):
+                result = action_client.get_result()
+            else:
+                result = False
+        else:
+            result = False
+
+        return result
 
     def start_pick_node(self):
         # wait for trigger via topic or action lib
