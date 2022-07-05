@@ -79,9 +79,12 @@ def gen_place_poses_from_plane(object_class, plane, frame_id='map', number_of_po
         object_pose_msg.pose.position.x = candidate_x
         object_pose_msg.pose.position.y = candidate_y
         object_pose_msg.pose.position.z = obj_height
-        roll = 1.5708 # necessary only for power_drill_with_grip, comment out after pulling changes, the drill rotation was removed
+        roll = 0.0
         pitch = 0.0
         yaw = round(random.uniform(0.0, math.pi), 4)
+        # HACK: object specific rotations
+        if object_class == 'power_drill_with_grip':
+            roll = - math.pi / 2.0
         angular_q = tf.transformations.quaternion_from_euler(roll, pitch, yaw)
         object_pose_msg.pose.orientation.x = angular_q[0]
         object_pose_msg.pose.orientation.y = angular_q[1]
