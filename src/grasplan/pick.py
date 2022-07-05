@@ -370,11 +370,11 @@ class PickTools():
             action_client.send_goal(goal)
             rospy.loginfo(f'waiting for result from {rospy.resolve_name(PICK_OBJECT_SERVER_NAME)} action server')
             if action_client.wait_for_result(rospy.Duration.from_sec(60.0)):
-                result = action_client.get_result()
+                result = action_client.get_result().error_code.val
             else:
-                result = False
+                result = MoveItErrorCodes.TIMED_OUT
         else:
-            result = False
+            result = MoveItErrorCodes.TIMED_OUT
 
         return result
 
