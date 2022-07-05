@@ -146,6 +146,12 @@ def compute_object_height(object_class):
     if object_class == 'multimeter':
         # return 0.7510319999605417 # planning failed, but it shouldn't , maybe is an error of not adding the table?
         return 0.76 # works
+    if object_class == 'relay':
+        # return 0.782182000130415
+        return 0.8
+    if object_class == 'screwdriver':
+        # return 0.7472060001641512
+        return 0.75
     rospy.logerr('compute_object_height failed!')
     return 0.85 # better to return a high value than to fail?
 
