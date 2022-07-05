@@ -13,7 +13,7 @@ import actionlib
 import moveit_commander
 import traceback
 
-from grasplan.tools.support_plane_tools import obj_to_plane, reduce_plane_area, gen_place_poses_from_plane, make_plane_marker_msg
+from grasplan.tools.support_plane_tools import obj_to_plane, reduce_plane_area, gen_place_poses_from_plane, make_plane_marker_msg, compute_object_height
 from grasplan.common_grasp_tools import separate_object_class_from_id
 from grasplan.tools.moveit_errors import print_moveit_error
 from std_msgs.msg import String
@@ -178,10 +178,9 @@ class PlaceTools():
         self.plane_vis_pub.publish(make_plane_marker_msg(self.global_reference_frame, plane))
         # generate random place poses within a plane
         object_class_tbp = separate_object_class_from_id(object_to_be_placed)[0]
-        # TODO: compute object height
-        place_poses_as_object_list_msg = gen_place_poses_from_plane(object_class_tbp, plane,\
-                frame_id=self.global_reference_frame, number_of_poses=5, obj_height=0.85, min_dist=self.min_dist,\
-                ignore_min_dist_list=self.ignore_min_dist_list)
+        place_poses_as_object_list_msg = gen_place_poses_from_plane(object_class_tbp, support_object, plane,\
+                frame_id=self.global_reference_frame, number_of_poses=5, obj_height=compute_object_height(object_class_tbp), \
+                min_dist=self.min_dist, ignore_min_dist_list=self.ignore_min_dist_list)
         # send places poses to place pose selector for visualisation purposes
         self.place_poses_pub.publish(place_poses_as_object_list_msg)
 

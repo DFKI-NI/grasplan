@@ -124,7 +124,7 @@ def obj_to_plane(support_obj):
     generate a plane made out of 4 points from an object
     this is currently a workaround, however it can be taken from moveit planning scene in future
     '''
-    th = 0.72 # table_height, (real table height : 0.7071)
+    th = 0.721 # table_height, (real table height : 0.72)
     if support_obj == 'table_1':
         return [Point(12.85, 1.50, th), Point(13.55, 1.50, th), Point(13.55, 2.90, th), Point(12.85, 2.90, th)]
     if support_obj == 'table_2':
