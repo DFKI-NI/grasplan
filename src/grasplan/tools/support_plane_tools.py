@@ -55,6 +55,9 @@ def gen_place_poses_from_plane(object_class, support_object, plane, frame_id='ma
     '''
     random sample poses within a plane and populate object list msg with the result
     '''
+    if number_of_poses > 100:
+        min_dist = 0.03
+        rospy.logwarn(f'number of poses is greater than 100, min_dist will be set to {0.03} instead of desired value of {min_dist}')
     object_list_msg = ObjectList()
     object_list_msg.header.frame_id = frame_id
     x_y_list = []
