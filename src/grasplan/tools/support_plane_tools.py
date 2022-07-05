@@ -158,9 +158,9 @@ if __name__ == '__main__':
     rospy.loginfo('test started')
     rospy.sleep(0.2)
 
-    object_surface = 'table_3' # the object from which a surface will be generated and later on an object needs to be placed
+    support_object = 'table_3' # the object from which a surface will be generated and later on an object needs to be placed
     object_tbp = 'power_drill_with_grip' # the obj class to be place on a surface
-    plane_1 = obj_to_plane(object_surface)
+    plane_1 = obj_to_plane(support_object)
     # currently the points need to be specified in a specific order (this is a workaround)
     # the animation helps to make sure the order is correct so that the functions can work correctly
     animate_plane_points(plane_1, point_pub)
@@ -168,7 +168,7 @@ if __name__ == '__main__':
     # visualise plane as marker
     marker_msg = make_plane_marker_msg('map', plane_1)
     support_plane_marker_pub.publish(marker_msg)
-    object_list_msg = gen_place_poses_from_plane(object_tbp, plane_1)
+    object_list_msg = gen_place_poses_from_plane(object_tbp, support_object, plane_1)
     place_poses_pub.publish(object_list_msg)
 
     rospy.loginfo('test finished')
