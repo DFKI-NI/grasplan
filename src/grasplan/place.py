@@ -247,6 +247,9 @@ class PlaceTools():
                     return True
                 else:
                     rospy.logerr(f'place object failed')
+                    self.place_pose_selector_clear_srv()
+                    # clear possible place poses markers in rviz
+                    self.clear_place_poses_markers()
                     print_moveit_error(result.error_code.val)
                 return False
         else:
