@@ -134,12 +134,20 @@ class PlaceTools():
             self.robot.arm.go()
 
     def place_obj_action_callback(self, goal):
-        if self.place_object(goal.support_surface_name, observe_before_place=goal.observe_before_place):
+        success = False
+        num_poses_list = [5, 25, 50] # first try 5 poses, then 25, then 50
+        for i, num_poses in enumerate(num_poses_list):
+            rospy.logwarn(f'place -> try number: {i + 1}')
+            if self.place_object(goal.support_surface_name, observe_before_place=goal.observe_before_place,\
+                                 number_of_poses=num_poses):
+                success = True
+                break
+        if success:
             self.place_action_server.set_succeeded(PlaceObjectResult(success=True))
         else:
             self.place_action_server.set_aborted(PlaceObjectResult(success=False))
 
-    def place_object(self, support_object, observe_before_place=False):
+    def place_object(self, support_object, observe_before_place=False, number_of_poses=5):
         '''
         create action lib client and call moveit place action server
         '''
@@ -179,7 +187,7 @@ class PlaceTools():
         # generate random place poses within a plane
         object_class_tbp = separate_object_class_from_id(object_to_be_placed)[0]
         place_poses_as_object_list_msg = gen_place_poses_from_plane(object_class_tbp, support_object, plane,\
-                frame_id=self.global_reference_frame, number_of_poses=5, obj_height=compute_object_height(object_class_tbp), \
+                frame_id=self.global_reference_frame, number_of_poses=number_of_poses, obj_height=compute_object_height(object_class_tbp), \
                 min_dist=self.min_dist, ignore_min_dist_list=self.ignore_min_dist_list)
         # send places poses to place pose selector for visualisation purposes
         self.place_poses_pub.publish(place_poses_as_object_list_msg)

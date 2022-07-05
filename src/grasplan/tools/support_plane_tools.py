@@ -58,10 +58,10 @@ def gen_place_poses_from_plane(object_class, support_object, plane, frame_id='ma
     object_list_msg = ObjectList()
     object_list_msg.header.frame_id = frame_id
     x_y_list = []
+    place_poses_id = 1
     for i in range(1, number_of_poses + 1):
         object_pose_msg = ObjectPose()
         object_pose_msg.class_id = object_class
-        object_pose_msg.instance_id = i
         count = 0
         while 1:
             candidate_x = round(random.uniform(plane[0].x, plane[1].x), 4)
@@ -85,12 +85,28 @@ def gen_place_poses_from_plane(object_class, support_object, plane, frame_id='ma
         # HACK: object specific rotations
         if object_class == 'power_drill_with_grip':
             roll = - math.pi / 2.0
-        angular_q = tf.transformations.quaternion_from_euler(roll, pitch, yaw)
-        object_pose_msg.pose.orientation.x = angular_q[0]
-        object_pose_msg.pose.orientation.y = angular_q[1]
-        object_pose_msg.pose.orientation.z = angular_q[2]
-        object_pose_msg.pose.orientation.w = angular_q[3]
-        object_list_msg.objects.append(copy.deepcopy(object_pose_msg))
+        if number_of_poses > 20:
+            rospy.loginfo('covering 360 angle for each pose')
+            yaw = 0.0
+            for i in range(7):
+                angular_q = tf.transformations.quaternion_from_euler(roll, pitch, yaw)
+                object_pose_msg.pose.orientation.x = angular_q[0]
+                object_pose_msg.pose.orientation.y = angular_q[1]
+                object_pose_msg.pose.orientation.z = angular_q[2]
+                object_pose_msg.pose.orientation.w = angular_q[3]
+                object_pose_msg.instance_id = place_poses_id
+                object_list_msg.objects.append(copy.deepcopy(object_pose_msg))
+                place_poses_id +=1
+                yaw += 0.5 # ~ 30 degree
+        else:
+            angular_q = tf.transformations.quaternion_from_euler(roll, pitch, yaw)
+            object_pose_msg.pose.orientation.x = angular_q[0]
+            object_pose_msg.pose.orientation.y = angular_q[1]
+            object_pose_msg.pose.orientation.z = angular_q[2]
+            object_pose_msg.pose.orientation.w = angular_q[3]
+            object_pose_msg.instance_id = place_poses_id
+            object_list_msg.objects.append(copy.deepcopy(object_pose_msg))
+            place_poses_id +=1
     return object_list_msg
 
 def reduce_plane_area(plane, distance):
