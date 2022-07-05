@@ -38,7 +38,7 @@ class PickTools():
         self.pregrasp_posture_required = rospy.get_param('~pregrasp_posture_required', False)
         self.pregrasp_posture = rospy.get_param('~pregrasp_posture', 'home')
         self.planning_scene_boxes = rospy.get_param('~planning_scene_boxes', [])
-        self.clear_planning_scene = rospy.get_param('~clear_planning_scene', False)
+        self.clear_planning_scene = rospy.get_param('~clear_planning_scene', True)
         self.clear_octomap_flag = rospy.get_param('~clear_octomap', False)
         # if true the arm is moved to a pose where objects are inside fov and pose selector is triggered to accept obj pose updates
         self.perceive_object = rospy.get_param('~perceive_object', True)
