@@ -40,6 +40,8 @@ class PickTools():
         self.planning_scene_boxes = rospy.get_param('~planning_scene_boxes', [])
         self.clear_planning_scene = rospy.get_param('~clear_planning_scene', True)
         self.clear_octomap_flag = rospy.get_param('~clear_octomap', False)
+        self.poses_to_go_before_pick = rospy.get_param('~poses_to_go_before_pick', [])
+        self.list_of_disentangle_objects = rospy.get_param('~list_of_disentangle_objects', [])
         # if true the arm is moved to a pose where objects are inside fov and pose selector is triggered to accept obj pose updates
         self.perceive_object = rospy.get_param('~perceive_object', True)
         # the arm pose where the objects are inside the fov (used to move the arm to perceive objs right after)
@@ -321,6 +323,12 @@ class PickTools():
         # clear octomap from the planning scene if needed
         if self.clear_octomap_flag:
             self.clear_octomap()
+
+        # go to intermediate arm poses if needed to disentangle arm cable
+        if object_to_pick.obj_class in self.list_of_disentangle_objects:
+            for arm_pose in self.poses_to_go_before_pick:
+                rospy.loginfo(f'going to intermediate arm pose {arm_pose} to disentangle cable')
+                self.move_arm_to_posture(arm_pose)
 
         # try to pick object with moveit
         #result = self._pick_with_moveit_commander(object_to_pick, grasps, support_surface_name)
