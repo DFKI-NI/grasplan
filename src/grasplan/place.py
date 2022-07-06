@@ -257,40 +257,6 @@ class PlaceTools():
             return False
         return False
 
-    def gen_place_poses(self):
-        '''
-        TODO: this is a test function, remove!
-        x: from -0.4 to 0.7
-        y: from -1.1 to -0.5
-        z: from 0.72 to 1.0
-        '''
-        pose_array_msg = PoseArray()
-        pose_array_msg.header.frame_id = 'mobipick/base_link'
-        for i in range(1, 50):
-            pose_msg = Pose()
-            pose_msg.position.x = round(random.uniform(-0.4,   0.7), 2)
-            pose_msg.position.y = round(random.uniform(-1.1,  -0.5), 2)
-            pose_msg.position.z = round(random.uniform( 0.72,  1.0), 2)
-            # roll = round(random.uniform( 0.0,  3.1415), 2)
-            # pitch = round(random.uniform( 0.0,  3.1415), 2)
-            # yaw = round(random.uniform( 0.0,  3.1415), 2)
-            # angular_q = tf.transformations.quaternion_from_euler(roll, pitch, yaw)
-            # ---
-            # angular_q = [0,0,0,1] # power_drill laying down
-            # ---
-            # works for power_drill standing up correctly
-            roll = 1.5708
-            pitch = 0.0
-            yaw = 0.0
-            angular_q = tf.transformations.quaternion_from_euler(roll, pitch, yaw)
-            pose_msg.orientation.x = angular_q[0]
-            pose_msg.orientation.y = angular_q[1]
-            pose_msg.orientation.z = angular_q[2]
-            pose_msg.orientation.w = angular_q[3]
-            pose_array_msg.poses.append(copy.deepcopy(pose_msg))
-        self.place_poses_pub.publish(pose_array_msg)
-        return pose_array_msg
-
     def make_place_goal_msg(self, object_to_be_placed, support_object, place_poses_as_object_list_msg):
         '''
         fill place action lib goal, see: https://github.com/ros-planning/moveit_msgs/blob/master/action/Place.action
