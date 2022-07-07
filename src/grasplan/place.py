@@ -290,7 +290,7 @@ class PlaceTools():
         # the name that the support surface (e.g. table) has in the collision world
         # can be left empty if no name is available
         # string support_surface_name
-        goal.support_surface_name = 'table_1' # TODO
+        goal.support_surface_name = support_object
 
         # whether collisions between the gripper and the support surface should be acceptable
         # during move from pre-place to place and during retreat. Collisions when moving to the
