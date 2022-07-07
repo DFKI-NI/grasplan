@@ -71,6 +71,10 @@ class PlaceTools():
         # activate place pose selector to be ready to store the place poses
         resp = self.activate_place_pose_selector_srv(True)
 
+        # wait for moveit to become available, TODO: find a cleaner way to wait for moveit
+        rospy.wait_for_service('/mobipick/move_group/planning_scene_monitor/set_parameters', 30.0)
+        rospy.sleep(2.0)
+
         try:
             rospy.loginfo('waiting for move_group action server')
             moveit_commander.roscpp_initialize(sys.argv)
