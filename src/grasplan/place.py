@@ -257,6 +257,8 @@ class PlaceTools():
         '''
         fill place action lib goal, see: https://github.com/ros-planning/moveit_msgs/blob/master/action/Place.action
         '''
+        assert isinstance(object_to_be_placed, str)
+        assert isinstance(support_object, str)
 
         goal = PlaceGoal()
 
