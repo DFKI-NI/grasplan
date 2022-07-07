@@ -296,7 +296,7 @@ class PlaceTools():
         # during move from pre-place to place and during retreat. Collisions when moving to the
         # pre-place location are still not allowed even if this is set to true.
         # bool allow_gripper_support_collision
-        goal.allow_gripper_support_collision = True
+        goal.allow_gripper_support_collision = False
 
         # Optional constraints to be imposed on every point in the motion plan
         # Constraints path_constraints
