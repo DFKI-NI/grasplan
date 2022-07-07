@@ -20,7 +20,7 @@ from std_msgs.msg import String
 from std_srvs.srv import Empty, SetBool, Trigger
 from object_pose_msgs.msg import ObjectList, ObjectPose
 from geometry_msgs.msg import Vector3Stamped, PoseStamped, Pose
-from moveit_msgs.msg import PlaceAction, PlaceGoal, PlaceLocation, GripperTranslation, PlanningOptions
+from moveit_msgs.msg import PlaceAction, PlaceGoal, PlaceLocation, GripperTranslation, PlanningOptions, Constraints, OrientationConstraint
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from visualization_msgs.msg import Marker
 from pbr_msgs.msg import PlaceObjectAction, PlaceObjectResult
@@ -253,6 +253,27 @@ class PlaceTools():
             return False
         return False
 
+    def make_constraints_msg(self):
+        constraints_msg = Constraints()
+        constraints_msg.name = 'gripper_pointing_down'
+
+        orientation_constraint_msg = OrientationConstraint()
+        orientation_constraint_msg.header.frame_id = 'mobipick/base_link'
+        orientation_constraint_msg.orientation.x = -0.5
+        orientation_constraint_msg.orientation.y = 0.5
+        orientation_constraint_msg.orientation.z = -0.5
+        orientation_constraint_msg.orientation.w = -0.5
+        orientation_constraint_msg.link_name = 'mobipick/gripper_tcp'
+        orientation_constraint_msg.absolute_x_axis_tolerance = 0.9424777960769379
+        orientation_constraint_msg.absolute_y_axis_tolerance = 0.9424777960769379
+        orientation_constraint_msg.absolute_z_axis_tolerance = 6.283185307179586
+        orientation_constraint_msg.parameterization = 0
+        orientation_constraint_msg.weight = 0.8
+
+        constraints_msg.orientation_constraints.append(orientation_constraint_msg)
+
+        return constraints_msg
+
     def make_place_goal_msg(self, object_to_be_placed, support_object, place_poses_as_object_list_msg):
         '''
         fill place action lib goal, see: https://github.com/ros-planning/moveit_msgs/blob/master/action/Place.action
@@ -302,8 +323,7 @@ class PlaceTools():
 
         # Optional constraints to be imposed on every point in the motion plan
         # Constraints path_constraints
-        # NOTE: mobipick simple pick n place demo does indeed has this value set
-        # goal.path_constraints =
+        # goal.path_constraints = self.make_constraints_msg() # add orientation constraints
 
         # The name of the motion planner to use. If no name is specified,
         # a default motion planner will be used
