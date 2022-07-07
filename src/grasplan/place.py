@@ -174,7 +174,6 @@ class PlaceTools():
 
         action_client = actionlib.SimpleActionClient(self.place_object_server_name, PlaceAction)
         rospy.loginfo(f'sending place goal to {self.place_object_server_name} action server')
-        object_to_pick = object_to_be_placed
 
         # generate plane from object surface
         plane = obj_to_plane(support_object)
