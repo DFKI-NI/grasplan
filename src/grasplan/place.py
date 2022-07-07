@@ -42,6 +42,8 @@ class PlaceTools():
         self.gripper_release_distance = rospy.get_param('~gripper_release_distance', 0.1)
         planning_time = rospy.get_param('~planning_time', 20.0)
         arm_goal_tolerance = rospy.get_param('~arm_goal_tolerance', 0.01)
+        self.disentangle_required = rospy.get_param('~disentangle_required', False)
+        self.poses_to_go_before_place = rospy.get_param('~poses_to_go_before_place', [])
 
         self.plane_vis_pub = rospy.Publisher('~support_plane_as_marker', Marker, queue_size=1, latch=True)
         self.place_poses_pub = rospy.Publisher('~place_poses', ObjectList, queue_size=50, latch=True)
@@ -196,6 +198,12 @@ class PlaceTools():
         if action_client.wait_for_server(timeout=rospy.Duration.from_sec(2.0)):
             rospy.loginfo(f'found {self.place_object_server_name} action server')
             goal = self.make_place_goal_msg(object_to_be_placed, support_object, place_poses_as_object_list_msg)
+
+            # go to intermediate arm poses if needed to disentangle arm cable
+            if self.disentangle_required:
+                for arm_pose in self.poses_to_go_before_place:
+                    rospy.loginfo(f'going to intermediate arm pose {arm_pose} to disentangle cable')
+                    self.move_arm_to_posture(arm_pose)
 
             rospy.loginfo(f'sending place {object_to_be_placed} goal to {self.place_object_server_name} action server')
             action_client.send_goal(goal)
