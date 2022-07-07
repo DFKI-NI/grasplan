@@ -403,10 +403,13 @@ class PlaceTools():
 
         return planning_options_msg
 
-    def make_place_location_msg(self, place_pose, allowed_touch_objects=[]):
+    def make_place_location_msg(self, place_pose, allowed_touch_objects=None):
         '''
         see: https://github.com/ros-planning/moveit_msgs/blob/master/msg/PlaceLocation.msg
         '''
+
+        if allowed_touch_objects is None:
+            allowed_touch_objects = []
         assert isinstance(place_pose, PoseStamped)
         assert isinstance(allowed_touch_objects, list)
         place_msg = PlaceLocation()
