@@ -361,6 +361,11 @@ class PlaceTools():
         # The diff to consider for the planning scene (optional)
         # PlanningScene planning_scene_diff
         # planning_options_msg.planning_scene_diff = 
+        # NOTE: It's important to set is_diff = True, otherwise MoveIt will
+        # overwrite its planning scene with this one (empty), thereby ignoring
+        # collisions with e.g. the octomap
+        planning_options_msg.planning_scene_diff.is_diff = True
+        planning_options_msg.planning_scene_diff.robot_state.is_diff = True
 
         # If this flag is set to true, the action
         # returns an executable plan in the response but does not attempt execution
@@ -405,10 +410,13 @@ class PlaceTools():
 
         return planning_options_msg
 
-    def make_place_location_msg(self, place_pose, allowed_touch_objects=[]):
+    def make_place_location_msg(self, place_pose, allowed_touch_objects=None):
         '''
         see: https://github.com/ros-planning/moveit_msgs/blob/master/msg/PlaceLocation.msg
         '''
+
+        if allowed_touch_objects is None:
+            allowed_touch_objects = []
         assert isinstance(place_pose, PoseStamped)
         assert isinstance(allowed_touch_objects, list)
         place_msg = PlaceLocation()

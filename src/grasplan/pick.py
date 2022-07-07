@@ -374,6 +374,10 @@ class PickTools():
             goal.planning_options.planning_scene_diff.robot_state.is_diff = True
             goal.planning_options.replan_delay = 2.0
 
+            # TODO: remove this hack
+            # Allow all objects to touch during picking. This is especially important when trying to lift the klt with the multimeter inside.
+            goal.allowed_touch_objects = ['klt_1', 'relay_1', 'multimeter_1', 'screwdriver_1', 'power_drill_with_grip_1' ]
+
             rospy.loginfo(f'sending pick {object_to_pick.get_object_class_and_id_as_string()} goal '
                           f'to {rospy.resolve_name(PICK_OBJECT_SERVER_NAME)} action server')
             action_client.send_goal(goal)
