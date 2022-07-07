@@ -354,6 +354,11 @@ class PlaceTools():
         # The diff to consider for the planning scene (optional)
         # PlanningScene planning_scene_diff
         # planning_options_msg.planning_scene_diff = 
+        # NOTE: It's important to set is_diff = True, otherwise MoveIt will
+        # overwrite its planning scene with this one (empty), thereby ignoring
+        # collisions with e.g. the octomap
+        planning_options_msg.planning_scene_diff.is_diff = True
+        planning_options_msg.planning_scene_diff.robot_state.is_diff = True
 
         # If this flag is set to true, the action
         # returns an executable plan in the response but does not attempt execution
