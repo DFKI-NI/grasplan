@@ -43,9 +43,6 @@ class PlaceTools():
         planning_time = rospy.get_param('~planning_time', 20.0)
         arm_goal_tolerance = rospy.get_param('~arm_goal_tolerance', 0.01)
 
-        moveit_commander.roscpp_initialize(sys.argv)
-        self.arm = moveit_commander.MoveGroupCommander(self.group_name, wait_for_servers=20.0)
-
         self.plane_vis_pub = rospy.Publisher('~support_plane_as_marker', Marker, queue_size=1, latch=True)
         self.place_poses_pub = rospy.Publisher('~place_poses', ObjectList, queue_size=50, latch=True)
         self.marker_array_pub = rospy.Publisher('/place_pose_selector_objects', MarkerArray, queue_size=1)
@@ -175,9 +172,6 @@ class PlaceTools():
         rospy.loginfo(f'sending place goal to {self.place_object_server_name} action server')
         object_to_pick = object_to_be_placed
 
-        # moveit::planning_interface::MoveGroupInterface& group TODO: missing?
-        # group.setSupportSurfaceName('table_1');
-
         # generate plane from object surface
         plane = obj_to_plane(support_object)
         # scale down plane to account for obj width and length
@@ -199,8 +193,6 @@ class PlaceTools():
         if action_client.wait_for_server(timeout=rospy.Duration.from_sec(2.0)):
             rospy.loginfo(f'found {self.place_object_server_name} action server')
             goal = self.make_place_goal_msg(object_to_be_placed, support_object, place_poses_as_object_list_msg)
-
-            self.arm.set_support_surface_name('table_1') # TODO
 
             rospy.loginfo(f'sending place {object_to_be_placed} goal to {self.place_object_server_name} action server')
             action_client.send_goal(goal)
