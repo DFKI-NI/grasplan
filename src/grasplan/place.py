@@ -489,8 +489,8 @@ class PlaceTools():
 
         return gripper_translation_msg
 
-    def start_pick_node(self):
-        # wait for trigger via topic or action lib
+    def start_place_node(self):
+        # wait for trigger action lib
         rospy.loginfo('ready to place objects')
         rospy.spin()
         # shutdown moveit cpp interface before exit
@@ -499,4 +499,4 @@ class PlaceTools():
 if __name__=='__main__':
     rospy.init_node('place_object_node', anonymous=False)
     place = PlaceTools()
-    place.start_pick_node()
+    place.start_place_node()
