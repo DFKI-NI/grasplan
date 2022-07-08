@@ -22,7 +22,12 @@ class InsertTools():
     def __init__(self):
         # create instance of place
         self.place = PlaceTools(action_server_required=False) # we will advertise our own action lib server for insertion
+
+        # parameters
         pick_pose_selector_class_query_srv_name = rospy.get_param('~pick_pose_selector_class_query_srv_name', '/pose_selector_class_query')
+        self.disentangle_required = rospy.get_param('~disentangle_required', False)
+        self.poses_to_go_before_insert = rospy.get_param('~poses_to_go_before_insert', [])
+
         rospy.loginfo(f'waiting for pose selector services: {pick_pose_selector_class_query_srv_name}')
         rospy.wait_for_service(pick_pose_selector_class_query_srv_name, 30.0)
         self.pick_pose_selector_class_query_srv = rospy.ServiceProxy(pick_pose_selector_class_query_srv_name, ClassQuery)
@@ -39,13 +44,26 @@ class InsertTools():
         for i in range(2): # 0, 1 = 2 attemps
             rospy.loginfo(f'Insert object: attempt number {i + 1}')
             if i == 0: # first try, optimistic, keep same orientation as support object
-                if self.insert_object(goal.support_surface_name, observe_before_insert=goal.observe_before_insert, same_orientation_as_support_obj=True):
-                    success = True
-                    break
+                # disentangle cable only on first attempt
+                override_disentangle_dont_doit = False
+                override_observe_before_place_dont_doit = False
+                same_orientation_as_support_obj = True
+                # do not disentangle if we dont go to observe arm pose
+                if not goal.observe_before_insert:
+                    override_disentangle_dont_doit = True
             else: # second try, generate 360 degree orientations
-                if self.insert_object(goal.support_surface_name, observe_before_insert=goal.observe_before_insert, same_orientation_as_support_obj=False):
-                    success = True
-                    break
+                override_disentangle_dont_doit = True
+                override_observe_before_place_dont_doit = True
+                same_orientation_as_support_obj = False
+                # do not disentangle if we dont go to observe arm pose
+                if not goal.observe_before_insert:
+                    override_disentangle_dont_doit = True
+            if self.insert_object(goal.support_surface_name, observe_before_insert=goal.observe_before_insert,\
+                                    same_orientation_as_support_obj=same_orientation_as_support_obj,\
+                                    override_disentangle_dont_doit=override_disentangle_dont_doit,\
+                                    override_observe_before_place_dont_doit=override_observe_before_place_dont_doit):
+                success = True
+                break
         if success:
             self.insert_action_server.set_succeeded(InsertObjectResult(success=True))
         else:
@@ -69,7 +87,8 @@ class InsertTools():
         rospy.logerr(f'At least one object of the class {support_object.obj_class} was perceived but is not the one you want, with id: {support_object.id}')
         return None
 
-    def insert_object(self, support_object_name_as_string, observe_before_insert=False, same_orientation_as_support_obj=False):
+    def insert_object(self, support_object_name_as_string, observe_before_insert=False, same_orientation_as_support_obj=False,\
+                      override_disentangle_dont_doit=False, override_observe_before_place_dont_doit=False):
         '''
         use place functionality by creating 1 pose above the support_object_name_as_string object for now
         NOTE: support_object_name_as_string has an id
@@ -93,14 +112,23 @@ class InsertTools():
         # clear pose selector before starting to place in case some data is left over from previous runs
         self.place.place_pose_selector_clear_srv()
 
-        if observe_before_insert:
-            # optionally find the support object: look at table, update planning scene
-            self.place.move_arm_to_posture(self.place.arm_pose_with_objs_in_fov)
-            # activate pick pose selector to observe table
-            resp = self.place.activate_pick_pose_selector_srv(True)
-            rospy.sleep(0.5) # give some time to observe
-            resp = self.place.activate_pick_pose_selector_srv(False)
-            self.place.add_objs_to_planning_scene()
+        if not override_observe_before_place_dont_doit:
+            if observe_before_insert:
+                # optionally find the support object: look at table, update planning scene
+                self.place.move_arm_to_posture(self.place.arm_pose_with_objs_in_fov)
+                # activate pick pose selector to observe table
+                resp = self.place.activate_pick_pose_selector_srv(True)
+                rospy.sleep(0.5) # give some time to observe
+                resp = self.place.activate_pick_pose_selector_srv(False)
+                self.place.add_objs_to_planning_scene()
+
+        # allow disentangle to happen only on first place attempt, no need to do it every time
+        if not override_disentangle_dont_doit:
+            # go to intermediate arm poses if needed to disentangle arm cable
+            if self.disentangle_required:
+                for arm_pose in self.poses_to_go_before_insert:
+                    rospy.loginfo(f'going to intermediate arm pose {arm_pose} to disentangle cable')
+                    self.place.move_arm_to_posture(arm_pose)
 
         action_client = actionlib.SimpleActionClient(self.place.place_object_server_name, PlaceAction)
         rospy.loginfo(f'sending insert command as a place goal to {self.place.place_object_server_name} action server')
