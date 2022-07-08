@@ -165,6 +165,9 @@ class PlaceTools():
         object_to_be_placed = list(self.scene.get_attached_objects().keys())[0]
         rospy.loginfo(f'received request to place the object that the robot is currently holding : {object_to_be_placed}')
 
+        # clear pose selector before starting to place in case some data is left over from previous runs
+        self.place_pose_selector_clear_srv()
+
         if observe_before_place:
             # optionally find free space in table: look at table, update planning scene
             self.move_arm_to_posture(self.arm_pose_with_objs_in_fov)
