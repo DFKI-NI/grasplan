@@ -46,7 +46,7 @@ class PlaceTools():
         self.poses_to_go_before_place = rospy.get_param('~poses_to_go_before_place', [])
 
         self.plane_vis_pub = rospy.Publisher('~support_plane_as_marker', Marker, queue_size=1, latch=True)
-        self.place_poses_pub = rospy.Publisher('~place_poses', ObjectList, queue_size=50, latch=True)
+        self.place_poses_pub = rospy.Publisher('~place_poses', ObjectList, queue_size=50)
         self.marker_array_pub = rospy.Publisher('/place_pose_selector_objects', MarkerArray, queue_size=1)
 
         # service clients
