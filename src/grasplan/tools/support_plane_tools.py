@@ -40,7 +40,7 @@ def make_plane_marker_msg(ref_frame, plane):
     marker_msg.color = ColorRGBA(1.0, 0.61, 0.16, 1.0) # orange
     return marker_msg
 
-def compute_object_height_for_insertion(object_class_tbi, support_obj_class, gap_between_objects=0.05):
+def compute_object_height_for_insertion(object_class_tbi, support_obj_class, gap_between_objects=0.02):
     # ohd : objects height dictionary, object_class_tbi : object class to be inserted
     ohd = {'power_drill_with_grip': 0.2205359935760498,
            'klt': 0.14699999809265138,
