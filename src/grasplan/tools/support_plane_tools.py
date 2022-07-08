@@ -65,12 +65,16 @@ def gen_insert_poses_from_obj(object_class, support_object_position, obj_height,
         roll = - math.pi / 2.0
     pitch = 0.0
     yaw = 0.0
-    angular_q = tf.transformations.quaternion_from_euler(roll, pitch, yaw)
-    object_pose_msg.pose.orientation.x = angular_q[0]
-    object_pose_msg.pose.orientation.y = angular_q[1]
-    object_pose_msg.pose.orientation.z = angular_q[2]
-    object_pose_msg.pose.orientation.w = angular_q[3]
-    object_pose_msg.instance_id = insert_poses_id
+    for i in range(7):
+        angular_q = tf.transformations.quaternion_from_euler(roll, pitch, yaw)
+        object_pose_msg.pose.orientation.x = angular_q[0]
+        object_pose_msg.pose.orientation.y = angular_q[1]
+        object_pose_msg.pose.orientation.z = angular_q[2]
+        object_pose_msg.pose.orientation.w = angular_q[3]
+        object_pose_msg.instance_id = insert_poses_id
+        object_list_msg.objects.append(copy.deepcopy(object_pose_msg))
+        insert_poses_id +=1
+        yaw += 0.5 # ~ 30 degree
     object_list_msg.objects.append(copy.deepcopy(object_pose_msg))
     insert_poses_id +=1
     return object_list_msg
