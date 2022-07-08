@@ -6,7 +6,6 @@ example on how to insert an object using grasplan and moveit
 
 import rospy
 import actionlib
-from std_msgs.msg import String
 from grasplan.place import PlaceTools
 from grasplan.common_grasp_tools import separate_object_class_from_id
 from grasplan.tools.support_plane_tools import gen_insert_poses_from_obj, compute_object_height_for_insertion
@@ -17,21 +16,29 @@ from moveit_msgs.msg import MoveItErrorCodes
 from std_srvs.srv import Empty
 from pose_selector.srv import ClassQuery
 from grasplan.common_grasp_tools import objectToPick # name is misleading, in this case we want to insert an object in it
+from pbr_msgs.msg import InsertObjectAction, InsertObjectResult
 
 class InsertTools():
     def __init__(self):
         # create instance of place
-        self.place = PlaceTools()
+        self.place = PlaceTools(action_server_required=False) # we will advertise our own action lib server for insertion
         pick_pose_selector_class_query_srv_name = rospy.get_param('~pick_pose_selector_class_query_srv_name', '/pose_selector_class_query')
         rospy.loginfo(f'waiting for pose selector services: {pick_pose_selector_class_query_srv_name}')
         rospy.wait_for_service(pick_pose_selector_class_query_srv_name, 30.0)
         self.pick_pose_selector_class_query_srv = rospy.ServiceProxy(pick_pose_selector_class_query_srv_name, ClassQuery)
-        rospy.Subscriber("insert_event_in", String, self.TriggerCB)
         self.insert_poses_pub = rospy.Publisher('/mobipick/place_object_node/place_poses', ObjectList, queue_size=50)
+
+        self.insert_action_server = actionlib.SimpleActionServer('insert_object', InsertObjectAction, self.insert_obj_action_callback, False)
+        self.insert_action_server.start()
+
+        # give some time for publishers and Subscribers to register
         rospy.sleep(0.2)
 
-    def TriggerCB(self, msg):
-        self.insert_object(msg.data, observe_before_insert=True)
+    def insert_obj_action_callback(self, goal):
+        if self.insert_object(goal.support_surface_name, observe_before_insert=goal.observe_before_insert):
+            self.insert_action_server.set_succeeded(InsertObjectResult(success=True))
+        else:
+            self.insert_action_server.set_aborted(InsertObjectResult(success=False))
 
     def get_object_position(self, support_object):
         '''
@@ -126,10 +133,9 @@ class InsertTools():
                     print_moveit_error(result.error_code.val)
                 return False
         else:
-            rospy.logerr(f'action server {self.place.place_object_server_name} not available')
+            rospy.logerr(f'action server {self.place.place_object_server_name} not available (we use it for insertion)')
             return False
         return False
-        rospy.loginfo('done with insert object function')
 
     def start_insert_node(self):
         rospy.loginfo('ready to insert objects')

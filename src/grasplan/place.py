@@ -29,7 +29,7 @@ from pose_selector.srv import GetPoses
 from visualization_msgs.msg import Marker, MarkerArray
 
 class PlaceTools():
-    def __init__(self):
+    def __init__(self, action_server_required=True):
         self.global_reference_frame = rospy.get_param('~global_reference_frame', 'map')
         self.arm_pose_with_objs_in_fov = rospy.get_param('~arm_pose_with_objs_in_fov', 'observe100cm_right')
         self.timeout = rospy.get_param('~timeout', 50.0) # in seconds
@@ -89,9 +89,10 @@ class PlaceTools():
             rospy.logfatal('grasplan place server could not connect to Moveit in time, exiting! \n' + traceback.format_exc())
             rospy.signal_shutdown('fatal error')
 
-        # offer action lib server for object placing
-        self.place_action_server = actionlib.SimpleActionServer('place_object', PlaceObjectAction, self.place_obj_action_callback, False)
-        self.place_action_server.start()
+        # offer action lib server for object placing if needed
+        if action_server_required:
+            self.place_action_server = actionlib.SimpleActionServer('place_object', PlaceObjectAction, self.place_obj_action_callback, False)
+            self.place_action_server.start()
 
     def clear_place_poses_markers(self):
         marker_array_msg = MarkerArray()
