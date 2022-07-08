@@ -13,13 +13,14 @@ if __name__ == '__main__':
             rospy.logwarn('have you run this node without the mobipick as namespace? if so, it might not work!')
 
         myargv = rospy.myargv()
-        if len(myargv) != 3:
+        if len(myargv) < 3:
             rospy.logfatal(f'Usage: {myargv[0]} object_to_pick support_surface_name')
             sys.exit(1)
         object_to_pick = myargv[1]
         support_surface_name = myargv[2]
     else:
-        rospy.logwarn('you have run this node without arguments, at least the mobipick namespace is expected! ( __ns:=mobipick )')
+        rospy.logwarn('you have run this node without arguments, at least the mobipick namespace is expected! ( __ns:=mobipick ) ... exiting')
+        sys.exit(1)
     timeout = 50.0 # in seconds, default: 50.0
     pick_object_server_name = 'pick_object'
     action_client = actionlib.SimpleActionClient(pick_object_server_name, PickObjectAction)
@@ -29,8 +30,16 @@ if __name__ == '__main__':
         goal = PickObjectGoal()
         goal.object_name = object_to_pick # pick "any" multimeter
         goal.support_surface_name = support_surface_name
-        #goal.object_name = 'multimeter_1' # pick a specific multimeter
-        rospy.loginfo(f'sending pick {object_to_pick} goal to {pick_object_server_name} action server')
+        # goal.object_name = 'multimeter_1' # pick a specific multimeter
+        goal.ignore_object_list = []
+        if len(myargv) > 3:
+            for i in range(len(myargv) - 3):
+                goal.ignore_object_list.append(myargv[i + 3])
+        rospy.loginfo(f'sending -> pick {object_to_pick} from {support_surface_name} <- goal to {pick_object_server_name} action server')
+        if len(goal.ignore_object_list) > 0:
+            rospy.logwarn(f'the following objects: {goal.ignore_object_list} will not be added to the planning scene')
+        else:
+            rospy.loginfo('all objects are taken into account in planning scene')
         action_client.send_goal(goal)
         rospy.loginfo(f'waiting for result from {pick_object_server_name} action server')
         if action_client.wait_for_result(rospy.Duration.from_sec(timeout)):

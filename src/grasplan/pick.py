@@ -111,7 +111,7 @@ class PickTools():
         rospy.loginfo('pick node ready!')
 
     def pick_obj_action_callback(self, goal):
-        if self.pick_object(goal.object_name, goal.support_surface_name, self.grasp_type):
+        if self.pick_object(goal.object_name, goal.support_surface_name, self.grasp_type, goal.ignore_object_list):
             self.pick_action_server.set_succeeded(PickObjectResult(success=True))
         else:
             self.pick_action_server.set_aborted(PickObjectResult(success=False))
@@ -126,7 +126,11 @@ class PickTools():
         self.tf_listener.getLatestCommonTime(target_reference_frame, pose.header.frame_id)
         return self.tf_listener.transformPose(target_reference_frame, pose)
 
-    def make_object_pose_and_add_objs_to_planning_scene(self, object_to_pick):
+    def make_object_pose_and_add_objs_to_planning_scene(self, object_to_pick, ignore_object_list=[]):
+        '''
+        ignore_object_list: if an object is inside another one, you can add it to the ignore_object_list and it will not be
+        added to the planning scene, but it will rather be removed from the planning scene
+        '''
         assert isinstance(object_to_pick, objectToPick)
         # query pose selector
         resp = self.pose_selector_class_query_srv(object_to_pick.obj_class)
@@ -167,8 +171,13 @@ class PickTools():
                     object_to_pick_id = copy.deepcopy(pose_selector_object.instance_id)
                     object_found = True
                     rospy.loginfo(f'found specific object to be picked in pose selector: {object_name}')
-                # add all perceived objects to planning scene (one at at time)
-                self.scene.add_box(object_name, pose_stamped_msg, object_bounding_box)
+                # planning scene exceptions
+                if object_name in ignore_object_list:
+                    self.scene.remove_world_object(object_name)
+                else:
+                    rospy.logwarn(f'adding object {object_name} to planning scene')
+                    # add all perceived objects to planning scene (one at at time)
+                    self.scene.add_box(object_name, pose_stamped_msg, object_bounding_box)
         if not object_found:
             rospy.logerr(f'the specific object you want to pick was not found : {object_to_pick.get_object_class_and_id_as_string()}')
             return None, None, None
@@ -231,7 +240,7 @@ class PickTools():
         marker_array_msg.markers.append(marker)
         publisher.publish(marker_array_msg)
 
-    def pick_object(self, object_name_as_string, support_surface_name, grasp_type):
+    def pick_object(self, object_name_as_string, support_surface_name, grasp_type, ignore_object_list=[]):
         '''
         1) move arm to a position where the attached camera can see the scene (octomap will be populated)
         2) clear octomap
@@ -240,6 +249,8 @@ class PickTools():
         5) call pick moveit functionality
         '''
         rospy.loginfo(f'attempting to pick object : {object_name_as_string}')
+        if len(ignore_object_list) > 0:
+            rospy.logwarn(f'the following objects: {ignore_object_list} will not be added to the planning scene')
 
         if not self.detach_all_objects_flag and len(self.scene.get_attached_objects().keys()) > 0:
             rospy.logerr('cannot pick object, another object is currently attached to the gripper already')
@@ -296,7 +307,7 @@ class PickTools():
             self.scene.add_box(planning_scene_box['scene_name'], table_pose, (box_x, box_y, box_z))
 
         # add all perceived objects of interest to planning scene and return the pose, bb, and id of the object to be picked
-        object_pose, bounding_box, id = self.make_object_pose_and_add_objs_to_planning_scene(object_to_pick)
+        object_pose, bounding_box, id = self.make_object_pose_and_add_objs_to_planning_scene(object_to_pick, ignore_object_list=ignore_object_list)
 
         if object_pose is None:
             return False
