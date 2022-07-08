@@ -114,15 +114,15 @@ class InsertTools():
                 # handle moveit pick result
                 if result.error_code.val == MoveItErrorCodes.SUCCESS:
                     rospy.loginfo(f'Successfully inserted object')
-                    # self.place.place_pose_selector_clear_srv() # remove
+                    self.place.place_pose_selector_clear_srv()
                     # clear possible place poses markers in rviz
-                    # self.place.clear_place_poses_markers() # remove
+                    self.place.clear_place_poses_markers()
                     return True
                 else:
                     rospy.logerr(f'insert object failed')
-                    # self.place.place_pose_selector_clear_srv() # remove
+                    self.place.place_pose_selector_clear_srv()
                     # clear possible place poses markers in rviz
-                    # self.place.clear_place_poses_markers() # remove
+                    # self.place.clear_place_poses_markers() # leave markers for debugging if failed to insert
                     print_moveit_error(result.error_code.val)
                 return False
         else:
