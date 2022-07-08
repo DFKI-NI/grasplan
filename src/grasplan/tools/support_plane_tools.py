@@ -46,7 +46,7 @@ def compute_object_height_for_insertion(object_class_tbi, support_obj_class, gap
            'klt': 0.14699999809265138,
            'multimeter': 0.04206399992108345,
            'relay': 0.10436400026082993,
-           'screwdriver': 0.34412000328302383}
+           'screwdriver': 0.034412000328302383}
     return (ohd[support_obj_class] / 2.0) + (ohd[object_class_tbi] / 2.0) + gap_between_objects
 
 def gen_insert_poses_from_obj(object_class, support_object_position, obj_height, frame_id='map'):
