@@ -140,10 +140,23 @@ class PlaceTools():
     def place_obj_action_callback(self, goal):
         success = False
         num_poses_list = [5, 25, 50] # first try 5 poses, then 25, then 50
+        override_disentangle_dont_doit = False
+        override_observe_before_place_dont_doit = False
         for i, num_poses in enumerate(num_poses_list):
             rospy.logwarn(f'place -> try number: {i + 1}')
+            # disentangle cable only on first attempt
+            if i == 0:
+                override_disentangle_dont_doit = False
+                override_observe_before_place_dont_doit = False
+            else:
+                override_disentangle_dont_doit = True
+                override_observe_before_place_dont_doit = True
+            # do not disentangle if we dont go to observe arm pose
+            if not goal.observe_before_place:
+                override_disentangle_dont_doit = True
             if self.place_object(goal.support_surface_name, observe_before_place=goal.observe_before_place,\
-                                 number_of_poses=num_poses):
+                                 number_of_poses=num_poses, override_disentangle_dont_doit=override_disentangle_dont_doit,\
+                                 override_observe_before_place_dont_doit=override_observe_before_place_dont_doit):
                 success = True
                 break
         if success:
@@ -151,7 +164,8 @@ class PlaceTools():
         else:
             self.place_action_server.set_aborted(PlaceObjectResult(success=False))
 
-    def place_object(self, support_object, observe_before_place=False, number_of_poses=5):
+    def place_object(self, support_object, observe_before_place=False, number_of_poses=5,\
+                     override_disentangle_dont_doit=False, override_observe_before_place_dont_doit=False):
         '''
         create action lib client and call moveit place action server
         '''
@@ -169,14 +183,15 @@ class PlaceTools():
         # clear pose selector before starting to place in case some data is left over from previous runs
         self.place_pose_selector_clear_srv()
 
-        if observe_before_place:
-            # optionally find free space in table: look at table, update planning scene
-            self.move_arm_to_posture(self.arm_pose_with_objs_in_fov)
-            # activate pick pose selector to observe table
-            resp = self.activate_pick_pose_selector_srv(True)
-            rospy.sleep(0.5) # give some time to observe
-            resp = self.activate_pick_pose_selector_srv(False)
-            self.add_objs_to_planning_scene()
+        if not override_observe_before_place_dont_doit:
+            if observe_before_place:
+                # optionally find free space in table: look at table, update planning scene
+                self.move_arm_to_posture(self.arm_pose_with_objs_in_fov)
+                # activate pick pose selector to observe table
+                resp = self.activate_pick_pose_selector_srv(True)
+                rospy.sleep(0.5) # give some time to observe
+                resp = self.activate_pick_pose_selector_srv(False)
+                self.add_objs_to_planning_scene()
 
         action_client = actionlib.SimpleActionClient(self.place_object_server_name, PlaceAction)
         rospy.loginfo(f'sending place goal to {self.place_object_server_name} action server')
@@ -203,11 +218,13 @@ class PlaceTools():
             rospy.loginfo(f'found {self.place_object_server_name} action server')
             goal = self.make_place_goal_msg(object_to_be_placed, support_object, place_poses_as_object_list_msg)
 
-            # go to intermediate arm poses if needed to disentangle arm cable
-            if self.disentangle_required:
-                for arm_pose in self.poses_to_go_before_place:
-                    rospy.loginfo(f'going to intermediate arm pose {arm_pose} to disentangle cable')
-                    self.move_arm_to_posture(arm_pose)
+            # allow disentangle to happen only on first place attempt, no need to do it every time
+            if not override_disentangle_dont_doit:
+                # go to intermediate arm poses if needed to disentangle arm cable
+                if self.disentangle_required:
+                    for arm_pose in self.poses_to_go_before_place:
+                        rospy.loginfo(f'going to intermediate arm pose {arm_pose} to disentangle cable')
+                        self.move_arm_to_posture(arm_pose)
 
             rospy.loginfo(f'sending place {object_to_be_placed} goal to {self.place_object_server_name} action server')
             action_client.send_goal(goal)
