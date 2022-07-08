@@ -35,12 +35,23 @@ class InsertTools():
         rospy.sleep(0.2)
 
     def insert_obj_action_callback(self, goal):
-        if self.insert_object(goal.support_surface_name, observe_before_insert=goal.observe_before_insert):
+        success = False
+        for i in range(2): # 0, 1 = 2 attemps
+            rospy.loginfo(f'Insert object: attempt number {i + 1}')
+            if i == 0: # first try, optimistic, keep same orientation as support object
+                if self.insert_object(goal.support_surface_name, observe_before_insert=goal.observe_before_insert, same_orientation_as_support_obj=True):
+                    success = True
+                    break
+            else: # second try, generate 360 degree orientations
+                if self.insert_object(goal.support_surface_name, observe_before_insert=goal.observe_before_insert, same_orientation_as_support_obj=False):
+                    success = True
+                    break
+        if success:
             self.insert_action_server.set_succeeded(InsertObjectResult(success=True))
         else:
             self.insert_action_server.set_aborted(InsertObjectResult(success=False))
 
-    def get_object_position(self, support_object):
+    def get_support_object_pose(self, support_object):
         '''
         get object position from pose selector
         '''
@@ -54,11 +65,11 @@ class InsertTools():
         for pose in resp.poses:
             if pose.instance_id == support_object.id:
                 rospy.loginfo(f'success at getting support object pose: {support_object.get_object_class_and_id_as_string()}')
-                return [pose.pose.position.x, pose.pose.position.y, pose.pose.position.z]
+                return pose # of type object_pose_msgs/ObjectPose.msg
         rospy.logerr(f'At least one object of the class {support_object.obj_class} was perceived but is not the one you want, with id: {support_object.id}')
         return None
 
-    def insert_object(self, support_object_name_as_string, observe_before_insert=False):
+    def insert_object(self, support_object_name_as_string, observe_before_insert=False, same_orientation_as_support_obj=False):
         '''
         use place functionality by creating 1 pose above the support_object_name_as_string object for now
         NOTE: support_object_name_as_string has an id
@@ -95,12 +106,13 @@ class InsertTools():
         rospy.loginfo(f'sending insert command as a place goal to {self.place.place_object_server_name} action server')
 
         # get object position [x, y] -> without orientation for now
-        support_object_position = self.get_object_position(support_object)
-        if support_object_position is None:
+        support_object_pose = self.get_support_object_pose(support_object)
+        if support_object_pose is None:
             return False
 
-        place_poses_as_object_list_msg = gen_insert_poses_from_obj(object_class_tbi, support_object_position,\
-                compute_object_height_for_insertion(object_class_tbi, support_object.obj_class), frame_id=self.place.global_reference_frame)
+        place_poses_as_object_list_msg = gen_insert_poses_from_obj(object_class_tbi, support_object_pose,\
+                compute_object_height_for_insertion(object_class_tbi, support_object.obj_class),\
+                frame_id=self.place.global_reference_frame, same_orientation_as_support_obj=same_orientation_as_support_obj)
         # send places poses to place pose selector for visualisation purposes
         self.insert_poses_pub.publish(place_poses_as_object_list_msg)
 

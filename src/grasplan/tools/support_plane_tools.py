@@ -49,34 +49,45 @@ def compute_object_height_for_insertion(object_class_tbi, support_obj_class, gap
            'screwdriver': 0.034412000328302383}
     return (ohd[support_obj_class] / 2.0) + (ohd[object_class_tbi] / 2.0) + gap_between_objects
 
-def gen_insert_poses_from_obj(object_class, support_object_position, obj_height, frame_id='map'):
+def gen_insert_poses_from_obj(object_class, support_object_pose, obj_height, frame_id='map', same_orientation_as_support_obj=False):
+    '''
+    if same_orientation_as_support_obj is True then the object is aligned with the support object (e.g. box)
+    if same_orientation_as_support_obj is False then 360 degree orientations are used to place the object (can be used if first time fails)
+    '''
     object_list_msg = ObjectList()
     object_list_msg.header.frame_id = frame_id
     insert_poses_id = 1
     # only one insert pose for now
     object_pose_msg = ObjectPose()
     object_pose_msg.class_id = object_class
-    object_pose_msg.pose.position.x = support_object_position[0]
-    object_pose_msg.pose.position.y = support_object_position[1]
-    object_pose_msg.pose.position.z = support_object_position[2] + obj_height
+    object_pose_msg.pose.position.x = support_object_pose.pose.position.x
+    object_pose_msg.pose.position.y = support_object_pose.pose.position.y
+    object_pose_msg.pose.position.z = support_object_pose.pose.position.z + obj_height
     roll = 0.0
     # HACK: object specific rotations
     if object_class == 'power_drill_with_grip':
         roll = - math.pi / 2.0
     pitch = 0.0
     yaw = 0.0
-    for i in range(7):
-        angular_q = tf.transformations.quaternion_from_euler(roll, pitch, yaw)
-        object_pose_msg.pose.orientation.x = angular_q[0]
-        object_pose_msg.pose.orientation.y = angular_q[1]
-        object_pose_msg.pose.orientation.z = angular_q[2]
-        object_pose_msg.pose.orientation.w = angular_q[3]
+    if not same_orientation_as_support_obj:
+        for i in range(7):
+            angular_q = tf.transformations.quaternion_from_euler(roll, pitch, yaw)
+            object_pose_msg.pose.orientation.x = angular_q[0]
+            object_pose_msg.pose.orientation.y = angular_q[1]
+            object_pose_msg.pose.orientation.z = angular_q[2]
+            object_pose_msg.pose.orientation.w = angular_q[3]
+            object_pose_msg.instance_id = insert_poses_id
+            object_list_msg.objects.append(copy.deepcopy(object_pose_msg))
+            insert_poses_id +=1
+            yaw += 0.5 # ~ 30 degree
+    else:
+        object_pose_msg.pose.orientation.x = support_object_pose.pose.orientation.x
+        object_pose_msg.pose.orientation.y = support_object_pose.pose.orientation.y
+        object_pose_msg.pose.orientation.z = support_object_pose.pose.orientation.z
+        object_pose_msg.pose.orientation.w = support_object_pose.pose.orientation.w
         object_pose_msg.instance_id = insert_poses_id
         object_list_msg.objects.append(copy.deepcopy(object_pose_msg))
         insert_poses_id +=1
-        yaw += 0.5 # ~ 30 degree
-    object_list_msg.objects.append(copy.deepcopy(object_pose_msg))
-    insert_poses_id +=1
     return object_list_msg
 
 def well_separated(x_y_list, candidate_x, candidate_y, min_dist=0.2):
