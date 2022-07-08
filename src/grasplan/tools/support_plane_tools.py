@@ -40,6 +40,41 @@ def make_plane_marker_msg(ref_frame, plane):
     marker_msg.color = ColorRGBA(1.0, 0.61, 0.16, 1.0) # orange
     return marker_msg
 
+def compute_object_height_for_insertion(object_class_tbi, support_obj_class, gap_between_objects=0.05):
+    # ohd : objects height dictionary, object_class_tbi : object class to be inserted
+    ohd = {'power_drill_with_grip': 0.2205359935760498,
+           'klt': 0.14699999809265138,
+           'multimeter': 0.04206399992108345,
+           'relay': 0.10436400026082993,
+           'screwdriver': 0.34412000328302383}
+    return (ohd[support_obj_class] / 2.0) + (ohd[object_class_tbi] / 2.0) + gap_between_objects
+
+def gen_insert_poses_from_obj(object_class, support_object_position, obj_height, frame_id='map'):
+    object_list_msg = ObjectList()
+    object_list_msg.header.frame_id = frame_id
+    insert_poses_id = 1
+    # only one insert pose for now
+    object_pose_msg = ObjectPose()
+    object_pose_msg.class_id = object_class
+    object_pose_msg.pose.position.x = support_object_position[0]
+    object_pose_msg.pose.position.y = support_object_position[1]
+    object_pose_msg.pose.position.z = support_object_position[2] + obj_height
+    roll = 0.0
+    # HACK: object specific rotations
+    if object_class == 'power_drill_with_grip':
+        roll = - math.pi / 2.0
+    pitch = 0.0
+    yaw = 0.0
+    angular_q = tf.transformations.quaternion_from_euler(roll, pitch, yaw)
+    object_pose_msg.pose.orientation.x = angular_q[0]
+    object_pose_msg.pose.orientation.y = angular_q[1]
+    object_pose_msg.pose.orientation.z = angular_q[2]
+    object_pose_msg.pose.orientation.w = angular_q[3]
+    object_pose_msg.instance_id = insert_poses_id
+    object_list_msg.objects.append(copy.deepcopy(object_pose_msg))
+    insert_poses_id +=1
+    return object_list_msg
+
 def well_separated(x_y_list, candidate_x, candidate_y, min_dist=0.2):
     if len(x_y_list) == 0:
         return True
