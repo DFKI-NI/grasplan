@@ -175,7 +175,7 @@ class PickTools():
                 if object_name in ignore_object_list:
                     self.scene.remove_world_object(object_name)
                 else:
-                    rospy.logwarn(f'adding object {object_name} to planning scene')
+                    rospy.loginfo(f'adding object {object_name} to planning scene')
                     # add all perceived objects to planning scene (one at at time)
                     self.scene.add_box(object_name, pose_stamped_msg, object_bounding_box)
         if not object_found:
