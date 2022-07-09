@@ -170,7 +170,7 @@ class PlaceTools():
         create action lib client and call moveit place action server
         '''
         assert isinstance(observe_before_place, bool)
-        rospy.loginfo('received request to place object')
+        rospy.loginfo(f'received request to place object on {support_object}')
 
         if len(self.scene.get_attached_objects().keys()) == 0:
             rospy.logerr("the robot is not currently holding any object, can't place")
@@ -211,7 +211,7 @@ class PlaceTools():
         self.place_poses_pub.publish(place_poses_as_object_list_msg)
 
         # clear octomap before placing, this is experimental and not sure is needed
-        rospy.loginfo('clearing octomap')
+        rospy.logwarn('clearing octomap')
         rospy.ServiceProxy('clear_octomap', Empty)()
 
         if action_client.wait_for_server(timeout=rospy.Duration.from_sec(2.0)):
