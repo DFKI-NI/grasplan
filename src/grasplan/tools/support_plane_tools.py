@@ -88,6 +88,17 @@ def gen_insert_poses_from_obj(object_class, support_object_pose, obj_height, fra
         object_pose_msg.instance_id = insert_poses_id
         object_list_msg.objects.append(copy.deepcopy(object_pose_msg))
         insert_poses_id +=1
+        q = [support_object_pose.pose.orientation.x, support_object_pose.pose.orientation.y,
+             support_object_pose.pose.orientation.z, support_object_pose.pose.orientation.w]
+        euler_rot = tf.transformations.euler_from_quaternion(q)
+        q_new = tf.transformations.quaternion_from_euler(euler_rot[0], euler_rot[1], euler_rot[2] + 3.14159) # yaw + 180 degree
+        object_pose_msg.pose.orientation.x = q_new[0]
+        object_pose_msg.pose.orientation.y = q_new[1]
+        object_pose_msg.pose.orientation.z = q_new[2]
+        object_pose_msg.pose.orientation.w = q_new[3]
+        object_pose_msg.instance_id = insert_poses_id
+        object_list_msg.objects.append(copy.deepcopy(object_pose_msg))
+        insert_poses_id +=1
     return object_list_msg
 
 def well_separated(x_y_list, candidate_x, candidate_y, min_dist=0.2):
