@@ -47,7 +47,7 @@ class GraspPlanningCore:
         '''
         if object_class is None or dictionary is None or object_class not in dictionary:
             return joint_angles
-        return [dictionary[object_class]]
+        return dictionary[object_class]
 
     def make_gripper_trajectory(self, joint_angles, dictionary, object_class=None):
         '''

@@ -46,7 +46,9 @@ def compute_object_height_for_insertion(object_class_tbi, support_obj_class, gap
            'klt': 0.14699999809265138,
            'multimeter': 0.04206399992108345,
            'relay': 0.10436400026082993,
-           'screwdriver': 0.034412000328302383}
+           'screwdriver': 0.034412000328302383,
+           'insole': 0.21,
+           'bag': 0.34}
     return (ohd[support_obj_class] / 2.0) + (ohd[object_class_tbi] / 2.0) + gap_between_objects
 
 def gen_insert_poses_from_obj(object_class, support_object_pose, obj_height, frame_id='map', same_orientation_as_support_obj=False):
@@ -64,11 +66,14 @@ def gen_insert_poses_from_obj(object_class, support_object_pose, obj_height, fra
     object_pose_msg.pose.position.y = support_object_pose.pose.position.y
     object_pose_msg.pose.position.z = support_object_pose.pose.position.z + obj_height
     roll = 0.0
+    pitch = 0.0
+    yaw = 0.0
     # HACK: object specific rotations
     if object_class == 'power_drill_with_grip':
         roll = - math.pi / 2.0
-    pitch = 0.0
-    yaw = 0.0
+    elif object_class == 'insole':
+        roll = -1.54
+    
     if not same_orientation_as_support_obj:
         for i in range(7):
             angular_q = tf.transformations.quaternion_from_euler(roll, pitch, yaw)
@@ -79,12 +84,17 @@ def gen_insert_poses_from_obj(object_class, support_object_pose, obj_height, fra
             object_pose_msg.instance_id = insert_poses_id
             object_list_msg.objects.append(copy.deepcopy(object_pose_msg))
             insert_poses_id +=1
-            yaw += 0.5 # ~ 30 degree
+            if object_class == 'insole':
+                yaw += 3.14159 # ~ 180 degree
+            else:
+                yaw += 0.5 # ~ 30 degree
     else:
         object_pose_msg.pose.orientation.x = support_object_pose.pose.orientation.x
         object_pose_msg.pose.orientation.y = support_object_pose.pose.orientation.y
         object_pose_msg.pose.orientation.z = support_object_pose.pose.orientation.z
         object_pose_msg.pose.orientation.w = support_object_pose.pose.orientation.w
+        if object_class == 'insole':
+            object_pose_msg.pose.orientation.x -= 1.54
         object_pose_msg.instance_id = insert_poses_id
         object_list_msg.objects.append(copy.deepcopy(object_pose_msg))
         insert_poses_id +=1
@@ -208,12 +218,17 @@ def obj_to_plane(support_obj):
     this is currently a workaround, however it can be taken from moveit planning scene in future
     '''
     th = 0.721 # table_height, (real table height : 0.72)
+    ch = 0.951 # conveyor height (real conveyor height : 0.9)
     if support_obj == 'table_1':
         return [Point(12.85, 1.50, th), Point(13.55, 1.50, th), Point(13.55, 2.90, th), Point(12.85, 2.90, th)]
     if support_obj == 'table_2':
         return [Point(11.30, 2.89, th), Point(12.70, 2.89, th), Point(12.70, 3.59, th), Point(11.30, 3.59, th)]
     if support_obj == 'table_3':
         return [Point(9.70, 2.89,th), Point(11.10, 2.89, th), Point(11.10, 3.59,th), Point(9.70, 3.59,th)]
+    if support_obj == 'conveyor_belt_a':
+        return [Point(1.15, 0.6, ch), Point(0.45, 0.6, ch), Point(0.45, 0.1, ch), Point(1.15, 0.1, ch)]
+    if support_obj == 'conveyor_belt_b':
+        return [Point(-0.45, 0.6, ch), Point(-1.15, 0.6, ch), Point(-1.15, 0.1, ch), Point(-0.45, 0.1, ch)]
     if support_obj == 'klt':
         return [Point(0,0,0), Point(1,0,0), Point(1,1,0), Point(0,1,0)] # TODO
     return [None, None, None, None, None]
@@ -232,6 +247,10 @@ def compute_object_height(object_class):
     if object_class == 'screwdriver':
         # return 0.7472060001641512
         return 0.75
+    if object_class == 'insole':
+        return 0.95
+    if object_class == 'bag':
+        return 1.04
     rospy.logerr('compute_object_height failed!')
     return 0.85 # better to return a high value than to fail?
 

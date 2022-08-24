@@ -229,7 +229,7 @@ class PickTools():
 
     def detach_all_objects(self):
         for attached_object in self.scene.get_attached_objects().keys():
-            self.robot.gripper.detach_object(name=attached_object)
+            self.robot.hand.detach_object(name=attached_object)
 
     def clear_mesh_markers(self, namespace, publisher):
         marker_array_msg = MarkerArray()

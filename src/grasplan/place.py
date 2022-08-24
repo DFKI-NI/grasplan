@@ -199,7 +199,7 @@ class PlaceTools():
         # generate plane from object surface
         plane = obj_to_plane(support_object)
         # scale down plane to account for obj width and length
-        plane = reduce_plane_area(plane, -0.2)
+        plane = reduce_plane_area(plane, 0.05)
         # publish plane as marker for visualisation purposes
         self.plane_vis_pub.publish(make_plane_marker_msg(self.global_reference_frame, plane))
         # generate random place poses within a plane
@@ -465,11 +465,11 @@ class PlaceTools():
         # The approach motion
         # GripperTranslation pre_place_approach
         # TODO after tables demo: make robot place from the left as well by parameterizing this value
-        place_msg.pre_place_approach = self.make_gripper_translation_msg('mobipick/base_link', 0.2, vector_z=-1.0)
+        place_msg.pre_place_approach = self.make_gripper_translation_msg('ur5_base_link', 0.2, vector_z=-1.0)
 
         # The retreat motion
         # GripperTranslation post_place_retreat
-        place_msg.post_place_retreat = self.make_gripper_translation_msg('mobipick/gripper_tcp', 0.25, vector_x=-1.0)
+        place_msg.post_place_retreat = self.make_gripper_translation_msg('palm', 0.25, vector_x=-1.0)
 
         # an optional list of obstacles that we have semantic information about
         # and that can be touched/pushed/moved in the course of grasping

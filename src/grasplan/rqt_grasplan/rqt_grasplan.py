@@ -83,7 +83,7 @@ class RqtGrasplan(Plugin):
         self.test_pose_pub = rospy.Publisher('/test_pose', PoseStamped, queue_size=1)
 
         # parameters
-        obj_pkg_name = rospy.get_param('obj_pkg_name', 'mobipick_gazebo')
+        obj_pkg_name = rospy.get_param('~obj_pkg_name', 'mobipick_gazebo')
         if rospy.has_param('~object_name'):
             self.object_class = rospy.get_param('~object_name')
             # set object name to textbox

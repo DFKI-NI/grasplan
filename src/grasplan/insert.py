@@ -31,7 +31,7 @@ class InsertTools():
         rospy.loginfo(f'waiting for pose selector services: {pick_pose_selector_class_query_srv_name}')
         rospy.wait_for_service(pick_pose_selector_class_query_srv_name, 30.0)
         self.pick_pose_selector_class_query_srv = rospy.ServiceProxy(pick_pose_selector_class_query_srv_name, ClassQuery)
-        self.insert_poses_pub = rospy.Publisher('/mobipick/place_object_node/place_poses', ObjectList, queue_size=50)
+        self.insert_poses_pub = rospy.Publisher('place_object_node/place_poses', ObjectList, queue_size=50)
 
         self.insert_action_server = actionlib.SimpleActionServer('insert_object', InsertObjectAction, self.insert_obj_action_callback, False)
         self.insert_action_server.start()
