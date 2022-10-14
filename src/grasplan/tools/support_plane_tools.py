@@ -226,9 +226,9 @@ def obj_to_plane(support_obj):
     if support_obj == 'table_3':
         return [Point(9.70, 2.89,th), Point(11.10, 2.89, th), Point(11.10, 3.59,th), Point(9.70, 3.59,th)]
     if support_obj == 'conveyor_belt_a':
-        return [Point(1.15, 0.6, ch), Point(0.45, 0.6, ch), Point(0.45, 0.1, ch), Point(1.15, 0.1, ch)]
+        return [Point(0.9, 0.3, ch), Point(0.5, 0.3, ch), Point(0.5, 0.0, ch), Point(0.9, 0.0, ch)]
     if support_obj == 'conveyor_belt_b':
-        return [Point(-0.45, 0.6, ch), Point(-1.15, 0.6, ch), Point(-1.15, 0.1, ch), Point(-0.45, 0.1, ch)]
+        return [Point(-0.5, 0.4, ch), Point(-1.1, 0.4, ch), Point(-1.1, 0.0, ch), Point(-0.5, 0.0, ch)]
     if support_obj == 'klt':
         return [Point(0,0,0), Point(1,0,0), Point(1,1,0), Point(0,1,0)] # TODO
     return [None, None, None, None, None]
@@ -250,7 +250,7 @@ def compute_object_height(object_class):
     if object_class == 'insole':
         return 0.95
     if object_class == 'bag':
-        return 1.04
+        return 1.05
     rospy.logerr('compute_object_height failed!')
     return 0.85 # better to return a high value than to fail?
 
