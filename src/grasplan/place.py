@@ -36,11 +36,12 @@ class PlaceTools():
         self.min_dist = rospy.get_param('~min_dist', 0.2)
         self.ignore_min_dist_list = rospy.get_param('~ignore_min_dist_list', ['foo_obj'])
         self.group_name = rospy.get_param('~group_name', 'arm')
+        self.arm_name = rospy.get_param('~arm_name', 'ur10e')
         self.gripper_joint_names = rospy.get_param('~gripper_joint_names')
         self.gripper_joint_efforts = rospy.get_param('~gripper_joint_efforts')
         self.place_object_server_name = rospy.get_param('~place_object_server_name', 'place') # /mobipick/place
         self.gripper_release_distance = rospy.get_param('~gripper_release_distance', 0.1)
-        planning_time = rospy.get_param('~planning_time', 20.0)
+        self.planning_time = rospy.get_param('~planning_time', 20.0)
         arm_goal_tolerance = rospy.get_param('~arm_goal_tolerance', 0.01)
         self.disentangle_required = rospy.get_param('~disentangle_required', False)
         self.poses_to_go_before_place = rospy.get_param('~poses_to_go_before_place', [])
@@ -81,7 +82,7 @@ class PlaceTools():
             rospy.loginfo('waiting for move_group action server')
             moveit_commander.roscpp_initialize(sys.argv)
             self.robot = moveit_commander.RobotCommander()
-            self.robot.arm.set_planning_time(planning_time)
+            self.robot.arm.set_planning_time(self.planning_time)
             self.robot.arm.set_goal_tolerance(arm_goal_tolerance)
             self.scene = moveit_commander.PlanningSceneInterface()
             rospy.loginfo('found move_group action server')
@@ -93,7 +94,7 @@ class PlaceTools():
         if action_server_required:
             self.place_action_server = actionlib.SimpleActionServer('place_object', PlaceObjectAction, self.place_obj_action_callback, False)
             self.place_action_server.start()
-
+        
     def clear_place_poses_markers(self):
         marker_array_msg = MarkerArray()
         marker = Marker()
@@ -207,6 +208,24 @@ class PlaceTools():
         place_poses_as_object_list_msg = gen_place_poses_from_plane(object_class_tbp, support_object, plane,\
                 frame_id=self.global_reference_frame, number_of_poses=number_of_poses, obj_height=compute_object_height(object_class_tbp), \
                 min_dist=self.min_dist, ignore_min_dist_list=self.ignore_min_dist_list)
+
+        # hardcoded place poses, works for bag grasp from the left side
+        # place_poses = [(-0.9, 0.104, 1.05, 0.0, 0.0, 0.627), (-0.9, 0.104, 1.05, 0.0, 0.0, -2.32), (-0.8, 0.132, 1.05, 0.0, 0.0, 0.0), (-0.8, 0.132, 1.05, 0.0, 0.0, -3.14)]
+        # place_poses_as_object_list_msg = ObjectList()
+        # place_poses_as_object_list_msg.header.frame_id = self.global_reference_frame
+        # for i in range(0, 2):
+        #     object_pose_msg = ObjectPose()
+        #     object_pose_msg.class_id = object_class_tbp
+        #     object_pose_msg.pose.position.x = place_poses[i][0]
+        #     object_pose_msg.pose.position.y = place_poses[i][1]
+        #     object_pose_msg.pose.position.z = place_poses[i][2]
+        #     angular_q = tf.transformations.quaternion_from_euler(place_poses[i][3], place_poses[i][4], place_poses[i][5])
+        #     object_pose_msg.pose.orientation.x = angular_q[0]
+        #     object_pose_msg.pose.orientation.y = angular_q[1]
+        #     object_pose_msg.pose.orientation.z = angular_q[2]
+        #     object_pose_msg.pose.orientation.w = angular_q[3]
+        #     object_pose_msg.instance_id = i + 1
+        #     place_poses_as_object_list_msg.objects.append(copy.deepcopy(object_pose_msg))
         # send places poses to place pose selector for visualisation purposes
         self.place_poses_pub.publish(place_poses_as_object_list_msg)
 
@@ -281,12 +300,12 @@ class PlaceTools():
             return False
         return False
 
-    def make_constraints_msg(self):
+    def make_constraints_msg(self, frame_id):
         constraints_msg = Constraints()
         constraints_msg.name = 'gripper_pointing_down'
 
         orientation_constraint_msg = OrientationConstraint()
-        orientation_constraint_msg.header.frame_id = 'mobipick/base_link'
+        orientation_constraint_msg.header.frame_id = frame_id
         orientation_constraint_msg.orientation.x = -0.5
         orientation_constraint_msg.orientation.y = 0.5
         orientation_constraint_msg.orientation.z = -0.5
@@ -351,7 +370,7 @@ class PlaceTools():
 
         # Optional constraints to be imposed on every point in the motion plan
         # Constraints path_constraints
-        # goal.path_constraints = self.make_constraints_msg() # add orientation constraints
+        # goal.path_constraints = self.make_constraints_msg(frame_id) # add orientation constraints
 
         # The name of the motion planner to use. If no name is specified,
         # a default motion planner will be used
@@ -365,7 +384,7 @@ class PlaceTools():
 
         # The maximum amount of time the motion planner is allowed to plan for
         # float64 allowed_planning_time
-        goal.allowed_planning_time = 20.0
+        goal.allowed_planning_time = self.planning_time
 
         # Planning options
         # PlanningOptions planning_options
@@ -465,7 +484,7 @@ class PlaceTools():
         # The approach motion
         # GripperTranslation pre_place_approach
         # TODO after tables demo: make robot place from the left as well by parameterizing this value
-        place_msg.pre_place_approach = self.make_gripper_translation_msg('ur5_base_link', 0.2, vector_z=-1.0)
+        place_msg.pre_place_approach = self.make_gripper_translation_msg(self.arm_name + '_base_link', 0.2, vector_z=-1.0)
 
         # The retreat motion
         # GripperTranslation post_place_retreat
