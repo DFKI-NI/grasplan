@@ -20,6 +20,7 @@ class PoseSelectorVisualiser:
         self.color = rospy.get_param('~object_color_rgba', [0,0,0,0])
         self.object_pkg = rospy.get_param('~object_pkg', 'mobipick_gazebo')
         self.objects_mesh_publisher = rospy.Publisher('pose_selector_objects', MarkerArray, queue_size=1, latch=True)
+        self.global_reference_frame = rospy.get_param('~global_reference_frame', 'map')
         pose_selector_get_all_poses_srv_name = rospy.get_param('~pose_selector_get_all_poses_srv_name', '/pose_selector_get_all')
         rospy.loginfo(f'waiting for pose selector service: {pose_selector_get_all_poses_srv_name}')
         if wait_for_pose_selector_srv:
@@ -45,11 +46,28 @@ class PoseSelectorVisualiser:
         mesh_marker_msg.mesh_resource = mesh_path
         return mesh_marker_msg
 
+    def make_box_marker_msg(self, box_pose, box_scale=[1,1,1], id=1, color=[0,0,0,0]):
+        box_marker_msg = Marker()
+        box_marker_msg.id = id
+        box_marker_msg.ns = 'object'
+        box_marker_msg.header.frame_id = box_pose.header.frame_id
+        box_marker_msg.pose = box_pose.pose
+        box_marker_msg.type = Marker.CUBE
+        box_marker_msg.scale = Vector3(box_scale[0], box_scale[1], box_scale[2])
+        box_marker_msg.color = std_msgs.msg.ColorRGBA(*color)
+        return box_marker_msg
+
     def make_obj_marker_msg(self, object_name, mesh_pose, id=1):
         assert isinstance(object_name, str)
         assert isinstance(mesh_pose, PoseStamped)
-        mesh_path = f'package://{self.object_pkg}/meshes/{object_name}.dae'
-        marker_msg = self.make_mesh_marker_msg(mesh_path, mesh_pose, id=id, color=self.color)
+        if 'insole' in object_name:
+            marker_msg = self.make_box_marker_msg(mesh_pose, box_scale=[0.08, 0.21, 0.03], id=id, color=self.color)
+        elif 'bag' in object_name:
+            mesh_path = f'package://{self.object_pkg}/models/{object_name}_insole/{object_name}_insole.stl'
+            marker_msg = self.make_mesh_marker_msg(mesh_path, mesh_pose, id=id, color=self.color, mesh_scale=[0.8, 0.6, 1.0])
+        else:
+            mesh_path = f'package://{self.object_pkg}/models/{object_name}/{object_name}.stl'
+            marker_msg = self.make_mesh_marker_msg(mesh_path, mesh_pose, id=id, color=self.color)
         return marker_msg
 
     def update_object_poses(self):
@@ -61,7 +79,7 @@ class PoseSelectorVisualiser:
             for obj_pose in resp.poses.objects:
                 rospy.logdebug(f'obj found: {obj_pose}')
                 pose_stamped_msg = PoseStamped()
-                pose_stamped_msg.header.frame_id = 'map'
+                pose_stamped_msg.header.frame_id = self.global_reference_frame
                 pose_stamped_msg.pose.position = obj_pose.pose.position
                 pose_stamped_msg.pose.orientation = obj_pose.pose.orientation
                 marker_array_msg.markers.append(self.make_obj_marker_msg(obj_pose.class_id, pose_stamped_msg, id=id))
