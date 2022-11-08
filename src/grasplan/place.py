@@ -23,7 +23,7 @@ from geometry_msgs.msg import Vector3Stamped, PoseStamped, Pose
 from moveit_msgs.msg import PlaceAction, PlaceGoal, PlaceLocation, GripperTranslation, PlanningOptions, Constraints, OrientationConstraint
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from visualization_msgs.msg import Marker
-from pbr_msgs.msg import PlaceObjectAction, PlaceObjectResult
+from grasplan.msg import PlaceObjectAction, PlaceObjectResult
 from moveit_msgs.msg import MoveItErrorCodes
 from pose_selector.srv import GetPoses
 from visualization_msgs.msg import Marker, MarkerArray

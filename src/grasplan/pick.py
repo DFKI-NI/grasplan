@@ -21,7 +21,7 @@ from pose_selector.srv import ClassQuery, PoseDelete, GetPoses
 from geometry_msgs.msg import PoseStamped
 from grasplan.tools.moveit_errors import print_moveit_error
 from moveit_msgs.msg import MoveItErrorCodes, PickupAction, PickupGoal
-from pbr_msgs.msg import PickObjectAction, PickObjectResult
+from grasplan.msg import PickObjectAction, PickObjectResult
 from grasplan.common_grasp_tools import objectToPick
 from visualization_msgs.msg import Marker, MarkerArray
 

@@ -16,7 +16,7 @@ from moveit_msgs.msg import MoveItErrorCodes
 from std_srvs.srv import Empty
 from pose_selector.srv import ClassQuery
 from grasplan.common_grasp_tools import objectToPick # name is misleading, in this case we want to insert an object in it
-from pbr_msgs.msg import InsertObjectAction, InsertObjectResult
+from grasplan.msg import InsertObjectAction, InsertObjectResult
 
 class InsertTools():
     def __init__(self):
