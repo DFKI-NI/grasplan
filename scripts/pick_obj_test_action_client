@@ -4,7 +4,7 @@ import sys
 import rospy
 import actionlib
 
-from pbr_msgs.msg import PickObjectAction, PickObjectGoal
+from grasplan.msg import PickObjectAction, PickObjectGoal
 
 if __name__ == '__main__':
     rospy.init_node('pick_object_action_client')
