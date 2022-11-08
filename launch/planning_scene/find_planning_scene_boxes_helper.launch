@@ -3,7 +3,7 @@
 
   <!-- Use cube fov marker publisher functionality from object_recognition_mockup to find the right parameters for the planning scene boxes -->
 
-  <node pkg="grasplan" type="object_recognition_mockup.py" name="object_recognition" output="log">
+  <node pkg="grasplan" type="object_recognition_mockup.py" name="object_recognition" output="log" required="true" >
     <!-- field of view box parameters -->
     <param name="objects_desired_reference_frame" type="string" value="map" />
     <param name="box_width" type="double" value="0.7" />
@@ -14,5 +14,8 @@
     <param name="z_box_position" type="double" value="0.35" />
     <param name="supress_warnings" type="bool" value="true" />
   </node>
+
+  <!-- Tune values for the collision boxes using gui -->
+  <node pkg="rqt_reconfigure" type="rqt_reconfigure" name="rqt_reconfigure" output="screen" required="true" />
 
 </launch>

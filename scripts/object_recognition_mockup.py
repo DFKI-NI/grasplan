@@ -193,10 +193,12 @@ class ObjRecognitionMockup:
         marker_msg.pose.position.x = config['x_box_position']
         marker_msg.pose.position.y = config['y_box_position']
         marker_msg.pose.position.z = config['z_box_position']
-        marker_msg.pose.orientation.x = 0.0
-        marker_msg.pose.orientation.y = 0.0
-        marker_msg.pose.orientation.z = 0.0
-        marker_msg.pose.orientation.w = 1.0
+        yaw = config['yaw_box_orientation']
+        angular_q = tf.transformations.quaternion_from_euler(0.0, 0.0, yaw)
+        marker_msg.pose.orientation.x = angular_q[0]
+        marker_msg.pose.orientation.y = angular_q[1]
+        marker_msg.pose.orientation.z = angular_q[2]
+        marker_msg.pose.orientation.w = angular_q[3]
         self.perception_fov_pub.publish(marker_msg)
         return marker_msg
 
