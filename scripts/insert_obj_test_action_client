@@ -39,7 +39,7 @@ if __name__ == '__main__':
             result = action_client.get_result()
             rospy.loginfo(f'{insert_object_server_name} is done with execution, resuĺt was = "{result}"')
             if result.success == True:
-                rospy.loginfo(f'Succesfully insertd object')
+                rospy.loginfo(f'Succesfully inserted object')
             else:
                 rospy.logerr(f'Failed to insert object')
         else:
