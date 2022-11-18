@@ -47,7 +47,7 @@ class InsertTools():
                 # disentangle cable only on first attempt
                 override_disentangle_dont_doit = False
                 override_observe_before_place_dont_doit = False
-                same_orientation_as_support_obj = True
+                same_orientation_as_support_obj = False
                 # do not disentangle if we dont go to observe arm pose
                 if not goal.observe_before_insert:
                     override_disentangle_dont_doit = True
@@ -150,7 +150,7 @@ class InsertTools():
 
         if action_client.wait_for_server(timeout=rospy.Duration.from_sec(2.0)):
             rospy.loginfo(f'found {self.place.place_object_server_name} action server')
-            goal = self.place.make_place_goal_msg(object_to_be_inserted, support_object.get_object_class_and_id_as_string(), place_poses_as_object_list_msg)
+            goal = self.place.make_place_goal_msg(object_to_be_inserted, support_object.get_object_class_and_id_as_string(), place_poses_as_object_list_msg, use_path_constraints=False)
 
             rospy.loginfo(f'sending place {object_to_be_inserted} goal to {self.place.place_object_server_name} action server')
             action_client.send_goal(goal)

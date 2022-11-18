@@ -18,8 +18,8 @@ from grasplan.common_grasp_tools import separate_object_class_from_id
 from grasplan.tools.moveit_errors import print_moveit_error
 from std_msgs.msg import String
 from std_srvs.srv import Empty, SetBool, Trigger
-from object_pose_msgs.msg import ObjectList, ObjectPose
-from geometry_msgs.msg import Vector3Stamped, PoseStamped, Pose
+from object_pose_msgs.msg import ObjectList
+from geometry_msgs.msg import Vector3Stamped, PoseStamped
 from moveit_msgs.msg import PlaceAction, PlaceGoal, PlaceLocation, GripperTranslation, PlanningOptions, Constraints, OrientationConstraint
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from visualization_msgs.msg import Marker
@@ -94,6 +94,8 @@ class PlaceTools():
         if action_server_required:
             self.place_action_server = actionlib.SimpleActionServer('place_object', PlaceObjectAction, self.place_obj_action_callback, False)
             self.place_action_server.start()
+
+        self.tf_listener = tf.TransformListener()
         
     def clear_place_poses_markers(self):
         marker_array_msg = MarkerArray()
@@ -209,24 +211,6 @@ class PlaceTools():
                 frame_id=self.global_reference_frame, number_of_poses=number_of_poses, obj_height=compute_object_height(object_class_tbp), \
                 min_dist=self.min_dist, ignore_min_dist_list=self.ignore_min_dist_list)
 
-        # hardcoded place poses, works for bag grasp from the left side
-        # place_poses = [(-0.9, 0.104, 1.05, 0.0, 0.0, 0.627), (-0.9, 0.104, 1.05, 0.0, 0.0, -2.32), (-0.8, 0.132, 1.05, 0.0, 0.0, 0.0), (-0.8, 0.132, 1.05, 0.0, 0.0, -3.14)]
-        # place_poses_as_object_list_msg = ObjectList()
-        # place_poses_as_object_list_msg.header.frame_id = self.global_reference_frame
-        # for i in range(0, 2):
-        #     object_pose_msg = ObjectPose()
-        #     object_pose_msg.class_id = object_class_tbp
-        #     object_pose_msg.pose.position.x = place_poses[i][0]
-        #     object_pose_msg.pose.position.y = place_poses[i][1]
-        #     object_pose_msg.pose.position.z = place_poses[i][2]
-        #     angular_q = tf.transformations.quaternion_from_euler(place_poses[i][3], place_poses[i][4], place_poses[i][5])
-        #     object_pose_msg.pose.orientation.x = angular_q[0]
-        #     object_pose_msg.pose.orientation.y = angular_q[1]
-        #     object_pose_msg.pose.orientation.z = angular_q[2]
-        #     object_pose_msg.pose.orientation.w = angular_q[3]
-        #     object_pose_msg.instance_id = i + 1
-        #     place_poses_as_object_list_msg.objects.append(copy.deepcopy(object_pose_msg))
-        # send places poses to place pose selector for visualisation purposes
         self.place_poses_pub.publish(place_poses_as_object_list_msg)
 
         # clear octomap before placing, this is experimental and not sure is needed
@@ -235,7 +219,7 @@ class PlaceTools():
 
         if action_client.wait_for_server(timeout=rospy.Duration.from_sec(2.0)):
             rospy.loginfo(f'found {self.place_object_server_name} action server')
-            goal = self.make_place_goal_msg(object_to_be_placed, support_object, place_poses_as_object_list_msg)
+            goal = self.make_place_goal_msg(object_to_be_placed, support_object, place_poses_as_object_list_msg, use_path_contraints=True)
 
             # allow disentangle to happen only on first place attempt, no need to do it every time
             if not override_disentangle_dont_doit:
@@ -300,28 +284,32 @@ class PlaceTools():
             return False
         return False
 
-    def make_constraints_msg(self, frame_id):
+    def make_constraints_msg(self):
         constraints_msg = Constraints()
-        constraints_msg.name = 'gripper_pointing_down'
+        constraints_msg.name = 'keep_bag_upright'
+
+        now = rospy.Time.now()
+        self.tf_listener.waitForTransform(self.arm_name + '_base_link', 'hand_ee_link', now, rospy.Duration(2.0))
+        _, rot = self.tf_listener.lookupTransform(self.arm_name + '_base_link', 'hand_ee_link', now)
 
         orientation_constraint_msg = OrientationConstraint()
-        orientation_constraint_msg.header.frame_id = frame_id
-        orientation_constraint_msg.orientation.x = -0.5
-        orientation_constraint_msg.orientation.y = 0.5
-        orientation_constraint_msg.orientation.z = -0.5
-        orientation_constraint_msg.orientation.w = -0.5
-        orientation_constraint_msg.link_name = 'mobipick/gripper_tcp'
-        orientation_constraint_msg.absolute_x_axis_tolerance = 0.9424777960769379
-        orientation_constraint_msg.absolute_y_axis_tolerance = 0.9424777960769379
-        orientation_constraint_msg.absolute_z_axis_tolerance = 6.283185307179586
+        orientation_constraint_msg.header.frame_id = self.arm_name + '_base_link'
+        orientation_constraint_msg.orientation.x = rot[0]
+        orientation_constraint_msg.orientation.y = rot[1]
+        orientation_constraint_msg.orientation.z = rot[2]
+        orientation_constraint_msg.orientation.w = rot[3]
+        orientation_constraint_msg.link_name = 'hand_ee_link'
+        orientation_constraint_msg.absolute_x_axis_tolerance = 6.28
+        orientation_constraint_msg.absolute_y_axis_tolerance = 0.2
+        orientation_constraint_msg.absolute_z_axis_tolerance = 6.28
         orientation_constraint_msg.parameterization = 0
-        orientation_constraint_msg.weight = 0.8
+        orientation_constraint_msg.weight = 1.0
 
         constraints_msg.orientation_constraints.append(orientation_constraint_msg)
 
         return constraints_msg
 
-    def make_place_goal_msg(self, object_to_be_placed, support_object, place_poses_as_object_list_msg):
+    def make_place_goal_msg(self, object_to_be_placed, support_object, place_poses_as_object_list_msg, use_path_contraints):
         '''
         fill place action lib goal, see: https://github.com/ros-planning/moveit_msgs/blob/master/action/Place.action
         '''
@@ -370,7 +358,8 @@ class PlaceTools():
 
         # Optional constraints to be imposed on every point in the motion plan
         # Constraints path_constraints
-        # goal.path_constraints = self.make_constraints_msg(frame_id) # add orientation constraints
+        if use_path_contraints:
+            goal.path_constraints = self.make_constraints_msg() # add orientation constraints
 
         # The name of the motion planner to use. If no name is specified,
         # a default motion planner will be used
@@ -488,7 +477,7 @@ class PlaceTools():
 
         # The retreat motion
         # GripperTranslation post_place_retreat
-        place_msg.post_place_retreat = self.make_gripper_translation_msg('palm', 0.25, vector_x=-1.0)
+        place_msg.post_place_retreat = self.make_gripper_translation_msg('world', 0.25, vector_z=1.0)
 
         # an optional list of obstacles that we have semantic information about
         # and that can be touched/pushed/moved in the course of grasping

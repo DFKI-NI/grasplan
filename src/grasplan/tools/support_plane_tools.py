@@ -101,7 +101,10 @@ def gen_insert_poses_from_obj(object_class, support_object_pose, obj_height, fra
         q = [support_object_pose.pose.orientation.x, support_object_pose.pose.orientation.y,
              support_object_pose.pose.orientation.z, support_object_pose.pose.orientation.w]
         euler_rot = tf.transformations.euler_from_quaternion(q)
-        q_new = tf.transformations.quaternion_from_euler(euler_rot[0], euler_rot[1], euler_rot[2] + 3.14159) # yaw + 180 degree
+        if object_class == 'insole':
+            q_new = tf.transformations.quaternion_from_euler(-1.54, euler_rot[1], euler_rot[2] + 3.14159) # roll + 90 degree for insole, yaw + 180 degree
+        else:
+            q_new = tf.transformations.quaternion_from_euler(euler_rot[0], euler_rot[1], euler_rot[2] + 3.14159) # yaw + 180 degree
         object_pose_msg.pose.orientation.x = q_new[0]
         object_pose_msg.pose.orientation.y = q_new[1]
         object_pose_msg.pose.orientation.z = q_new[2]
@@ -226,9 +229,9 @@ def obj_to_plane(support_obj):
     if support_obj == 'table_3':
         return [Point(9.70, 2.89,th), Point(11.10, 2.89, th), Point(11.10, 3.59,th), Point(9.70, 3.59,th)]
     if support_obj == 'conveyor_belt_a':
-        return [Point(0.9, 0.3, ch), Point(0.5, 0.3, ch), Point(0.5, 0.0, ch), Point(0.9, 0.0, ch)]
+        return [Point(1.1, 0.3, ch), Point(0.65, 0.3, ch), Point(0.65, 0.0, ch), Point(1.1, 0.0, ch)]
     if support_obj == 'conveyor_belt_b':
-        return [Point(-0.5, 0.4, ch), Point(-1.1, 0.4, ch), Point(-1.1, 0.0, ch), Point(-0.5, 0.0, ch)]
+        return [Point(-0.65, 0.4, ch), Point(-1.1, 0.4, ch), Point(-1.1, 0.0, ch), Point(-0.65, 0.0, ch)]
     if support_obj == 'klt':
         return [Point(0,0,0), Point(1,0,0), Point(1,1,0), Point(0,1,0)] # TODO
     return [None, None, None, None, None]
