@@ -219,7 +219,7 @@ class PlaceTools():
 
         if action_client.wait_for_server(timeout=rospy.Duration.from_sec(2.0)):
             rospy.loginfo(f'found {self.place_object_server_name} action server')
-            goal = self.make_place_goal_msg(object_to_be_placed, support_object, place_poses_as_object_list_msg, use_path_contraints=True)
+            goal = self.make_place_goal_msg(object_to_be_placed, support_object, place_poses_as_object_list_msg, use_path_constraints=True)
 
             # allow disentangle to happen only on first place attempt, no need to do it every time
             if not override_disentangle_dont_doit:
@@ -309,7 +309,7 @@ class PlaceTools():
 
         return constraints_msg
 
-    def make_place_goal_msg(self, object_to_be_placed, support_object, place_poses_as_object_list_msg, use_path_contraints):
+    def make_place_goal_msg(self, object_to_be_placed, support_object, place_poses_as_object_list_msg, use_path_constraints):
         '''
         fill place action lib goal, see: https://github.com/ros-planning/moveit_msgs/blob/master/action/Place.action
         '''
@@ -358,7 +358,7 @@ class PlaceTools():
 
         # Optional constraints to be imposed on every point in the motion plan
         # Constraints path_constraints
-        if use_path_contraints:
+        if use_path_constraints:
             goal.path_constraints = self.make_constraints_msg() # add orientation constraints
 
         # The name of the motion planner to use. If no name is specified,
