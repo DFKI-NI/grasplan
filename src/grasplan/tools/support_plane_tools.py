@@ -253,7 +253,7 @@ def compute_object_height(object_class):
     if object_class == 'insole':
         return 0.95
     if object_class == 'bag':
-        return 1.05
+        return 1.10
     rospy.logerr('compute_object_height failed!')
     return 0.85 # better to return a high value than to fail?
 
