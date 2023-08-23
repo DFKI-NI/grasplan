@@ -9,6 +9,7 @@ import math
 from std_msgs.msg import ColorRGBA
 from visualization_msgs.msg import Marker
 from geometry_msgs.msg import Point, Vector3, PointStamped
+from std_msgs.msg import Header
 from object_pose_msgs.msg import ObjectList, ObjectPose
 from typing import List
 
@@ -201,15 +202,10 @@ def adjust_plane_area_by_distance(plane: List[Point], distance: float) -> List[P
             Point(max_x + distance, max_y + distance, plane[0].z),
             Point(min_x - distance, max_y + distance, plane[0].z)]
 
-def animate_plane_points(plane, point_pub):
-    '''
-    visualise the points that form the plane
-    '''
-    for p in plane:
-        p_msg = PointStamped()
-        p_msg.header.frame_id = 'map'
-        p_msg.point = p
-        point_pub.publish(p_msg)
+def visualize_points(points: List[Point], point_publisher: rospy.Publisher) -> None:
+    """Publish points to view them in RViz"""
+    for point in points:
+        point_publisher.publish(PointStamped(header=Header(frame_id='map'), point=point))
         rospy.sleep(0.5)
 
 # TODO: get plane from MoveIt planning scene
