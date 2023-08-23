@@ -13,7 +13,7 @@ import actionlib
 import moveit_commander
 import traceback
 
-from grasplan.tools.support_plane_tools import obj_to_plane, reduce_plane_area, gen_place_poses_from_plane, make_plane_marker_msg, compute_object_height
+from grasplan.tools.support_plane_tools import obj_to_plane, adjust_plane_area_by_distance, gen_place_poses_from_plane, make_plane_marker_msg, compute_object_height
 from grasplan.common_grasp_tools import separate_object_class_from_id
 from grasplan.tools.moveit_errors import print_moveit_error
 from std_msgs.msg import String
@@ -202,7 +202,7 @@ class PlaceTools():
         # generate plane from object surface
         plane = obj_to_plane(support_object)
         # scale down plane to account for obj width and length
-        plane = reduce_plane_area(plane, 0.05)
+        plane = adjust_plane_area_by_distance(plane, 0.05)
         # publish plane as marker for visualisation purposes
         self.plane_vis_pub.publish(make_plane_marker_msg(self.global_reference_frame, plane))
         # generate random place poses within a plane

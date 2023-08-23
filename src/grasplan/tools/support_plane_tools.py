@@ -10,6 +10,7 @@ from std_msgs.msg import ColorRGBA
 from visualization_msgs.msg import Marker
 from geometry_msgs.msg import Point, Vector3, PointStamped
 from object_pose_msgs.msg import ObjectList, ObjectPose
+from typing import List
 
 def make_plane_marker_msg(ref_frame, plane):
     '''
@@ -186,23 +187,19 @@ def gen_place_poses_from_plane(object_class, support_object, plane, frame_id='ma
             place_poses_id +=1
     return object_list_msg
 
-def reduce_plane_area(plane, distance):
-    '''
-    scale down a plane by some distance
-    this function currently requires that the points in the plane are specied in a very specific order:
-    p1 p4
-    p2 p3
-    use animate_plane_points() function to make sure that the required order is followed
-    '''
-    plane[0].x -= distance
-    plane[0].y -= distance
-    plane[1].x += distance
-    plane[1].y -= distance
-    plane[2].x += distance
-    plane[2].y += distance
-    plane[3].x -= distance
-    plane[3].y += distance
-    return plane
+# TODO: consider using shape_msgs/Plane instead of 4 points
+def adjust_plane_area_by_distance(plane: List[Point], distance: float) -> List[Point]:
+    """Reduce or expand the plane area by a given distance"""
+    if not len(set([p.z for p in plane])) <= 1:
+        raise ValueError("Plane must be flat")
+
+    min_x, max_x = min(p.x for p in plane), max(p.x for p in plane)
+    min_y, max_y = min(p.y for p in plane), max(p.y for p in plane)
+
+    return [Point(min_x - distance, min_y - distance, plane[0].z), 
+            Point(max_x + distance, min_y - distance, plane[0].z),
+            Point(max_x + distance, max_y + distance, plane[0].z),
+            Point(min_x - distance, max_y + distance, plane[0].z)]
 
 def animate_plane_points(plane, point_pub):
     '''
@@ -215,6 +212,7 @@ def animate_plane_points(plane, point_pub):
         point_pub.publish(p_msg)
         rospy.sleep(0.5)
 
+# TODO: get plane from MoveIt planning scene
 def obj_to_plane(support_obj):
     '''
     generate a plane made out of 4 points from an object
