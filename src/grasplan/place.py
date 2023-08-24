@@ -6,7 +6,6 @@ example on how to place an object using grasplan and moveit
 
 import sys
 import copy
-import random
 import tf
 import rospy
 import actionlib
@@ -200,12 +199,14 @@ class PlaceTools():
         rospy.loginfo(f'sending place goal to {self.place_object_server_name} action server')
 
         # generate plane from object surface
-        plane = obj_to_plane(support_object)
+        plane = obj_to_plane(support_object, self.scene)
+
         # scale down plane to account for obj width and length
         plane = adjust_plane_area_by_distance(plane, 0.05)
         # publish plane as marker for visualisation purposes
         self.plane_vis_pub.publish(make_plane_marker_msg(self.global_reference_frame, plane))
-        # generate random place poses within a plane
+        
+        # generate random places within the plane
         object_class_tbp = separate_object_class_from_id(object_to_be_placed)[0]
         place_poses_as_object_list_msg = gen_place_poses_from_plane(object_class_tbp, support_object, plane,\
                 frame_id=self.global_reference_frame, number_of_poses=number_of_poses, obj_height=compute_object_height(object_class_tbp), \

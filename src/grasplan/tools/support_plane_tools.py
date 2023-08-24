@@ -208,28 +208,41 @@ def visualize_points(points: List[Point], point_publisher: rospy.Publisher) -> N
         point_publisher.publish(PointStamped(header=Header(frame_id='map'), point=point))
         rospy.sleep(0.5)
 
-# TODO: get plane from MoveIt planning scene
-def obj_to_plane(support_obj):
-    '''
-    generate a plane made out of 4 points from an object
-    this is currently a workaround, however it can be taken from moveit planning scene in future
-    '''
-    th = 0.721 # table_height, (real table height : 0.72)
-    ch = 0.951 # conveyor height (real conveyor height : 0.9)
-    if support_obj == 'table_1':
-        return [Point(12.85, 1.50, th), Point(13.55, 1.50, th), Point(13.55, 2.90, th), Point(12.85, 2.90, th)]
-    if support_obj == 'table_2':
-        return [Point(11.30, 2.89, th), Point(12.70, 2.89, th), Point(12.70, 3.59, th), Point(11.30, 3.59, th)]
-    if support_obj == 'table_3':
-        return [Point(9.70, 2.89,th), Point(11.10, 2.89, th), Point(11.10, 3.59,th), Point(9.70, 3.59,th)]
-    if support_obj == 'conveyor_belt_a':
-        return [Point(1.1, 0.3, ch), Point(0.65, 0.3, ch), Point(0.65, 0.0, ch), Point(1.1, 0.0, ch)]
-    if support_obj == 'conveyor_belt_b':
-        return [Point(-0.65, 0.4, ch), Point(-1.1, 0.4, ch), Point(-1.1, 0.0, ch), Point(-0.65, 0.0, ch)]
-    if support_obj == 'klt':
-        return [Point(0,0,0), Point(1,0,0), Point(1,1,0), Point(0,1,0)] # TODO
-    return [None, None, None, None, None]
+# TODO: consider shape_msgs/Plane instead of 4 points
+# NOTE: Currently only works for boxes aligned with the XY plane
+def obj_to_plane(support_obj: str, planning_scene, plane_offset: float = 0.001) -> List[Point]:
+    "Get the top surface plane from a box in a MoveIt planning scene by its name"
 
+    if support_obj not in planning_scene.get_known_object_names():
+        raise ValueError(f"Object '{support_obj}' not in planning scene")
+  
+    collision_object = planning_scene.get_objects([support_obj])[support_obj]
+    if len(collision_object.primitives) != 1 or collision_object.primitives[0].type != 1:
+        raise ValueError(f"Object '{support_obj}' is not a box")
+     
+    rotation_angle = tf.transformations.euler_from_quaternion(
+        [collision_object.pose.orientation.x, collision_object.pose.orientation.y,
+        collision_object.pose.orientation.z, collision_object.pose.orientation.w]
+    )
+
+    # TODO: this should be checked in a central place and not in each function
+    if rotation_angle[0] != 0 or rotation_angle[1] != 0:
+        raise ValueError(f"Object '{support_obj}' is not aligned with the XY plane")
+
+    half_width = collision_object.primitives[0].dimensions[0] / 2
+    half_depth = collision_object.primitives[0].dimensions[1] / 2
+    
+    # set hight (z) to the top surface of the object
+    center_point = [collision_object.pose.position.x, collision_object.pose.position.y, collision_object.pose.position.z * 2]
+
+    corner_offsets = [(half_width, half_depth), (-half_width, half_depth), (-half_width, -half_depth), (half_width, -half_depth)]
+
+    return [Point(center_point[0] + dx * math.cos(rotation_angle[2]) - dy * math.sin(rotation_angle[2]),
+             center_point[1] + dx * math.sin(rotation_angle[2]) + dy * math.cos(rotation_angle[2]),
+             center_point[2] + plane_offset) for dx, dy in corner_offsets]
+    
+
+# TODO: get from planning scene
 def compute_object_height(object_class):
     if object_class == 'power_drill_with_grip':
         return 0.8474679967880249
