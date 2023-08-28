@@ -129,7 +129,8 @@ def well_separated(x_y_list, candidate_x, candidate_y, min_dist=0.2):
         return True
     return False
 
-def gen_place_poses_from_plane(object_class, support_object, plane, frame_id='map', number_of_poses=10, obj_height=0.8, min_dist=0.2, ignore_min_dist_list=[]):
+def gen_place_poses_from_plane(object_class: str, support_object:str, plane: List[str], planning_scene: PlanningScene, frame_id:str = "map",
+                                number_of_poses: int = 10, min_dist: float = 0.2, ignore_min_dist_list: List[str] = []):
     '''
     random sample poses within a plane and populate object list msg with the result
     '''
@@ -140,7 +141,7 @@ def gen_place_poses_from_plane(object_class, support_object, plane, frame_id='ma
     object_list_msg.header.frame_id = frame_id
     x_y_list = []
     place_poses_id = 1
-    for i in range(1, number_of_poses + 1):
+    for _ in range(1, number_of_poses + 1):
         object_pose_msg = ObjectPose()
         object_pose_msg.class_id = object_class
         count = 0
@@ -157,9 +158,15 @@ def gen_place_poses_from_plane(object_class, support_object, plane, frame_id='ma
                 rospy.logwarn(f'Could not generate poses too much separated from each other, min dist : {min_dist}')
                 break
         x_y_list.append([candidate_x, candidate_y])
+
         object_pose_msg.pose.position.x = candidate_x
         object_pose_msg.pose.position.y = candidate_y
-        object_pose_msg.pose.position.z = obj_height
+
+        collision_object = get_obj_from_planning_scene(support_object, planning_scene)
+
+        # height is top of the support object + half of the object to be placed 
+        object_pose_msg.pose.position.z = compute_object_height(object_class) / 2.0 +  collision_object.pose.position.z * 2
+
         roll = 0.0
         pitch = 0.0
         yaw = round(random.uniform(0.0, math.pi), 4)
@@ -169,7 +176,7 @@ def gen_place_poses_from_plane(object_class, support_object, plane, frame_id='ma
         if number_of_poses > 20:
             rospy.loginfo('covering 360 angle for each pose')
             yaw = 0.0
-            for i in range(7):
+            for _ in range(7):
                 angular_q = tf.transformations.quaternion_from_euler(roll, pitch, yaw)
                 object_pose_msg.pose.orientation.x = angular_q[0]
                 object_pose_msg.pose.orientation.y = angular_q[1]
@@ -248,27 +255,18 @@ def obj_to_plane(support_obj: str, planning_scene: PlanningScene, plane_offset: 
              center_point[2] + plane_offset) for dx, dy in corner_offsets]
     
 
-# TODO: get from planning scene
 def compute_object_height(object_class):
-    if object_class == 'power_drill_with_grip':
-        return 0.8474679967880249
-    if object_class == 'klt':
-        return 0.8034999990463256
-    if object_class == 'multimeter':
-        # return 0.7510319999605417 # planning failed, but it shouldn't , maybe is an error of not adding the table?
-        return 0.76 # works
-    if object_class == 'relay':
-        # return 0.782182000130415
-        return 0.8
-    if object_class == 'screwdriver':
-        # return 0.7472060001641512
-        return 0.75
-    if object_class == 'insole':
-        return 0.95
-    if object_class == 'bag':
-        return 1.10
-    rospy.logerr('compute_object_height failed!')
-    return 0.85 # better to return a high value than to fail?
+    # TODO: replace by getting this information from URDF or SRDF
+    ohd = {'power_drill_with_grip': 0.2205359935760498,
+            'klt': 0.14699999809265138,
+            'multimeter': 0.04206399992108345,
+            'relay': 0.10436400026082993,
+            'screwdriver': 0.034412000328302383
+    }
+    if object_class not in ohd:
+        raise ValueError(f"Do not know the height of object '{object_class}'")
+    # MoveIt uses the center of the object as the origin
+    return ohd[object_class]
 
 # Example usage
 if __name__ == '__main__':

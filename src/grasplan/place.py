@@ -208,8 +208,8 @@ class PlaceTools():
         
         # generate random places within the plane
         object_class_tbp = separate_object_class_from_id(object_to_be_placed)[0]
-        place_poses_as_object_list_msg = gen_place_poses_from_plane(object_class_tbp, support_object, plane,\
-                frame_id=self.global_reference_frame, number_of_poses=number_of_poses, obj_height=compute_object_height(object_class_tbp), \
+        place_poses_as_object_list_msg = gen_place_poses_from_plane(object_class_tbp, support_object, plane, self.scene, \
+                frame_id=self.global_reference_frame, number_of_poses=number_of_poses, \
                 min_dist=self.min_dist, ignore_min_dist_list=self.ignore_min_dist_list)
 
         self.place_poses_pub.publish(place_poses_as_object_list_msg)
