@@ -228,6 +228,8 @@ class RqtPlanningScene(Plugin):
         self.psv.settings.colors[scene_name] = 'orange'
         self.psv.publish_boxes()
         self.update_slide_values(scene_name)
+        # HACK: reset after selecting a box to fix slight movement of boxes
+        self.handle_cmdReset()
 
     def comboExistingBoxes_changed(self):
         combo_text = self._widget.comboExistingBoxes.currentText()
