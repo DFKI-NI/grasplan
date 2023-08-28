@@ -1,4 +1,5 @@
 <library path="src">
+
   <class name="RqtGrasplan" type="grasplan.rqt_grasplan.rqt_grasplan.RqtGrasplan" base_class_type="rqt_gui_py::Plugin">
     <description>
       rqt designed to edit grasps.
@@ -14,4 +15,21 @@
       <statustip>rqt to edit grasps</statustip>
     </qtgui>
   </class>
+
+  <class name="RqtPlanningScene" type="grasplan.rqt_planning_scene.rqt_planning_scene.RqtPlanningScene" base_class_type="rqt_gui_py::Plugin">
+    <description>
+      rqt designed to edit planning scene boxes.
+    </description>
+    <qtgui>
+      <group>
+        <label>Robot</label>
+        <icon type="theme">folder</icon>
+        <statustip>Plugins specific to robot manipulation.</statustip>
+      </group>
+      <label>rqt_planning_scene!</label>
+      <icon type="theme">applications-other</icon>
+      <statustip>rqt to edit planning scene boxes</statustip>
+    </qtgui>
+  </class>
+
 </library>
