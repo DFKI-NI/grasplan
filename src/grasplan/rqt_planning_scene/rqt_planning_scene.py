@@ -162,7 +162,6 @@ class RqtPlanningScene(Plugin):
             else:
                 rospy.logwarn('visibility panel capacity exceeded, ignoring some boxes')
 
-        self.psv.publish_boxes()
         context.add_widget(self._widget)
         rospy.loginfo('planning scene rqt initialization complete')
         # end of constructor

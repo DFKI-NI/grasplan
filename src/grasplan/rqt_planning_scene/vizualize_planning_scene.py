@@ -45,6 +45,7 @@ class PlanningSceneViz:
             self.marker_array_pub = rospy.Publisher(self.settings.topic, MarkerArray, queue_size=1, latch=True)
         elif self.settings.publication_type == 'single':
             self.marker_array_pub = rospy.Publisher(self.settings.topic, MarkerArray, queue_size=1)
+        self.wait_for_subscribers()
 
         # delete old data if any
         self.delete_all_markers(sleep=True)
@@ -219,6 +220,17 @@ class PlanningSceneViz:
         self.marker_array_pub.publish(marker_array_msg)
         if sleep:
             rospy.sleep(0.03)
+
+    def wait_for_subscribers(self):
+        # check if there are subscribers, otherwise wait
+        rate = rospy.Rate(5)
+        while not rospy.is_shutdown():
+            if self.marker_array_pub.get_num_connections() > 0:
+                rospy.loginfo('publisher is registered and has subscribers.')
+                break
+            else:
+                rospy.loginfo('waiting for subscribers to connect...')
+            rate.sleep()
 
     def publish_boxes(self):
         self.delete_all_markers()
