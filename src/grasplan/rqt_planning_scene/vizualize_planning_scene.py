@@ -209,7 +209,7 @@ class PlanningSceneViz:
         marker.color.b = rgb_color_list[2]
         return marker
 
-    def delete_all_markers(self, sleep=False):
+    def delete_all_markers(self):
         self.marker_id_count = 0
         marker_array_msg = MarkerArray()
         marker = Marker()
@@ -218,8 +218,7 @@ class PlanningSceneViz:
         marker.action = Marker.DELETEALL
         marker_array_msg.markers.append(marker)
         self.marker_array_pub.publish(marker_array_msg)
-        if sleep:
-            rospy.sleep(0.03)
+        rospy.sleep(0.01)
 
     def wait_for_subscribers(self):
         # check if there are subscribers, otherwise wait

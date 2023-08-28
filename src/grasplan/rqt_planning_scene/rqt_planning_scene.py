@@ -179,6 +179,7 @@ class RqtPlanningScene(Plugin):
         for i, hide_chk in enumerate(self.hide_chks):
             scene_name = self.viz_widgets[i].toPlainText()
             if hide_chk.isChecked():
+                self.psv.delete_all_markers()
                 self.hide(scene_name)
             else:
                 self.unhide(scene_name)
