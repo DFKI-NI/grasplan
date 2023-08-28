@@ -7,7 +7,7 @@ from geometry_msgs.msg import PoseArray, PoseStamped
 from moveit_msgs.msg import Grasp, GripperTranslation
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
-from grasplan.common_grasp_tools import separate_object_class_from_id
+from grasplan.tools.common import separate_object_class_from_id
 
 class GraspPlanningCore:
     '''

@@ -9,7 +9,7 @@ import tf
 from grasplan.grasp_planning_core import GraspPlanningCore
 from geometry_msgs.msg import Pose, PoseArray
 
-from grasplan.common_grasp_tools import separate_object_class_from_id
+from grasplan.tools.common import separate_object_class_from_id
 
 class HandcodedGraspPlanner(GraspPlanningCore):
     '''
