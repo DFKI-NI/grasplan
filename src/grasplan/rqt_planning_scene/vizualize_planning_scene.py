@@ -19,7 +19,6 @@ class PlanningSceneVizSettings:
     text_on = True
     ignore_set = set()
     ignore_all_but = []
-    publication_type = 'latch' # admissible values: 'latch', 'single'
     topic = 'grasplan_planning_scene'
     colors = {}
     marker_ns = topic
@@ -41,10 +40,7 @@ class PlanningSceneViz:
         if load_boxes_from_yaml:
             self.load_boxes_from_yaml(self.settings.yaml_path_to_read)
 
-        if self.settings.publication_type == 'latch':
-            self.marker_array_pub = rospy.Publisher(self.settings.topic, MarkerArray, queue_size=1, latch=True)
-        elif self.settings.publication_type == 'single':
-            self.marker_array_pub = rospy.Publisher(self.settings.topic, MarkerArray, queue_size=1)
+        self.marker_array_pub = rospy.Publisher(self.settings.topic, MarkerArray, queue_size=1, latch=True)
         self.wait_for_subscribers()
 
         # delete old data if any
@@ -53,10 +49,6 @@ class PlanningSceneViz:
         rospy.loginfo('vizualize planning scene node initialized')
 
     def validate_settings(self, settings):
-        admisible_pub_type = ['latch', 'single']
-        if settings.publication_type not in admisible_pub_type:
-            rospy.logerr(f'publication_type can only have one of these values: {admisible_pub_type}')
-            return False
         if settings.transparency > 1.0 or settings.transparency < 0.0:
             rospy.logerr('transparency setting has to be between 0.0 and 1.0')
             return False
@@ -261,11 +253,7 @@ class PlanningSceneViz:
                 text_marker = self.make_text_marker(copy.deepcopy(marker), box['scene_name'])
                 marker_array_msg.markers.append(text_marker)
 
-        if self.settings.publication_type == 'latch':
-            self.marker_array_pub.publish(marker_array_msg)
-            rospy.spin()
-        elif self.settings.publication_type == 'single':
-            self.marker_array_pub.publish(marker_array_msg)
+        self.marker_array_pub.publish(marker_array_msg)
 
 if __name__ == '__main__':
     rospy.init_node('planning_scene_publisher', anonymous=False)
@@ -281,7 +269,6 @@ if __name__ == '__main__':
         settings.ignore_set = set(rospy.get_param('~ignore_set', []))
         # has precedence over ignore_set, nothing else but boxes on this list will be draw
         settings.ignore_all_but = rospy.get_param('~ignore_all_but', [])
-        settings.publication_type = rospy.get_param('~publication_type', 'single')
         settings.colors = rospy.get_param('~colors', {})
         settings.transparency = rospy.get_param('~transparency', 0.8)
         settings.yaml_path_to_read = yaml_path
