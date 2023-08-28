@@ -11,7 +11,9 @@ from visualization_msgs.msg import Marker
 from geometry_msgs.msg import Point, Vector3, PointStamped
 from std_msgs.msg import Header
 from object_pose_msgs.msg import ObjectList, ObjectPose
+from moveit_msgs.msg import CollisionObject, PlanningScene
 from typing import List
+
 
 def make_plane_marker_msg(ref_frame, plane):
     '''
@@ -208,15 +210,19 @@ def visualize_points(points: List[Point], point_publisher: rospy.Publisher) -> N
         point_publisher.publish(PointStamped(header=Header(frame_id='map'), point=point))
         rospy.sleep(0.5)
 
+def get_obj_from_planning_scene(obj_name: str, planning_scene: PlanningScene) -> CollisionObject:
+    """Get an object from a MoveIt planning scene by its name"""
+    if obj_name not in planning_scene.get_known_object_names():
+        raise ValueError(f"Object '{obj_name}' not in planning scene")
+    return planning_scene.get_objects([obj_name])[obj_name]
+
 # TODO: consider shape_msgs/Plane instead of 4 points
 # NOTE: Currently only works for boxes aligned with the XY plane
-def obj_to_plane(support_obj: str, planning_scene, plane_offset: float = 0.001) -> List[Point]:
+def obj_to_plane(support_obj: str, planning_scene: PlanningScene, plane_offset: float = 0.001) -> List[Point]:
     "Get the top surface plane from a box in a MoveIt planning scene by its name"
 
-    if support_obj not in planning_scene.get_known_object_names():
-        raise ValueError(f"Object '{support_obj}' not in planning scene")
-  
-    collision_object = planning_scene.get_objects([support_obj])[support_obj]
+    collision_object = get_obj_from_planning_scene(support_obj, planning_scene)
+
     if len(collision_object.primitives) != 1 or collision_object.primitives[0].type != 1:
         raise ValueError(f"Object '{support_obj}' is not a box")
      
