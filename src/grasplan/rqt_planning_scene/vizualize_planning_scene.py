@@ -44,7 +44,7 @@ class PlanningSceneViz:
         self.wait_for_subscribers()
 
         # delete old data if any
-        self.delete_all_markers(sleep=True)
+        self.delete_all_markers()
 
         rospy.loginfo('vizualize planning scene node initialized')
 
