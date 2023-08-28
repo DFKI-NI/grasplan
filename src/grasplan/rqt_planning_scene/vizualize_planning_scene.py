@@ -35,16 +35,6 @@ class PlanningSceneViz:
         self.settings = settings
         self.box_list_dictionary = {}
 
-        # remove
-        #self.settings.ignore_set = {'insole_rejection_box'}
-        #self.settings.ignore_all_but = []
-        #self.settings.publication_type = 'single'
-        ##self.settings.publication_type = 'latch'
-        ##self.settings.publication_type = 10
-        #self.settings.colors = {'camera':'purple'}
-        #self.settings.transparency = 0.8
-        ##self.settings.yaml_path_to_read = '/home/oscar/ros_ws/new_april_ws/src/april_manipulation/grasplan/config/output_planning_scene.yaml'
-
         self.marker_id_count = 0
         self.all_boxes_names = []
 

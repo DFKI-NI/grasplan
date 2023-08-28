@@ -94,11 +94,9 @@ class RqtPlanningScene(Plugin):
             self._widget.setWindowTitle(self._widget.windowTitle() + (' (%d)' % context.serial_number()))
 
         # variables
-        #self.write_boxes_to_yaml()
-        #self.update_settings(settings)
-        #self.get_all_boxes_names()
         self.selected_box = None
 
+        # parameters
         self.settings = PlanningSceneVizSettings()
         self.settings.yaml_path_to_read = grasplan_path + '/config/examples/planning_scene.yaml'
         self.settings.yaml_path_to_write = grasplan_path + '/config/examples/auto_generated_planning_scene.yaml'
@@ -106,13 +104,11 @@ class RqtPlanningScene(Plugin):
         self.psv = PlanningSceneViz(self.settings) # TODO: add use case: create planning scene from scratch
         self.psv.publish_boxes()
 
-        self.all_boxes_names = self.psv.get_all_boxes_names()
-
-        self._widget.comboExistingBoxes.addItems([''] + self.all_boxes_names)
-
         # publications
+        # self.psv publishes internally, no need to register any publishers here
 
-        # parameters
+        self.all_boxes_names = self.psv.get_all_boxes_names()
+        self._widget.comboExistingBoxes.addItems([''] + self.all_boxes_names)
 
         # make a connection between the qt objects and this class methods
 
@@ -183,7 +179,6 @@ class RqtPlanningScene(Plugin):
     def chkHide_changed(self):
         for i, hide_chk in enumerate(self.hide_chks):
             scene_name = self.viz_widgets[i].toPlainText()
-            print(f'self.psv.settings.ignore_set = {self.psv.settings.ignore_set}')
             if hide_chk.isChecked():
                 self.hide(scene_name)
             else:
@@ -196,7 +191,6 @@ class RqtPlanningScene(Plugin):
 
     def update_slide_values(self, scene_name):
         box = self.psv.get_box_values(scene_name)
-        print(box)
         value_x, min_x, max_x  = self.get_slide_value_and_limits('x')
         value_y, min_y, max_y  = self.get_slide_value_and_limits('y')
         value_z, min_z, max_z  = self.get_slide_value_and_limits('z')
