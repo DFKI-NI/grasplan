@@ -162,10 +162,7 @@ def gen_place_poses_from_plane(object_class: str, support_object:str, plane: Lis
         object_pose_msg.pose.position.x = candidate_x
         object_pose_msg.pose.position.y = candidate_y
 
-        collision_object = get_obj_from_planning_scene(support_object, planning_scene)
-
-        # height is top of the support object + half of the object to be placed 
-        object_pose_msg.pose.position.z = compute_object_height(object_class) / 2.0 +  collision_object.pose.position.z * 2
+        object_pose_msg.pose.position.z = height_pose_sample(support_object, planning_scene)
 
         roll = 0.0
         pitch = 0.0
@@ -225,7 +222,7 @@ def get_obj_from_planning_scene(obj_name: str, planning_scene: PlanningScene) ->
 
 # TODO: consider shape_msgs/Plane instead of 4 points
 # NOTE: Currently only works for boxes aligned with the XY plane
-def obj_to_plane(support_obj: str, planning_scene: PlanningScene, plane_offset: float = 0.001) -> List[Point]:
+def obj_to_plane(support_obj: str, planning_scene: PlanningScene, offset: float = 0.001) -> List[Point]:
     "Get the top surface plane from a box in a MoveIt planning scene by its name"
 
     collision_object = get_obj_from_planning_scene(support_obj, planning_scene)
@@ -252,21 +249,17 @@ def obj_to_plane(support_obj: str, planning_scene: PlanningScene, plane_offset: 
 
     return [Point(center_point[0] + dx * math.cos(rotation_angle[2]) - dy * math.sin(rotation_angle[2]),
              center_point[1] + dx * math.sin(rotation_angle[2]) + dy * math.cos(rotation_angle[2]),
-             center_point[2] + plane_offset) for dx, dy in corner_offsets]
-    
+             center_point[2] + offset) for dx, dy in corner_offsets]
 
-def compute_object_height(object_class):
-    # TODO: replace by getting this information from URDF or SRDF
-    ohd = {'power_drill_with_grip': 0.2205359935760498,
-            'klt': 0.14699999809265138,
-            'multimeter': 0.04206399992108345,
-            'relay': 0.10436400026082993,
-            'screwdriver': 0.034412000328302383
-    }
-    if object_class not in ohd:
-        raise ValueError(f"Do not know the height of object '{object_class}'")
-    # MoveIt uses the center of the object as the origin
-    return ohd[object_class]
+def height_pose_sample(support_obj: str, planning_scene: PlanningScene, offset: float = 0.02) -> float:
+    """Get the full height of the attached object
+    
+    Assumes that the only attached object is the one to be placed.
+    """
+    collision_object = get_obj_from_planning_scene(support_obj, planning_scene)
+    half_height_att_obj = list(planning_scene.get_attached_objects().values())[0].object.primitives[0].dimensions[2]  
+
+    return half_height_att_obj + collision_object.pose.position.z * 2 + offset
 
 # Example usage
 if __name__ == '__main__':

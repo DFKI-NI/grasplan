@@ -12,10 +12,9 @@ import actionlib
 import moveit_commander
 import traceback
 
-from grasplan.tools.support_plane_tools import obj_to_plane, adjust_plane_area_by_distance, gen_place_poses_from_plane, make_plane_marker_msg, compute_object_height
-from grasplan.common_grasp_tools import separate_object_class_from_id
+from grasplan.tools.support_plane_tools import obj_to_plane, adjust_plane_area_by_distance, gen_place_poses_from_plane, make_plane_marker_msg
+from grasplan.tools.common import separate_object_class_from_id
 from grasplan.tools.moveit_errors import print_moveit_error
-from std_msgs.msg import String
 from std_srvs.srv import Empty, SetBool, Trigger
 from object_pose_msgs.msg import ObjectList
 from geometry_msgs.msg import Vector3Stamped, PoseStamped
