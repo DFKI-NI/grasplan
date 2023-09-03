@@ -16,6 +16,7 @@ from grasplan.visualisation.grasp_visualiser import GraspVisualiser
 
 from std_msgs.msg import Int8, String
 from geometry_msgs.msg import Pose, PoseArray, PoseStamped
+from tf.transformations import quaternion_from_euler
 
 from grasplan.rqt_planning_scene.vizualize_planning_scene import PlanningSceneVizSettings, PlanningSceneViz
 
@@ -95,6 +96,9 @@ class RqtPlanningScene(Plugin):
 
         # variables
         self.selected_box = None
+        self.roll_angle = 0.0
+        self.pitch_angle = 0.0
+        self.yaw_angle = 0.0
 
         # parameters
         self.settings = PlanningSceneVizSettings()
@@ -246,23 +250,33 @@ class RqtPlanningScene(Plugin):
     def handle_cmdSaveYaml(self):
         print('not implemented')
 
-    def slideRoll_value_changed(self):
+    def update_angles(self):
+        quaternion = quaternion_from_euler(self.roll_angle, self.pitch_angle, self.yaw_angle)
+        self.psv.modify_box(self.selected_box,
+                                modify_box_orientation_x=True, box_orientation_x=quaternion[0],
+                                modify_box_orientation_y=True, box_orientation_y=quaternion[1],
+                                modify_box_orientation_z=True, box_orientation_z=quaternion[2],
+                                modify_box_orientation_w=True, box_orientation_w=quaternion[3])
+
+    def handle_angle_change(self, slide_value):
         if self.selected_box:
-            print(self._widget.slideRoll.value())
+            # 360° -> 100.0
+            #  x   -> slide_value
+            return slide_value * 2 * math.pi / 100.0
         else:
             self.error()
+
+    def slideRoll_value_changed(self):
+        self.roll_angle = self.handle_angle_change(self._widget.slideRoll.value())
+        self.update_angles()
 
     def slidePitch_value_changed(self):
-        if self.selected_box:
-            print(self._widget.slidePitch.value())
-        else:
-            self.error()
+        self.pitch_angle = self.handle_angle_change(self._widget.slidePitch.value())
+        self.update_angles()
 
     def slideYaw_value_changed(self):
-        if self.selected_box:
-            print(self._widget.slideYaw.value())
-        else:
-            self.error()
+        self.yaw_angle = self.handle_angle_change(self._widget.slideYaw.value())
+        self.update_angles()
 
     def error(self, error_msg='No box selected!'):
         QMessageBox.critical(self._widget, "Error", error_msg)
