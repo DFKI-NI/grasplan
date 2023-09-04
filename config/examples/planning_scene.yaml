@@ -71,3 +71,39 @@ planning_scene_boxes:
   box_orientation_y: 0.0
   box_orientation_z: 0.0
   box_orientation_w: 1.0
+- scene_name: 'insole'
+  frame_id: 'world'
+  box_x_dimension: 0.08
+  box_y_dimension: 0.21
+  box_z_dimension: 0.03
+  box_position_x: 0.651695975548497
+  box_position_y: 0.026824067584461393
+  box_position_z: 0.959251808312075
+  box_orientation_x: 6.110598590711796e-06
+  box_orientation_y: 7.2356321459107026e-06
+  box_orientation_z: 0.0456958558567879
+  box_orientation_w: 0.9989553987380126
+- scene_name: 'insole_1'
+  frame_id: 'insole'
+  box_x_dimension: 0.08
+  box_y_dimension: 0.105
+  box_z_dimension: 0.03
+  box_position_x: 0.0
+  box_position_y: -0.525
+  box_position_z: 0.0
+  box_orientation_x: 0.0
+  box_orientation_y: 0.0
+  box_orientation_z: 0.0
+  box_orientation_w: 1.0
+- scene_name: 'insole_2'
+  frame_id: 'insole'
+  box_x_dimension: 0.08
+  box_y_dimension: 0.105
+  box_z_dimension: 0.03
+  box_position_x: 0.0
+  box_position_y: 0.525
+  box_position_z: 0.0
+  box_orientation_x: 0.0
+  box_orientation_y: 0.0
+  box_orientation_z: 0.0
+  box_orientation_w: 1.0
