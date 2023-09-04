@@ -19,6 +19,7 @@ from geometry_msgs.msg import Pose, PoseArray, PoseStamped
 from tf.transformations import quaternion_from_euler
 
 from grasplan.rqt_planning_scene.vizualize_planning_scene import PlanningSceneVizSettings, PlanningSceneViz
+from grasplan.rqt_planning_scene.rosbag_interval_pub import RosbagIntervalPub
 
 class ErrorDialogPlugin(Plugin):
     def __init__(self, context):
@@ -100,6 +101,11 @@ class RqtPlanningScene(Plugin):
         self.pitch_angle = 0.0
         self.yaw_angle = 0.0
 
+        # rosbag time interval player
+        # TODO: load bag from param or/and button
+        bag_path = '/home/oscar/Documents/mobipick/pbr_tables_demo/cic_demo_grasplan_config/2023-04-25-16-45-59.bag'
+        self.rip = RosbagIntervalPub(bag_path)
+
         # parameters
         self.settings = PlanningSceneVizSettings()
         self.settings.yaml_path_to_read = grasplan_path + '/config/examples/planning_scene.yaml'
@@ -129,6 +135,8 @@ class RqtPlanningScene(Plugin):
         self._widget.slideX.valueChanged.connect(self.slideX_value_changed)
         self._widget.slideY.valueChanged.connect(self.slideY_value_changed)
         self._widget.slideZ.valueChanged.connect(self.slideZ_value_changed)
+        self._widget.slideRosbagProgress.sliderReleased.connect(self.slideRosbagProgress_slider_released)
+        #self._widget.slideRosbagProgress.valueChanged.connect(self.slideRosbagProgress_value_changed)
 
         # combo box changed selection
         self._widget.comboExistingBoxes.currentIndexChanged.connect(self.comboExistingBoxes_changed)
@@ -171,6 +179,21 @@ class RqtPlanningScene(Plugin):
         # end of constructor
 
     # ::::::::::::::  class methods
+
+    def slideRosbagProgress_slider_released(self):
+        rosbag_progress_slide_value = self._widget.slideRosbagProgress.value()
+        #delta = 1.0
+        delta = 20.0
+        start_value = rosbag_progress_slide_value - delta
+        if rosbag_progress_slide_value - delta < 0.0:
+            start_value = 0.0
+        end_value = rosbag_progress_slide_value + delta
+        if rosbag_progress_slide_value + delta > 100.0:
+            end_value = 100.0
+        self.rip.pub_within_percentage_interval(start_value, end_value)
+
+    def slideRosbagProgress_value_changed(self):
+        self.slideRosbagProgress_slider_released()
 
     def hide(self, scene_name):
         self.psv.settings.ignore_set.add(scene_name)
@@ -257,26 +280,35 @@ class RqtPlanningScene(Plugin):
                                 modify_box_orientation_y=True, box_orientation_y=quaternion[1],
                                 modify_box_orientation_z=True, box_orientation_z=quaternion[2],
                                 modify_box_orientation_w=True, box_orientation_w=quaternion[3])
+        # write values to rqt
+        self._widget.txtTFQx.setPlainText(str(quaternion[0]))
+        self._widget.txtTFQy.setPlainText(str(quaternion[1]))
+        self._widget.txtTFQz.setPlainText(str(quaternion[2]))
+        self._widget.txtTFQw.setPlainText(str(quaternion[3]))
 
-    def handle_angle_change(self, slide_value):
+    def handle_angle_change(self, slide_value, angle_to_modify):
         if self.selected_box:
             # 360° -> 100.0
             #  x   -> slide_value
-            return slide_value * 2 * math.pi / 100.0
+            slide_angle = slide_value * 2 * math.pi / 100.0
+            if angle_to_modify == 'roll':
+                self.roll_angle = slide_angle
+            if angle_to_modify == 'pitch':
+                self.pitch_angle = slide_angle
+            if angle_to_modify == 'yae':
+                self.yaw_angle = slide_angle
+            self.update_angles()
         else:
             self.error()
 
     def slideRoll_value_changed(self):
-        self.roll_angle = self.handle_angle_change(self._widget.slideRoll.value())
-        self.update_angles()
+        self.handle_angle_change(self._widget.slideRoll.value(), 'roll')
 
     def slidePitch_value_changed(self):
-        self.pitch_angle = self.handle_angle_change(self._widget.slidePitch.value())
-        self.update_angles()
+         self.handle_angle_change(self._widget.slidePitch.value(), 'pitch')
 
     def slideYaw_value_changed(self):
-        self.yaw_angle = self.handle_angle_change(self._widget.slideYaw.value())
-        self.update_angles()
+        self.handle_angle_change(self._widget.slideYaw.value(), 'yaw')
 
     def error(self, error_msg='No box selected!'):
         QMessageBox.critical(self._widget, "Error", error_msg)

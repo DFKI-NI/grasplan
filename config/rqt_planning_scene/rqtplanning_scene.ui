@@ -533,7 +533,7 @@
     </rect>
    </property>
    <property name="title">
-    <string>Scroll limits</string>
+    <string>Position scroll limits</string>
    </property>
    <widget class="QPlainTextEdit" name="txtScrollMinX">
     <property name="geometry">
@@ -1227,6 +1227,48 @@
       <width>181</width>
       <height>31</height>
      </rect>
+    </property>
+   </widget>
+  </widget>
+  <widget class="QGroupBox" name="groupBox_6">
+   <property name="geometry">
+    <rect>
+     <x>450</x>
+     <y>570</y>
+     <width>331</width>
+     <height>111</height>
+    </rect>
+   </property>
+   <property name="title">
+    <string>Rosbag</string>
+   </property>
+   <widget class="QSlider" name="slideRosbagProgress">
+    <property name="geometry">
+     <rect>
+      <x>20</x>
+      <y>70</y>
+      <width>291</width>
+      <height>20</height>
+     </rect>
+    </property>
+    <property name="maximum">
+     <number>100</number>
+    </property>
+    <property name="orientation">
+     <enum>Qt::Horizontal</enum>
+    </property>
+   </widget>
+   <widget class="QPushButton" name="cmdAddNew_2">
+    <property name="geometry">
+     <rect>
+      <x>110</x>
+      <y>30</y>
+      <width>101</width>
+      <height>31</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>load</string>
     </property>
    </widget>
   </widget>
