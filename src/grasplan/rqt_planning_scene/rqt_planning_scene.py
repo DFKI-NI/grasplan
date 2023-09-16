@@ -295,7 +295,7 @@ class RqtPlanningScene(Plugin):
                 self.roll_angle = slide_angle
             if angle_to_modify == 'pitch':
                 self.pitch_angle = slide_angle
-            if angle_to_modify == 'yae':
+            if angle_to_modify == 'yaw':
                 self.yaw_angle = slide_angle
             self.update_angles()
         else:
