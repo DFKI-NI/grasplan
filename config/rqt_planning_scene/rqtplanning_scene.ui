@@ -1258,7 +1258,7 @@
      <enum>Qt::Horizontal</enum>
     </property>
    </widget>
-   <widget class="QPushButton" name="cmdAddNew_2">
+   <widget class="QPushButton" name="cmdLoadRosbag">
     <property name="geometry">
      <rect>
       <x>110</x>

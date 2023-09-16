@@ -81,9 +81,10 @@ class RqtPlanningScene(Plugin):
         self.yaw_angle = 0.0
 
         # rosbag time interval player
-        # TODO: load bag from param or/and button
-        bag_path = '/home/oscar/Documents/mobipick/pbr_tables_demo/cic_demo_grasplan_config/2023-04-25-16-45-59.bag'
-        self.rip = RosbagIntervalPub(bag_path)
+        bag_path = rospy.get_param('~bag_path', None)
+        self.rip = None
+        if bag_path:
+            self.rip = RosbagIntervalPub(bag_path)
 
         # parameters
         self.settings = PlanningSceneVizSettings()
@@ -106,6 +107,7 @@ class RqtPlanningScene(Plugin):
         self._widget.cmdLoadYaml.clicked.connect(self.handle_cmdLoadYaml)
         self._widget.cmdSaveYaml.clicked.connect(self.handle_cmdSaveYaml)
         self._widget.cmdReset.clicked.connect(self.handle_cmdReset)
+        self._widget.cmdLoadRosbag.clicked.connect(self.handle_cmdLoadRosbag)
 
         # slide change event
         self._widget.slideRoll.valueChanged.connect(self.slideRoll_value_changed)
@@ -169,7 +171,10 @@ class RqtPlanningScene(Plugin):
         end_value = rosbag_progress_slide_value + delta
         if rosbag_progress_slide_value + delta > 100.0:
             end_value = 100.0
-        self.rip.pub_within_percentage_interval(start_value, end_value)
+        if self.rip:
+            self.rip.pub_within_percentage_interval(start_value, end_value)
+        else:
+            self.error('rosbag file not selected,\nfirst click on "load" button')
 
     def slideRosbagProgress_value_changed(self):
         self.slideRosbagProgress_slider_released()
@@ -227,6 +232,14 @@ class RqtPlanningScene(Plugin):
         self._widget.slideX.setValue(slide_value_x)
         self._widget.slideY.setValue(slide_value_y)
         self._widget.slideZ.setValue(slide_value_z)
+
+    def handle_cmdLoadRosbag(self):
+        ofd = OpenFileDialog()
+        bag_path = ofd.openFileNameDialog()
+        if bag_path:
+            self.rip = RosbagIntervalPub(bag_path)
+        else:
+            rospy.loginfo('open bag operation cancelled by user')
 
     def select_box(self, scene_name):
         self.selected_box = scene_name
