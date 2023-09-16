@@ -21,27 +21,6 @@ from tf.transformations import quaternion_from_euler
 from grasplan.rqt_planning_scene.vizualize_planning_scene import PlanningSceneVizSettings, PlanningSceneViz
 from grasplan.rqt_planning_scene.rosbag_interval_pub import RosbagIntervalPub
 
-class ErrorDialogPlugin(Plugin):
-    def __init__(self, context):
-        super(ErrorDialogPlugin, self).__init__(context)
-        self.setObjectName('ErrorDialogPlugin')
-
-        self._widget = QtWidgets.QWidget()
-        self._widget.setWindowTitle('Error Dialog Plugin')
-
-        self._show_error_button = QtWidgets.QPushButton('Show Error')
-        self._show_error_button.clicked.connect(self._show_error_dialog)
-
-        layout = QtWidgets.QVBoxLayout()
-        layout.addWidget(self._show_error_button)
-        self._widget.setLayout(layout)
-
-        context.add_widget(self._widget)
-
-    def _show_error_dialog(self):
-        error_message = "An error occurred!"
-        QMessageBox.critical(self._widget, "Error", error_message)
-
 class OpenFileDialog(QWidget):
     '''
     allow the user to select a different yaml file with a button,
