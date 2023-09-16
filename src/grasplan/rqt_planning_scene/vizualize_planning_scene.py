@@ -28,10 +28,15 @@ class PlanningSceneVizSettings:
 
 class PlanningSceneViz:
     def __init__(self, settings, load_boxes_from_yaml=True):
-        if not self.validate_settings(settings):
+        self.settings = settings
+        self.marker_array_pub = rospy.Publisher(self.settings.topic, MarkerArray, queue_size=1, latch=True)
+        self.reset(load_boxes_from_yaml)
+        rospy.loginfo('vizualize planning scene node initialized')
+
+    def reset(self, load_boxes_from_yaml=True):
+        if not self.validate_settings(self.settings):
             rospy.logerr('invalid settings, terminating node')
             rospy.signal_shutdown('invalid settings, shutting down...')
-        self.settings = settings
         self.box_list_dictionary = {}
 
         self.marker_id_count = 0
@@ -40,13 +45,10 @@ class PlanningSceneViz:
         if load_boxes_from_yaml:
             self.load_boxes_from_yaml(self.settings.yaml_path_to_read)
 
-        self.marker_array_pub = rospy.Publisher(self.settings.topic, MarkerArray, queue_size=1, latch=True)
         self.wait_for_subscribers()
 
         # delete old data if any
         self.delete_all_markers()
-
-        rospy.loginfo('vizualize planning scene node initialized')
 
     def validate_settings(self, settings):
         if settings.transparency > 1.0 or settings.transparency < 0.0:

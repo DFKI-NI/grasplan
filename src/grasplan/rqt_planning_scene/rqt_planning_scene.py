@@ -97,9 +97,6 @@ class RqtPlanningScene(Plugin):
         # publications
         # self.psv publishes internally, no need to register any publishers here
 
-        self.all_boxes_names = self.psv.get_all_boxes_names()
-        self._widget.comboExistingBoxes.addItems([''] + self.all_boxes_names)
-
         # make a connection between the qt objects and this class methods
 
         # buttons
@@ -148,18 +145,22 @@ class RqtPlanningScene(Plugin):
                             self._widget.txtViz9,
                             self._widget.txtViz10]
 
-        # populate visibility panel box names
-        for i, box_name in enumerate(self.all_boxes_names):
-            if i < len(self.viz_widgets):
-                self.viz_widgets[i].setPlainText(box_name)
-            else:
-                rospy.logwarn('visibility panel capacity exceeded, ignoring some boxes')
+        self.populate_visibility_panel_box_names()
 
         context.add_widget(self._widget)
         rospy.loginfo('planning scene rqt initialization complete')
         # end of constructor
 
     # ::::::::::::::  class methods
+
+    def populate_visibility_panel_box_names(self):
+        all_boxes_names = self.psv.get_all_boxes_names()
+        self._widget.comboExistingBoxes.addItems([''] + all_boxes_names)
+        for i, box_name in enumerate(all_boxes_names):
+            if i < len(self.viz_widgets):
+                self.viz_widgets[i].setPlainText(box_name)
+            else:
+                rospy.logwarn('visibility panel capacity exceeded, ignoring some boxes')
 
     def slideRosbagProgress_slider_released(self):
         rosbag_progress_slide_value = self._widget.slideRosbagProgress.value()
@@ -260,7 +261,19 @@ class RqtPlanningScene(Plugin):
         print(self._widget.txtRefFrame.toPlainText())
 
     def handle_cmdLoadYaml(self):
-        print('not implemented')
+        grasplan_path = rospkg.RosPack().get_path('grasplan')
+        ofd = OpenFileDialog(initial_path=grasplan_path)
+        yaml_path = ofd.openFileNameDialog()
+        if yaml_path:
+            self.psv.settings.yaml_path_to_read = yaml_path
+            self.psv.reset()
+            self._widget.comboExistingBoxes.clear()
+            self.psv.publish_boxes()
+            for viz_widget in self.viz_widgets:
+                viz_widget.setPlainText('')
+            self.populate_visibility_panel_box_names()
+        else:
+            rospy.loginfo('load yaml operation cancelled by user')
 
     def handle_cmdSaveYaml(self):
         print('not implemented')
