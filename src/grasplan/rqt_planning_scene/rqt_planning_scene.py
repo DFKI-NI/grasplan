@@ -276,7 +276,17 @@ class RqtPlanningScene(Plugin):
             rospy.loginfo('load yaml operation cancelled by user')
 
     def handle_cmdSaveYaml(self):
-        print('not implemented')
+        grasplan_path = rospkg.RosPack().get_path('grasplan')
+        ofd = OpenFileDialog(initial_path=grasplan_path)
+        yaml_path = ofd.saveFileNameDialog()
+        if yaml_path:
+            if not '.yaml' in yaml_path:
+                yaml_path += '.yaml'
+            self.psv.settings.yaml_path_to_write = yaml_path
+            self.psv.write_boxes_to_yaml(yaml_path)
+            rospy.loginfo(f'saved boxes to yaml file: {yaml_path}')
+        else:
+            rospy.loginfo('save yaml operation cancelled by user')
 
     def update_angles(self):
         quaternion = quaternion_from_euler(self.roll_angle, self.pitch_angle, self.yaw_angle)
