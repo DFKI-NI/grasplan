@@ -291,10 +291,10 @@ class RqtPlanningScene(Plugin):
     def update_angles(self):
         quaternion = quaternion_from_euler(self.roll_angle, self.pitch_angle, self.yaw_angle)
         self.psv.modify_box(self.selected_box,
-                                modify_box_orientation_x=True, box_orientation_x=quaternion[0],
-                                modify_box_orientation_y=True, box_orientation_y=quaternion[1],
-                                modify_box_orientation_z=True, box_orientation_z=quaternion[2],
-                                modify_box_orientation_w=True, box_orientation_w=quaternion[3])
+                                modify_box_orientation_x=True, box_orientation_x=float(quaternion[0]),
+                                modify_box_orientation_y=True, box_orientation_y=float(quaternion[1]),
+                                modify_box_orientation_z=True, box_orientation_z=float(quaternion[2]),
+                                modify_box_orientation_w=True, box_orientation_w=float(quaternion[3]))
         # write values to rqt
         self._widget.txtTFQx.setPlainText(str(round(quaternion[0], 6)))
         self._widget.txtTFQy.setPlainText(str(round(quaternion[1], 6)))
