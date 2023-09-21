@@ -296,10 +296,10 @@ class RqtPlanningScene(Plugin):
                                 modify_box_orientation_z=True, box_orientation_z=quaternion[2],
                                 modify_box_orientation_w=True, box_orientation_w=quaternion[3])
         # write values to rqt
-        self._widget.txtTFQx.setPlainText(str(quaternion[0]))
-        self._widget.txtTFQy.setPlainText(str(quaternion[1]))
-        self._widget.txtTFQz.setPlainText(str(quaternion[2]))
-        self._widget.txtTFQw.setPlainText(str(quaternion[3]))
+        self._widget.txtTFQx.setPlainText(str(round(quaternion[0], 6)))
+        self._widget.txtTFQy.setPlainText(str(round(quaternion[1], 6)))
+        self._widget.txtTFQz.setPlainText(str(round(quaternion[2], 6)))
+        self._widget.txtTFQw.setPlainText(str(round(quaternion[3], 6)))
 
     def handle_angle_change(self, slide_value, angle_to_modify):
         if self.selected_box:
