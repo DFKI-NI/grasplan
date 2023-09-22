@@ -195,18 +195,20 @@ def gen_place_poses_from_plane(object_class: str, support_object:str, plane: Lis
     return object_list_msg
 
 # TODO: consider using shape_msgs/Plane instead of 4 points
-def adjust_plane_area_by_distance(plane: List[Point], distance: float) -> List[Point]:
-    """Reduce or expand the plane area by a given distance"""
+def adjust_plane(plane: List[Point], extend: float, x_offset: float = 0.0, y_offset: float = 0.0) -> List[Point]:
+    """Reduce or expand the plane area by a given extend"""
     if not len(set([p.z for p in plane])) <= 1:
         raise ValueError("Plane must be flat")
+    
+    plane = [Point(p.x + x_offset, p.y + y_offset, p.z) for p in plane]
 
     min_x, max_x = min(p.x for p in plane), max(p.x for p in plane)
     min_y, max_y = min(p.y for p in plane), max(p.y for p in plane)
 
-    return [Point(min_x - distance, min_y - distance, plane[0].z), 
-            Point(max_x + distance, min_y - distance, plane[0].z),
-            Point(max_x + distance, max_y + distance, plane[0].z),
-            Point(min_x - distance, max_y + distance, plane[0].z)]
+    return [Point(min_x - extend, min_y - extend, plane[0].z), 
+            Point(max_x + extend, min_y - extend, plane[0].z),
+            Point(max_x + extend, max_y + extend, plane[0].z),
+            Point(min_x - extend, max_y + extend, plane[0].z)]
 
 def visualize_points(points: List[Point], point_publisher: rospy.Publisher) -> None:
     """Publish points to view them in RViz"""
