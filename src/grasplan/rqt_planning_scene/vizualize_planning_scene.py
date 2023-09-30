@@ -6,6 +6,7 @@ reads from yaml a list of boxes and publishes them as a msgs/MarkerArray to the 
 
 import rospy
 import rospkg
+import tf
 
 import os
 import sys
@@ -25,12 +26,16 @@ class PlanningSceneVizSettings:
     transparency = 1.0
     yaml_path_to_read = ''
     yaml_path_to_write = ''
+    publish_tf = False
 
 class PlanningSceneViz:
     def __init__(self, settings, load_boxes_from_yaml=True):
         self.settings = settings
         self.marker_array_pub = rospy.Publisher(self.settings.topic, MarkerArray, queue_size=1, latch=True)
         self.reset(load_boxes_from_yaml)
+        self.br = None
+        if self.settings.publish_tf:
+            self.br = tf.TransformBroadcaster()
         rospy.loginfo('vizualize planning scene node initialized')
 
     def reset(self, load_boxes_from_yaml=True):
@@ -225,6 +230,9 @@ class PlanningSceneViz:
                 rospy.loginfo('waiting for subscribers to connect...')
             rate.sleep()
 
+    def broadcast_tf(self, x, y, z, qx, qy, qz, qw, parent_frame_id, child_frame_id):
+        self.br.sendTransform((x,y,z), (qx, qy, qz, qw), rospy.Time.now(), child_frame_id, parent_frame_id)
+
     def publish_boxes(self):
         self.delete_all_markers()
         marker_array_msg = MarkerArray()
@@ -254,6 +262,10 @@ class PlanningSceneViz:
             if self.settings.text_on:
                 text_marker = self.make_text_marker(copy.deepcopy(marker), box['scene_name'])
                 marker_array_msg.markers.append(text_marker)
+            if self.settings.publish_tf:
+                self.broadcast_tf(box['box_position_x'], box['box_position_y'], box['box_position_z'],\
+                    box['box_orientation_x'], box['box_orientation_y'], box['box_orientation_z'], box['box_orientation_w'],\
+                    box['frame_id'], box['scene_name'])
 
         self.marker_array_pub.publish(marker_array_msg)
 
