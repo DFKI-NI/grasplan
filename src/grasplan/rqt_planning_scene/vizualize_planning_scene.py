@@ -242,7 +242,7 @@ class PlanningSceneViz:
                                 box['frame_id'],
                                 box['box_position_x'],
                                 box['box_position_y'],
-                                box['box_position_z'], 
+                                box['box_position_z'],
                                 box['box_orientation_x'],
                                 box['box_orientation_y'],
                                 box['box_orientation_z'],
