@@ -26,7 +26,7 @@ class PlanningSceneVizSettings:
     transparency = 1.0
     yaml_path_to_read = ''
     yaml_path_to_write = ''
-    publish_tf = False
+    publish_tf = True
 
 class PlanningSceneViz:
     def __init__(self, settings, load_boxes_from_yaml=True):
