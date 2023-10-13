@@ -316,7 +316,7 @@ class PickTools():
         if id is not None:
             object_to_pick.set_id(id)
 
-        self.obj_pose_pub.publish(object_pose) # publish object pose for visualisation purposes
+        self.obj_pose_pub.publish(object_pose) # publish object pose for visualization purposes
 
         # print objects that were added to the planning scene
         rospy.loginfo(f'planning scene objects: {self.scene.get_known_object_names()}')
@@ -328,10 +328,10 @@ class PickTools():
         # ::::::::: pick
         rospy.loginfo(f'picking object now')
 
-        # generate a list of moveit grasp messages, poses are also published for visualisation purposes
+        # generate a list of moveit grasp messages, poses are also published for visualization purposes
         grasps = self.grasp_planner.make_grasps_msgs(object_to_pick.get_object_class_and_id_as_string(),\
                                                      object_pose, self.robot.arm.get_end_effector_link(), grasp_type)
-
+        
         # clear octomap from the planning scene if needed
         if self.clear_octomap_flag:
             self.clear_octomap()
