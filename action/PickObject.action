@@ -1,0 +1,17 @@
+# The name of the object to pick up (as known in the planning scene)
+string object_name
+
+# the name that the support surface (e.g. table) has in the collision map
+# can be left empty if no name is available
+string support_surface_name
+
+# an optional list of objects to ignore from planning scene
+# meaning they will not be added to the collision world
+# this is usefull e.g. when you want to pick an object but it has
+# another one inside
+string[] ignore_object_list
+---
+# result
+bool success
+---
+# feedback

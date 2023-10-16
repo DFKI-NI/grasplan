@@ -1,0 +1,54 @@
+#!/usr/bin/python3
+
+'''
+this node broadcasts the tf from world to robot (mobipick/base_link)
+this is useful for when you want to have the world frame (from gazebo) as part of the tf tree together with
+e.g. map frame in simulation.
+'''
+
+import tf
+import rospy
+import copy
+import numpy as np
+
+from gazebo_msgs.msg import ModelStates
+from tf.transformations import quaternion_matrix, quaternion_from_matrix
+
+class PublishTfWorldToRobot:
+    def __init__(self):
+        # subscribe to gazebo model states (gives pose of all existing objects in the simulation
+        rospy.Subscriber('/gazebo/model_states', ModelStates, self.modelStatesCB)
+        self.tf_broadcaster = tf.TransformBroadcaster()
+        self.loop_rate = rospy.Rate(rospy.get_param('~loop_rate', 20.0))
+        self.model_states_msg_received = False
+        rospy.loginfo('publish_tf_world_to_robot started')
+
+    def modelStatesCB(self, msg):
+        self.model_states_msg = msg
+        self.model_states_msg_received = True
+
+    def start_publish_tf_world_to_robot(self):
+        while not rospy.is_shutdown():
+            if self.model_states_msg_received:
+                self.model_states_msg_received = False
+                model_states_msg = copy.deepcopy(self.model_states_msg)
+                # iterate over all gazebo models
+                for i, obj_pose in enumerate(model_states_msg.pose):
+                    if model_states_msg.name[i] == 'mobipick':
+                        # Return homogeneous rotation matrix from quaternion
+                        world_2_robot = quaternion_matrix((obj_pose.orientation.x, obj_pose.orientation.y, obj_pose.orientation.z, obj_pose.orientation.w))
+                        world_2_robot[0][3] = obj_pose.position.x
+                        world_2_robot[1][3] = obj_pose.position.y
+                        world_2_robot[2][3] = obj_pose.position.z
+                        robot_2_world = np.linalg.inv(world_2_robot)
+                        # Return quaternion from rotation matrix
+                        q = quaternion_from_matrix(robot_2_world)
+                        # translation, rotation, time, child, parent
+                        self.tf_broadcaster.sendTransform((robot_2_world[0][3], robot_2_world[1][3], robot_2_world[2][3]), q,\
+                            rospy.Time.now(), 'world', 'mobipick/base_link') # publish tf with mobipick/base_link as parent not to disturb existing tf tree
+                        self.loop_rate.sleep()
+
+if __name__ == '__main__':
+    rospy.init_node('publish_tf_world_to_robot', anonymous=False)
+    publish_tf_world_to_robot = PublishTfWorldToRobot()
+    publish_tf_world_to_robot.start_publish_tf_world_to_robot()

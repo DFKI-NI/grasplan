@@ -1,0 +1,18 @@
+geometry_msgs/Pose target_object_pose
+
+# the name that the support surface (e.g. table) has in the collision map
+# can be left empty if no name is available
+string support_surface_name
+
+# whether or not to let go of the object
+bool release
+
+# if true, before placing an object, the robot will look at the table first
+# trigger perception, add perceived objects to the planning scene and then place
+# WARNING: some objects (e.g. a power drill) can slip off the robot gripper
+#          if you move the arm to observation pose while holding it.
+bool observe_before_place
+---
+# result
+bool success
+---

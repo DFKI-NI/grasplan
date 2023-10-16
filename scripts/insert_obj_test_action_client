@@ -4,7 +4,7 @@ import sys
 import rospy
 import actionlib
 
-from pbr_msgs.msg import InsertObjectAction, InsertObjectGoal
+from grasplan.msg import InsertObjectAction, InsertObjectGoal
 
 if __name__ == '__main__':
     rospy.init_node('insert_object_action_client')
@@ -39,7 +39,7 @@ if __name__ == '__main__':
             result = action_client.get_result()
             rospy.loginfo(f'{insert_object_server_name} is done with execution, resuĺt was = "{result}"')
             if result.success == True:
-                rospy.loginfo(f'Succesfully insertd object')
+                rospy.loginfo(f'Succesfully inserted object')
             else:
                 rospy.logerr(f'Failed to insert object')
         else:
