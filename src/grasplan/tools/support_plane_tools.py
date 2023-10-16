@@ -195,17 +195,48 @@ def gen_place_poses_from_plane(object_class: str, support_object:str, plane: Lis
     return object_list_msg
 
 # TODO: consider using shape_msgs/Plane instead of 4 points
-def adjust_plane(plane: List[Point], x_extend: float = 0.0, y_extend :float = 0.0 , x_offset: float = 0.0, y_offset: float = 0.0) -> List[Point]:
-    """Reduce or expand the plane area by a given extend"""
+def adjust_plane(
+        plane: List[Point],
+        x_extend: float = 0.0, 
+        y_extend: float = 0.0, 
+        x_offset: float = 0.0, 
+        y_offset: float = 0.0
+    ) -> List[Point]:
+    """
+    Adjust the dimensions and position of a plane.
+
+    Parameters
+    ----------
+    plane : List[Point]
+        A list of four points representing a plane.
+    x_extend : float, optional
+        The amount to increase/decrease all points on the x-axis. Defaults to 0.0.
+    y_extend : float, optional
+        The amount to increase/decrease all points on the y-axis. Defaults to 0.0.
+    x_offset : float, optional
+        The amount to offset all points on the x-axis. Defaults to 0.0.
+    y_offset : float, optional
+        The amount to offset all points on the y-axis. Defaults to 0.0.
+
+    Raises
+    ------
+    ValueError
+        If the plane is not parallel to the XY plane.
+
+    Returns
+    -------
+    List[Point]
+        A list of four points representing the adjusted plane.
+    """
     if not len(set([p.z for p in plane])) <= 1:
-        raise ValueError("Plane must be flat")
-    
+        raise ValueError("Plane is not parallel to the XY plane")
+
     plane = [Point(p.x + x_offset, p.y + y_offset, p.z) for p in plane]
 
     min_x, max_x = min(p.x for p in plane), max(p.x for p in plane)
     min_y, max_y = min(p.y for p in plane), max(p.y for p in plane)
 
-    return [Point(min_x - x_extend, min_y - y_extend, plane[0].z), 
+    return [Point(min_x - x_extend, min_y - y_extend, plane[0].z),
             Point(max_x + x_extend, min_y - y_extend, plane[0].z),
             Point(max_x + x_extend, max_y + y_extend, plane[0].z),
             Point(min_x - x_extend, max_y + y_extend, plane[0].z)]
@@ -217,22 +248,57 @@ def visualize_points(points: List[Point], point_publisher: rospy.Publisher) -> N
         rospy.sleep(0.5)
 
 def get_obj_from_planning_scene(obj_name: str, planning_scene: PlanningScene) -> CollisionObject:
-    """Get an object from a MoveIt planning scene by its name"""
+    """
+    Get a Object from a MoveIt PlanningScene by its name.
+
+    Parameters
+    ----------
+    obj_name : str
+        The name of the object to retrieve.
+    planning_scene : PlanningScene
+        The MoveIt PlanningScene to retrieve the object from.
+
+    Returns
+    -------
+    CollisionObject
+        The CollisionObject with the specified name.
+
+    Raises
+    ------
+    ValueError
+        If the object with the specified name is not in the planning scene.
+    """
     if obj_name not in planning_scene.get_known_object_names():
         raise ValueError(f"Object '{obj_name}' not in planning scene")
     return planning_scene.get_objects([obj_name])[obj_name]
 
 # TODO: consider shape_msgs/Plane instead of 4 points
-# NOTE: Currently only works for boxes aligned with the XY plane
 def obj_to_plane(support_obj: str, planning_scene: PlanningScene, offset: float = 0.001) -> List[Point]:
-    "Get the top surface plane from a box in a MoveIt planning scene by its name"
+    """
+    Get a top surface plane from an object in the MoveIt planning scene.
+ 
+    NOTE: Currently only works for boxes parallel to the XY plane.
 
+    Parameters
+    ----------
+    support_obj : str
+        The name of the box in the MoveIt planning scene.
+    planning_scene : PlanningScene
+        The MoveIt planning scene.
+    offset : float, optional
+        The offset from the MoveIt object and the created plane. Defaults to 0.001.
+
+    Returns
+    -------
+    List[Point]
+        A list of four points representing the corners of the top surface plane.
+    """
     collision_object = get_obj_from_planning_scene(support_obj, planning_scene)
 
     if len(collision_object.primitives) != 1 or collision_object.primitives[0].type != 1:
         raise ValueError(f"Object '{support_obj}' is not a box")
      
-    rotation_angle = tf.transformations.euler_from_quaternion(
+    rotation_angle = tf.euler_from_quaternion(
         [collision_object.pose.orientation.x, collision_object.pose.orientation.y,
         collision_object.pose.orientation.z, collision_object.pose.orientation.w]
     )
@@ -244,7 +310,6 @@ def obj_to_plane(support_obj: str, planning_scene: PlanningScene, offset: float 
     half_width = collision_object.primitives[0].dimensions[0] / 2
     half_depth = collision_object.primitives[0].dimensions[1] / 2
     
-    # set hight (z) to the top surface of the object
     center_point = [collision_object.pose.position.x, collision_object.pose.position.y, collision_object.pose.position.z * 2]
 
     corner_offsets = [(half_width, half_depth), (-half_width, half_depth), (-half_width, -half_depth), (half_width, -half_depth)]
@@ -253,14 +318,26 @@ def obj_to_plane(support_obj: str, planning_scene: PlanningScene, offset: float 
              center_point[1] + dx * math.sin(rotation_angle[2]) + dy * math.cos(rotation_angle[2]),
              center_point[2] + offset) for dx, dy in corner_offsets]
 
-def height_pose_sample(support_obj: str, planning_scene: PlanningScene, offset: float = 0.02) -> float:
-    """Get the full height of the attached object
-    
-    Assumes that the only attached object is the one to be placed.
+def height_pose_sample(attached_obj: str, planning_scene: PlanningScene, offset: float = 0.001) -> float:
     """
-    collision_object = get_obj_from_planning_scene(support_obj, planning_scene)
-    half_height_att_obj = list(planning_scene.get_attached_objects().values())[0].object.primitives[0].dimensions[2]  
+    Get the height of an object attached to the gripper
 
+    Parameters
+    ----------
+    attached_obj : str
+        The name of the attached object.
+    planning_scene : PlanningScene
+        The planning scene object.
+    offset : float, optional
+        An offset for the height. by default 0.001.
+
+    Returns
+    -------
+    float
+        The height of the attached object.
+    """
+    collision_object = get_obj_from_planning_scene(attached_obj, planning_scene)
+    half_height_att_obj = list(planning_scene.get_attached_objects().values())[0].object.primitives[0].dimensions[2]  
     return half_height_att_obj + collision_object.pose.position.z * 2 + offset
 
 # Example usage
