@@ -162,7 +162,7 @@ def gen_place_poses_from_plane(object_class: str, support_object:str, plane: Lis
         object_pose_msg.pose.position.x = candidate_x
         object_pose_msg.pose.position.y = candidate_y
 
-        object_pose_msg.pose.position.z = height_pose_sample(support_object, planning_scene)
+        object_pose_msg.pose.position.z = attached_obj_height(support_object, planning_scene)
 
         roll = 0.0
         pitch = 0.0
@@ -318,7 +318,7 @@ def obj_to_plane(support_obj: str, planning_scene: PlanningScene, offset: float 
              center_point[1] + dx * math.sin(rotation_angle[2]) + dy * math.cos(rotation_angle[2]),
              center_point[2] + offset) for dx, dy in corner_offsets]
 
-def height_pose_sample(attached_obj: str, planning_scene: PlanningScene, offset: float = 0.001) -> float:
+def attached_obj_height(attached_obj: str, planning_scene: PlanningScene, offset: float = 0.001) -> float:
     """
     Get the height of an object attached to the gripper
 
