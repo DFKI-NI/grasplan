@@ -22,7 +22,7 @@ from geometry_msgs.msg import PoseStamped
 from grasplan.tools.moveit_errors import print_moveit_error
 from moveit_msgs.msg import MoveItErrorCodes, PickupAction, PickupGoal
 from grasplan.msg import PickObjectAction, PickObjectResult
-from grasplan.common_grasp_tools import objectToPick
+from grasplan.tools.common import objectToPick
 from visualization_msgs.msg import Marker, MarkerArray
 
 class PickTools():
