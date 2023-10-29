@@ -222,13 +222,16 @@ class PlanningSceneViz:
     def wait_for_subscribers(self):
         # check if there are subscribers, otherwise wait
         rate = rospy.Rate(5)
+        count = 0
         while not rospy.is_shutdown():
             if self.marker_array_pub.get_num_connections() > 0:
                 rospy.loginfo('publisher is registered and has subscribers.')
                 break
             else:
-                rospy.loginfo('waiting for subscribers to connect...')
+                rospy.loginfo(f'waiting for subscribers to connect... attempt={count}')
+                count += 1
             rate.sleep()
+        rospy.loginfo('subscriber is detected, continue')
 
     def broadcast_tf(self, x, y, z, qx, qy, qz, qw, parent_frame_id, child_frame_id):
         self.br.sendTransform((x,y,z), (qx, qy, qz, qw), rospy.Time.now(), child_frame_id, parent_frame_id)
