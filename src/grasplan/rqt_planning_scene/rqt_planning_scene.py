@@ -97,8 +97,8 @@ class RqtPlanningScene(Plugin):
 
         # parameters
         self.settings = PlanningSceneVizSettings()
-        self.settings.yaml_path_to_read = grasplan_path + '/config/examples/planning_scene.yaml'
-        self.settings.yaml_path_to_write = grasplan_path + '/config/examples/auto_generated_planning_scene.yaml'
+        self.settings.yaml_path_to_read = rospy.get_param('~yaml_path_to_read', grasplan_path + '/config/examples/planning_scene.yaml')
+        self.settings.yaml_path_to_write = rospy.get_param('~yaml_path_to_write', grasplan_path + '/config/examples/auto_generated_planning_scene.yaml')
         self.settings.publication_type = 'single'
         self.psv = PlanningSceneViz(self.settings) # TODO: add use case: create planning scene from scratch
         self.psv.publish_boxes()
