@@ -83,6 +83,9 @@ class RqtPlanningScene(Plugin):
         self.pitch_angle = 0.0
         self.yaw_angle = 0.0
 
+        # flag to ignore progress bar chage until user releases mouse
+        self.lock_progress_bar = False
+
         # rosbag time interval player
         bag_path = rospy.get_param('~bag_path', None)
         self.rip = None
@@ -120,7 +123,8 @@ class RqtPlanningScene(Plugin):
         self._widget.slideY.valueChanged.connect(self.slideY_value_changed)
         self._widget.slideZ.valueChanged.connect(self.slideZ_value_changed)
         self._widget.slideRosbagProgress.sliderReleased.connect(self.slideRosbagProgress_slider_released)
-        #self._widget.slideRosbagProgress.valueChanged.connect(self.slideRosbagProgress_value_changed)
+        self._widget.slideRosbagProgress.sliderPressed.connect(self.slideRosbagProgress_slider_pressed)
+        self._widget.slideRosbagProgress.valueChanged.connect(self.slideRosbagProgress_value_changed)
 
         # combo box changed selection
         self._widget.comboExistingBoxes.currentIndexChanged.connect(self.comboExistingBoxes_changed)
@@ -173,9 +177,10 @@ class RqtPlanningScene(Plugin):
                 rospy.logwarn('visibility panel capacity exceeded, ignoring some boxes')
 
     def slideRosbagProgress_slider_released(self):
+        self.lock_progress_bar = False
         rosbag_progress_slide_value = self._widget.slideRosbagProgress.value()
-        #delta = 1.0
-        delta = 20.0
+        percentage_to_play = 1.0 # parameter to control how much from the bag to play in percentage
+        delta = percentage_to_play / 2.0
         start_value = rosbag_progress_slide_value - delta
         if rosbag_progress_slide_value - delta < 0.0:
             start_value = 0.0
@@ -185,10 +190,14 @@ class RqtPlanningScene(Plugin):
         if self.rip:
             self.rip.pub_within_percentage_interval(start_value, end_value)
         else:
-            self.error('rosbag file not selected,\nfirst click on "load" button')
+            self.error('rosbag file not selected,\nclick on "load" button')
+
+    def slideRosbagProgress_slider_pressed(self):
+        self.lock_progress_bar = True
 
     def slideRosbagProgress_value_changed(self):
-        self.slideRosbagProgress_slider_released()
+        if not self.lock_progress_bar:
+            self.slideRosbagProgress_slider_released()
 
     def hide(self, scene_name):
         self.psv.settings.ignore_set.add(scene_name)
