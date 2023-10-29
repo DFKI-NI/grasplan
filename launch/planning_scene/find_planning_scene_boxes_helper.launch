@@ -1,18 +1,31 @@
 <?xml version="1.0"?>
 <launch>
 
-  <!-- Use cube fov marker publisher functionality from object_recognition_mockup to find the right parameters for the planning scene boxes -->
+  <!-- rosbag full path -->
+  <arg name="bag_path" default="" />
+  <arg name="world_config" default="moelk_tables" doc="objects arrangement, options: moelk_tables, cic_tables, truck_assembly" />
+  <arg name="yaml_path_to_read" default="$(find tables_demo_bringup)/config/$(arg world_config)_planning_scene.yaml" />
+  <arg name="yaml_path_to_write" default="$(find tables_demo_bringup)/config/$(arg world_config)_planning_scene.yaml" />
 
-  <node pkg="grasplan" type="object_recognition_mockup.py" name="object_recognition" output="log">
-    <!-- field of view box parameters -->
-    <param name="objects_desired_reference_frame" type="string" value="map" />
-    <param name="box_width" type="double" value="0.7" />
-    <param name="box_length" type="double" value="1.4" />
-    <param name="box_height" type="double" value="0.7" />
-    <param name="x_box_position" type="double" value="13.2" />
-    <param name="y_box_position" type="double" value="2.4" />
-    <param name="z_box_position" type="double" value="0.35" />
-    <param name="supress_warnings" type="bool" value="true" />
+  <!-- upload mobipick urdf model to param server -->
+  <include file="$(find mobipick_description)/launch/mobipick/upload_mobipick_description.launch">
+    <arg name="robot" value="mobipick-os" />
+    <arg name="main_camera" value="astra" />
+    <arg name="tf_prefix" value="mobipick" />
+  </include>
+
+  <!-- rqt to load/move/scale/save boxes in 3D space -->
+  <node pkg="grasplan" type="rqt_planning_scene" name="rqt_planning_scene" output="screen">
+    <param name="bag_path" type="string" value="$(arg bag_path)" />
+    <param name="yaml_path_to_read" type="string" value="$(arg yaml_path_to_read)" />
+    <param name="yaml_path_to_write" type="string" value="$(arg yaml_path_to_write)" />
   </node>
+
+  <!-- launch rviz with custom config, send msgs to log and not to screen (tf errors will occur) -->
+  <node pkg="rviz" type="rviz" name="rviz" output="log"
+        args="-d $(find grasplan)/config/rviz/rqt_planning_scene.rviz"/>
+
+  <!-- Node to set logger level of rviz and suppress tf warnings -->
+  <node pkg="grasplan" type="set_rviz_logger_level.py" name="set_rviz_logger_level" output="screen" />
 
 </launch>
