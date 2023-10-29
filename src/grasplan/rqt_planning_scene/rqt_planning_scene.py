@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 
 import os
+import sys
+import signal
+
 import tf
 import math
 import rospy
@@ -86,6 +89,9 @@ class RqtPlanningScene(Plugin):
         if bag_path:
             self.rip = RosbagIntervalPub(bag_path)
 
+        # account for the fact that rospy.is_shutdown() does not work meanwhile gui is initializing
+        signal.signal(signal.SIGINT, self.signal_handler)
+
         # parameters
         self.settings = PlanningSceneVizSettings()
         self.settings.yaml_path_to_read = grasplan_path + '/config/examples/planning_scene.yaml'
@@ -152,6 +158,10 @@ class RqtPlanningScene(Plugin):
         # end of constructor
 
     # ::::::::::::::  class methods
+
+    def signal_handler(self, sig, frame):
+        rospy.loginfo('Ctrl+C detected, exit')
+        sys.exit(0)
 
     def populate_visibility_panel_box_names(self):
         all_boxes_names = self.psv.get_all_boxes_names()
