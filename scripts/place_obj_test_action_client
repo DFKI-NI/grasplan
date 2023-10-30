@@ -4,7 +4,7 @@ import sys
 import rospy
 import actionlib
 
-from pbr_msgs.msg import PlaceObjectAction, PlaceObjectGoal
+from grasplan.msg import PlaceObjectAction, PlaceObjectGoal
 
 if __name__ == '__main__':
     rospy.init_node('place_object_action_client')

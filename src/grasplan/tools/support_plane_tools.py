@@ -9,7 +9,11 @@ import math
 from std_msgs.msg import ColorRGBA
 from visualization_msgs.msg import Marker
 from geometry_msgs.msg import Point, Vector3, PointStamped
+from std_msgs.msg import Header
 from object_pose_msgs.msg import ObjectList, ObjectPose
+from moveit_msgs.msg import CollisionObject, PlanningScene
+from typing import List
+
 
 def make_plane_marker_msg(ref_frame, plane):
     '''
@@ -125,7 +129,8 @@ def well_separated(x_y_list, candidate_x, candidate_y, min_dist=0.2):
         return True
     return False
 
-def gen_place_poses_from_plane(object_class, support_object, plane, frame_id='map', number_of_poses=10, obj_height=0.8, min_dist=0.2, ignore_min_dist_list=[]):
+def gen_place_poses_from_plane(object_class: str, support_object:str, plane: List[str], planning_scene: PlanningScene, frame_id:str = "map",
+                                number_of_poses: int = 10, min_dist: float = 0.2, ignore_min_dist_list: List[str] = []):
     '''
     random sample poses within a plane and populate object list msg with the result
     '''
@@ -136,7 +141,7 @@ def gen_place_poses_from_plane(object_class, support_object, plane, frame_id='ma
     object_list_msg.header.frame_id = frame_id
     x_y_list = []
     place_poses_id = 1
-    for i in range(1, number_of_poses + 1):
+    for _ in range(1, number_of_poses + 1):
         object_pose_msg = ObjectPose()
         object_pose_msg.class_id = object_class
         count = 0
@@ -153,9 +158,12 @@ def gen_place_poses_from_plane(object_class, support_object, plane, frame_id='ma
                 rospy.logwarn(f'Could not generate poses too much separated from each other, min dist : {min_dist}')
                 break
         x_y_list.append([candidate_x, candidate_y])
+
         object_pose_msg.pose.position.x = candidate_x
         object_pose_msg.pose.position.y = candidate_y
-        object_pose_msg.pose.position.z = obj_height
+
+        object_pose_msg.pose.position.z = attached_obj_height(support_object, planning_scene)
+
         roll = 0.0
         pitch = 0.0
         yaw = round(random.uniform(0.0, math.pi), 4)
@@ -165,7 +173,7 @@ def gen_place_poses_from_plane(object_class, support_object, plane, frame_id='ma
         if number_of_poses > 20:
             rospy.loginfo('covering 360 angle for each pose')
             yaw = 0.0
-            for i in range(7):
+            for _ in range(7):
                 angular_q = tf.transformations.quaternion_from_euler(roll, pitch, yaw)
                 object_pose_msg.pose.orientation.x = angular_q[0]
                 object_pose_msg.pose.orientation.y = angular_q[1]
@@ -186,76 +194,151 @@ def gen_place_poses_from_plane(object_class, support_object, plane, frame_id='ma
             place_poses_id +=1
     return object_list_msg
 
-def reduce_plane_area(plane, distance):
-    '''
-    scale down a plane by some distance
-    this function currently requires that the points in the plane are specied in a very specific order:
-    p1 p4
-    p2 p3
-    use animate_plane_points() function to make sure that the required order is followed
-    '''
-    plane[0].x -= distance
-    plane[0].y -= distance
-    plane[1].x += distance
-    plane[1].y -= distance
-    plane[2].x += distance
-    plane[2].y += distance
-    plane[3].x -= distance
-    plane[3].y += distance
-    return plane
+# TODO: consider using shape_msgs/Plane instead of 4 points
+def adjust_plane(
+        plane: List[Point],
+        x_extend: float = 0.0, 
+        y_extend: float = 0.0, 
+        x_offset: float = 0.0, 
+        y_offset: float = 0.0
+    ) -> List[Point]:
+    """
+    Adjust the dimensions and position of a plane.
 
-def animate_plane_points(plane, point_pub):
-    '''
-    visualise the points that form the plane
-    '''
-    for p in plane:
-        p_msg = PointStamped()
-        p_msg.header.frame_id = 'map'
-        p_msg.point = p
-        point_pub.publish(p_msg)
+    Parameters
+    ----------
+    plane : List[Point]
+        A list of four points representing a plane.
+    x_extend : float, optional
+        The amount to increase/decrease all points on the x-axis. Defaults to 0.0.
+    y_extend : float, optional
+        The amount to increase/decrease all points on the y-axis. Defaults to 0.0.
+    x_offset : float, optional
+        The amount to offset all points on the x-axis. Defaults to 0.0.
+    y_offset : float, optional
+        The amount to offset all points on the y-axis. Defaults to 0.0.
+
+    Raises
+    ------
+    ValueError
+        If the plane is not parallel to the XY plane.
+
+    Returns
+    -------
+    List[Point]
+        A list of four points representing the adjusted plane.
+    """
+    if not len(set([p.z for p in plane])) <= 1:
+        raise ValueError("Plane is not parallel to the XY plane")
+
+    plane = [Point(p.x + x_offset, p.y + y_offset, p.z) for p in plane]
+
+    min_x, max_x = min(p.x for p in plane), max(p.x for p in plane)
+    min_y, max_y = min(p.y for p in plane), max(p.y for p in plane)
+
+    return [Point(min_x - x_extend, min_y - y_extend, plane[0].z),
+            Point(max_x + x_extend, min_y - y_extend, plane[0].z),
+            Point(max_x + x_extend, max_y + y_extend, plane[0].z),
+            Point(min_x - x_extend, max_y + y_extend, plane[0].z)]
+
+def visualize_points(points: List[Point], point_publisher: rospy.Publisher) -> None:
+    """Publish points to view them in RViz"""
+    for point in points:
+        point_publisher.publish(PointStamped(header=Header(frame_id='map'), point=point))
         rospy.sleep(0.5)
 
-def obj_to_plane(support_obj):
-    '''
-    generate a plane made out of 4 points from an object
-    this is currently a workaround, however it can be taken from moveit planning scene in future
-    '''
-    th = 0.721 # table_height, (real table height : 0.72)
-    ch = 0.951 # conveyor height (real conveyor height : 0.9)
-    if support_obj == 'table_1':
-        return [Point(12.85, 1.50, th), Point(13.55, 1.50, th), Point(13.55, 2.90, th), Point(12.85, 2.90, th)]
-    if support_obj == 'table_2':
-        return [Point(11.30, 2.89, th), Point(12.70, 2.89, th), Point(12.70, 3.59, th), Point(11.30, 3.59, th)]
-    if support_obj == 'table_3':
-        return [Point(9.70, 2.89,th), Point(11.10, 2.89, th), Point(11.10, 3.59,th), Point(9.70, 3.59,th)]
-    if support_obj == 'conveyor_belt_a':
-        return [Point(1.1, 0.3, ch), Point(0.65, 0.3, ch), Point(0.65, 0.0, ch), Point(1.1, 0.0, ch)]
-    if support_obj == 'conveyor_belt_b':
-        return [Point(-0.65, 0.4, ch), Point(-1.1, 0.4, ch), Point(-1.1, 0.0, ch), Point(-0.65, 0.0, ch)]
-    if support_obj == 'klt':
-        return [Point(0,0,0), Point(1,0,0), Point(1,1,0), Point(0,1,0)] # TODO
-    return [None, None, None, None, None]
+def get_obj_from_planning_scene(obj_name: str, planning_scene: PlanningScene) -> CollisionObject:
+    """
+    Get a Object from a MoveIt PlanningScene by its name.
 
-def compute_object_height(object_class):
-    if object_class == 'power_drill_with_grip':
-        return 0.8474679967880249
-    if object_class == 'klt':
-        return 0.8034999990463256
-    if object_class == 'multimeter':
-        # return 0.7510319999605417 # planning failed, but it shouldn't , maybe is an error of not adding the table?
-        return 0.76 # works
-    if object_class == 'relay':
-        # return 0.782182000130415
-        return 0.8
-    if object_class == 'screwdriver':
-        # return 0.7472060001641512
-        return 0.75
-    if object_class == 'insole':
-        return 0.95
-    if object_class == 'bag':
-        return 1.10
-    rospy.logerr('compute_object_height failed!')
-    return 0.85 # better to return a high value than to fail?
+    Parameters
+    ----------
+    obj_name : str
+        The name of the object to retrieve.
+    planning_scene : PlanningScene
+        The MoveIt PlanningScene to retrieve the object from.
+
+    Returns
+    -------
+    CollisionObject
+        The CollisionObject with the specified name.
+
+    Raises
+    ------
+    ValueError
+        If the object with the specified name is not in the planning scene.
+    """
+    if obj_name not in planning_scene.get_known_object_names():
+        raise ValueError(f"Object '{obj_name}' not in planning scene")
+    return planning_scene.get_objects([obj_name])[obj_name]
+
+# TODO: consider shape_msgs/Plane instead of 4 points
+def obj_to_plane(support_obj: str, planning_scene: PlanningScene, offset: float = 0.001) -> List[Point]:
+    """
+    Get a top surface plane from an object in the MoveIt planning scene.
+ 
+    NOTE: Currently only works for boxes parallel to the XY plane.
+
+    Parameters
+    ----------
+    support_obj : str
+        The name of the box in the MoveIt planning scene.
+    planning_scene : PlanningScene
+        The MoveIt planning scene.
+    offset : float, optional
+        The offset from the MoveIt object and the created plane. Defaults to 0.001.
+
+    Returns
+    -------
+    List[Point]
+        A list of four points representing the corners of the top surface plane.
+    """
+    collision_object = get_obj_from_planning_scene(support_obj, planning_scene)
+
+    if len(collision_object.primitives) != 1 or collision_object.primitives[0].type != 1:
+        raise ValueError(f"Object '{support_obj}' is not a box")
+     
+    rotation_angle = tf.euler_from_quaternion(
+        [collision_object.pose.orientation.x, collision_object.pose.orientation.y,
+        collision_object.pose.orientation.z, collision_object.pose.orientation.w]
+    )
+
+    # TODO: this should be checked in a central place and not in each function
+    if rotation_angle[0] != 0 or rotation_angle[1] != 0:
+        raise ValueError(f"Object '{support_obj}' is not aligned with the XY plane")
+
+    half_width = collision_object.primitives[0].dimensions[0] / 2
+    half_depth = collision_object.primitives[0].dimensions[1] / 2
+    
+    center_point = [collision_object.pose.position.x, collision_object.pose.position.y, collision_object.pose.position.z * 2]
+
+    corner_offsets = [(half_width, half_depth), (-half_width, half_depth), (-half_width, -half_depth), (half_width, -half_depth)]
+
+    return [Point(center_point[0] + dx * math.cos(rotation_angle[2]) - dy * math.sin(rotation_angle[2]),
+             center_point[1] + dx * math.sin(rotation_angle[2]) + dy * math.cos(rotation_angle[2]),
+             center_point[2] + offset) for dx, dy in corner_offsets]
+
+def attached_obj_height(attached_obj: str, planning_scene: PlanningScene, offset: float = 0.001) -> float:
+    """
+    Get the height of an object attached to the gripper
+
+    Parameters
+    ----------
+    attached_obj : str
+        The name of the attached object.
+    planning_scene : PlanningScene
+        The planning scene object.
+    offset : float, optional
+        An offset for the height. by default 0.001.
+
+    Returns
+    -------
+    float
+        The height of the attached object.
+    """
+    collision_object = get_obj_from_planning_scene(attached_obj, planning_scene)
+    half_height_att_obj = list(planning_scene.get_attached_objects().values())[0].object.primitives[0].dimensions[2]  
+    return half_height_att_obj + collision_object.pose.position.z * 2 + offset
 
 # Example usage
 if __name__ == '__main__':

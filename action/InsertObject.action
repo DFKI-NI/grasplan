@@ -1,0 +1,15 @@
+# the name that the support surface (e.g. box) has in the collision map
+string support_surface_name
+
+# if true, before placing an object, the robot will look at the table first
+# trigger perception, add perceived objects to the planning scene and then insert
+# WARNING: some objects (e.g. a power drill) can slip off the robot gripper
+#          if you move the arm to observation pose while holding it.
+bool observe_before_insert
+
+# NOTE: we do not need the object to be inserted because its deduced from what the robot is currently holding
+# object_to_be_inserted
+---
+# result
+bool success
+---

@@ -7,7 +7,7 @@ from geometry_msgs.msg import PoseArray, PoseStamped
 from moveit_msgs.msg import Grasp, GripperTranslation
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
-from grasplan.common_grasp_tools import separate_object_class_from_id
+from grasplan.tools.common import separate_object_class_from_id
 
 class GraspPlanningCore:
     '''
@@ -47,7 +47,7 @@ class GraspPlanningCore:
         '''
         if object_class is None or dictionary is None or object_class not in dictionary:
             return joint_angles
-        return dictionary[object_class]
+        return [dictionary[object_class]]
 
     def make_gripper_trajectory(self, joint_angles, dictionary, object_class=None):
         '''

@@ -6,24 +6,22 @@ example on how to place an object using grasplan and moveit
 
 import sys
 import copy
-import random
 import tf
 import rospy
 import actionlib
 import moveit_commander
 import traceback
 
-from grasplan.tools.support_plane_tools import obj_to_plane, reduce_plane_area, gen_place_poses_from_plane, make_plane_marker_msg, compute_object_height
-from grasplan.common_grasp_tools import separate_object_class_from_id
+from grasplan.tools.support_plane_tools import obj_to_plane, adjust_plane, gen_place_poses_from_plane, make_plane_marker_msg
+from grasplan.tools.common import separate_object_class_from_id
 from grasplan.tools.moveit_errors import print_moveit_error
-from std_msgs.msg import String
 from std_srvs.srv import Empty, SetBool, Trigger
 from object_pose_msgs.msg import ObjectList
 from geometry_msgs.msg import Vector3Stamped, PoseStamped
 from moveit_msgs.msg import PlaceAction, PlaceGoal, PlaceLocation, GripperTranslation, PlanningOptions, Constraints, OrientationConstraint
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from visualization_msgs.msg import Marker
-from pbr_msgs.msg import PlaceObjectAction, PlaceObjectResult
+from grasplan.msg import PlaceObjectAction, PlaceObjectResult
 from moveit_msgs.msg import MoveItErrorCodes
 from pose_selector.srv import GetPoses
 from visualization_msgs.msg import Marker, MarkerArray
@@ -200,15 +198,18 @@ class PlaceTools():
         rospy.loginfo(f'sending place goal to {self.place_object_server_name} action server')
 
         # generate plane from object surface
-        plane = obj_to_plane(support_object)
+        plane = obj_to_plane(support_object, self.scene)
+
         # scale down plane to account for obj width and length
-        plane = reduce_plane_area(plane, 0.05)
+        plane = adjust_plane(plane, 0.05)
+
         # publish plane as marker for visualisation purposes
         self.plane_vis_pub.publish(make_plane_marker_msg(self.global_reference_frame, plane))
-        # generate random place poses within a plane
+        
+        # generate random places within the plane
         object_class_tbp = separate_object_class_from_id(object_to_be_placed)[0]
-        place_poses_as_object_list_msg = gen_place_poses_from_plane(object_class_tbp, support_object, plane,\
-                frame_id=self.global_reference_frame, number_of_poses=number_of_poses, obj_height=compute_object_height(object_class_tbp), \
+        place_poses_as_object_list_msg = gen_place_poses_from_plane(object_class_tbp, support_object, plane, self.scene, \
+                frame_id=self.global_reference_frame, number_of_poses=number_of_poses, \
                 min_dist=self.min_dist, ignore_min_dist_list=self.ignore_min_dist_list)
 
         self.place_poses_pub.publish(place_poses_as_object_list_msg)

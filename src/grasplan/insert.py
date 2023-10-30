@@ -7,7 +7,7 @@ example on how to insert an object using grasplan and moveit
 import rospy
 import actionlib
 from grasplan.place import PlaceTools
-from grasplan.common_grasp_tools import separate_object_class_from_id
+from grasplan.tools.common import separate_object_class_from_id
 from grasplan.tools.support_plane_tools import gen_insert_poses_from_obj, compute_object_height_for_insertion
 from grasplan.tools.moveit_errors import print_moveit_error
 from object_pose_msgs.msg import ObjectList
@@ -15,8 +15,8 @@ from moveit_msgs.msg import PlaceAction, PlaceGoal # PlaceLocation, GripperTrans
 from moveit_msgs.msg import MoveItErrorCodes
 from std_srvs.srv import Empty
 from pose_selector.srv import ClassQuery
-from grasplan.common_grasp_tools import objectToPick # name is misleading, in this case we want to insert an object in it
-from pbr_msgs.msg import InsertObjectAction, InsertObjectResult
+from grasplan.tools.common import objectToPick # name is misleading, in this case we want to insert an object in it
+from grasplan.msg import InsertObjectAction, InsertObjectResult
 
 class InsertTools():
     def __init__(self):

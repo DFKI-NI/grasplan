@@ -21,8 +21,8 @@ from pose_selector.srv import ClassQuery, PoseDelete, GetPoses
 from geometry_msgs.msg import PoseStamped
 from grasplan.tools.moveit_errors import print_moveit_error
 from moveit_msgs.msg import MoveItErrorCodes, PickupAction, PickupGoal
-from pbr_msgs.msg import PickObjectAction, PickObjectResult
-from grasplan.common_grasp_tools import objectToPick
+from grasplan.msg import PickObjectAction, PickObjectResult
+from grasplan.tools.common import objectToPick
 from visualization_msgs.msg import Marker, MarkerArray
 
 class PickTools():
@@ -277,7 +277,7 @@ class PickTools():
             # populate pose selector with pose information
             resp = self.activate_pose_selector_srv(True)
             # wait until pose selector gets updates
-            rospy.sleep(10.0)
+            rospy.sleep(4.0)
             # deactivate pose selector detections
             resp = self.activate_pose_selector_srv(False)
 
@@ -316,7 +316,7 @@ class PickTools():
         if id is not None:
             object_to_pick.set_id(id)
 
-        self.obj_pose_pub.publish(object_pose) # publish object pose for visualisation purposes
+        self.obj_pose_pub.publish(object_pose) # publish object pose for visualization purposes
 
         # print objects that were added to the planning scene
         rospy.loginfo(f'planning scene objects: {self.scene.get_known_object_names()}')
@@ -328,10 +328,10 @@ class PickTools():
         # ::::::::: pick
         rospy.loginfo(f'picking object now')
 
-        # generate a list of moveit grasp messages, poses are also published for visualisation purposes
+        # generate a list of moveit grasp messages, poses are also published for visualization purposes
         grasps = self.grasp_planner.make_grasps_msgs(object_to_pick.get_object_class_and_id_as_string(),\
                                                      object_pose, self.robot.arm.get_end_effector_link(), grasp_type)
-
+        
         # clear octomap from the planning scene if needed
         if self.clear_octomap_flag:
             self.clear_octomap()
