@@ -36,7 +36,7 @@ class PlanningSceneViz:
         self.br = None
         if self.settings.publish_tf:
             self.br = tf.TransformBroadcaster()
-        rospy.loginfo('vizualize planning scene node initialized')
+        rospy.loginfo('visualize planning scene node initialized')
 
     def reset(self, load_boxes_from_yaml=True):
         if not self.validate_settings(self.settings):
@@ -126,8 +126,11 @@ class PlanningSceneViz:
             rospy.logerr(f'cannot modify box, scene_name : {scene_name} not found')
 
     def load_boxes_from_yaml(self, yaml_path):
+        if yaml_path == '':
+            rospy.logwarn(f'empty yaml path')
+            return
         if not os.path.exists(yaml_path):
-            rospy.logerr('yaml path does not exist')
+            rospy.logerr(f'yaml path does not exist: {yaml_path}')
             return
         with open(yaml_path, 'r') as file:
             yaml_content = file.read()
@@ -277,8 +280,8 @@ if __name__ == '__main__':
     if len(sys.argv) > 1:
         yaml_path = sys.argv[1]
     else:
-        package_path = rospkg.RosPack().get_path('april_pick_place_object')
-        yaml_path = package_path + '/config/grasplan/planning_scene.yaml'
+        package_path = rospkg.RosPack().get_path('grasplan')
+        yaml_path = package_path + '/config/examples/planning_scene.yaml'
     if os.path.exists(yaml_path):
         # yaml file path exists
         settings = PlanningSceneVizSettings()

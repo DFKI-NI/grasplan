@@ -21,7 +21,7 @@ from std_msgs.msg import Int8, String
 from geometry_msgs.msg import Pose, PoseArray, PoseStamped
 from tf.transformations import quaternion_from_euler
 
-from grasplan.rqt_planning_scene.vizualize_planning_scene import PlanningSceneVizSettings, PlanningSceneViz
+from grasplan.rqt_planning_scene.visualize_planning_scene import PlanningSceneVizSettings, PlanningSceneViz
 from grasplan.rqt_planning_scene.rosbag_interval_pub import RosbagIntervalPub
 
 class OpenFileDialog(QWidget):
