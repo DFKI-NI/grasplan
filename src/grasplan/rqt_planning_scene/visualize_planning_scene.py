@@ -237,7 +237,20 @@ class PlanningSceneViz:
         rospy.loginfo('subscriber is detected, continue')
 
     def broadcast_tf(self, x, y, z, qx, qy, qz, qw, parent_frame_id, child_frame_id):
-        self.br.sendTransform((x,y,z), (qx, qy, qz, qw), rospy.Time.now(), child_frame_id, parent_frame_id)
+        if self.br:
+            self.br.sendTransform((x,y,z), (qx, qy, qz, qw), rospy.Time.now(), child_frame_id, parent_frame_id)
+        else:
+            rospy.logerr('cannot broadcast to tf')
+
+    def publish_tf(self):
+        '''
+        overrides self.settings.publish_tf
+        does not take into account ignore_set
+        '''
+        for box in self.box_list_dictionary:
+            self.broadcast_tf(box['box_position_x'], box['box_position_y'], box['box_position_z'],\
+                box['box_orientation_x'], box['box_orientation_y'], box['box_orientation_z'], box['box_orientation_w'],\
+                box['frame_id'], box['scene_name'])
 
     def publish_boxes(self):
         self.delete_all_markers()
