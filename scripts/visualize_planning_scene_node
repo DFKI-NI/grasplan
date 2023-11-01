@@ -1,0 +1,75 @@
+#!/usr/bin/env python3
+
+'''
+Visualizes planning scene with visualize_planning_scene.py. (not tied to moveit)
+Allows hiding elements in the scene, a feature MoveIt lacks.
+'''
+
+import os
+import rospy
+import rospkg
+
+from std_msgs.msg import String
+from grasplan.rqt_planning_scene.visualize_planning_scene import PlanningSceneViz, PlanningSceneVizSettings
+
+class visualizePlanningSceneNode:
+    def __init__(self):
+        package_path = rospkg.RosPack().get_path('grasplan')
+        default_yaml_path = package_path + '/config/examples/planning_scene.yaml'
+        yaml_path_to_read = rospy.get_param('~yaml_path_to_read', default_yaml_path)
+        yaml_path_to_write = rospy.get_param('~yaml_path_to_write', default_yaml_path)
+        if not os.path.exists(yaml_path_to_read):
+            rospy.signal_shutdown(f'yaml path does not exist: {yaml_path_to_read}, shutting down node')
+        initial_settings = PlanningSceneVizSettings()
+        # a list of planning scene boxes to ignore (not draw)
+        initial_settings.ignore_set = set(rospy.get_param('~ignore_set', []))
+        # Takes priority over ignore_set; only boxes listed here will be drawn.
+        initial_settings.ignore_all_but = rospy.get_param('~ignore_all_but', [])
+        initial_settings.colors = rospy.get_param('~colors', {})
+        initial_settings.transparency = rospy.get_param('~transparency', 0.8)
+        # we only use the library to display planning scene, not to affect it
+        initial_settings.yaml_path_to_read = yaml_path_to_read
+        initial_settings.yaml_path_to_write = yaml_path_to_write
+        initial_settings.publish_tf = True
+        self.psv = PlanningSceneViz(initial_settings)
+        self.psv.publish_boxes()
+        self.target_frame_dic = rospy.get_param('~target_frame_dic', {})
+        # ignore/include some objects in realtime
+        rospy.Subscriber('~ignore_object', String, self.ignoreObjectCB)
+        rospy.Subscriber('~include_object', String, self.includeObjectCB)
+        rospy.Subscriber('~change_frames', String, self.changeBoxesRefFrameCB)
+
+    def changeBoxesRefFrameCB(self, msg):
+        # also saves the boxes to yaml file
+        rospy.loginfo('received request to change boxes reference frame')
+        self.psv.change_boxes_ref_frame(self.target_frame_dic)
+        self.psv.write_boxes_to_yaml(None, from_settings=True)
+
+    def ignoreObjectCB(self, msg):
+        rospy.loginfo(f'received request to ignore object: {msg.data}')
+        self.ignore_object(msg.data)
+
+    def includeObjectCB(self, msg):
+        rospy.loginfo(f'received request to include object: {msg.data}')
+        self.include_object(msg.data)
+
+    def ignore_object(self, object_name):
+        if object_name not in self.psv.settings.ignore_set:
+            self.psv.settings.ignore_set.add(object_name)
+        self.psv.publish_boxes()
+
+    def include_object(self, object_name):
+        if object_name in self.psv.settings.ignore_set:
+            self.psv.settings.ignore_set.remove(object_name)
+        self.psv.publish_boxes()
+
+    def start(self):
+        rate = rospy.Rate(10)
+        while not rospy.is_shutdown():
+            self.psv.publish_tf()
+            rate.sleep()
+
+if __name__ == '__main__':
+    rospy.init_node('planning_scene_visualization_node', anonymous=False)
+    viz = visualizePlanningSceneNode()
+    viz.start()
