@@ -156,11 +156,16 @@ class RqtPlanningScene(Plugin):
 
         self.populate_visibility_panel_box_names()
 
+        rospy.Timer(rospy.Duration(1.0), self.timer_callback)
+
         context.add_widget(self._widget)
         rospy.loginfo('planning scene rqt initialization complete')
         # end of constructor
 
     # ::::::::::::::  class methods
+
+    def timer_callback(self, event):
+        self.psv.publish_tf()
 
     def signal_handler(self, sig, frame):
         rospy.loginfo('Ctrl+C detected, exit')
