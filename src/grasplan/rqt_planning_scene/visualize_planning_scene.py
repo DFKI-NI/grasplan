@@ -287,7 +287,7 @@ class PlanningSceneViz:
                 rospy.loginfo('publisher is registered and has subscribers.')
                 break
             else:
-                rospy.loginfo(f'waiting for subscribers to connect... attempt={count}')
+                rospy.logdebug(f'waiting for subscribers to connect... attempt={count}')
                 count += 1
             rate.sleep()
         rospy.loginfo('subscriber is detected, continue')
