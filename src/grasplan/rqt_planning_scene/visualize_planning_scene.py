@@ -14,6 +14,7 @@ import yaml
 import copy
 
 from visualization_msgs.msg import Marker, MarkerArray
+from geometry_msgs.msg import PoseStamped
 
 class PlanningSceneVizSettings:
     # default settings
@@ -35,7 +36,9 @@ class PlanningSceneViz:
         self.reset(load_boxes_from_yaml)
         self.br = None
         if self.settings.publish_tf:
+            rospy.loginfo('tf boxes broadcast is enabled')
             self.br = tf.TransformBroadcaster()
+            self.listener = tf.TransformListener()
         rospy.loginfo('visualize planning scene node initialized')
 
     def reset(self, load_boxes_from_yaml=True):
@@ -96,7 +99,8 @@ class PlanningSceneViz:
                    modify_box_orientation_w=False, box_orientation_w=1.0,
                    modify_box_x_dimension=False, box_x_dimension=1.0,
                    modify_box_y_dimension=False, box_y_dimension=1.0,
-                   modify_box_z_dimension=False, box_z_dimension=1.0):
+                   modify_box_z_dimension=False, box_z_dimension=1.0,
+                   modify_frame_id=False, new_frame_id='world'):
         found = False
         for box in self.box_list_dictionary:
             if box['scene_name'] == scene_name:
@@ -121,6 +125,8 @@ class PlanningSceneViz:
                     box['box_y_dimension'] = box_y_dimension
                 if modify_box_z_dimension:
                     box['box_z_dimension'] = box_z_dimension
+                if modify_frame_id:
+                    box['frame_id'] = new_frame_id
         self.publish_boxes()
         if not found:
             rospy.logerr(f'cannot modify box, scene_name : {scene_name} not found')
@@ -151,6 +157,56 @@ class PlanningSceneViz:
         with open(yaml_path_to_write, 'w') as yaml_file:
             master_dictionary = {'planning_scene_boxes': self.box_list_dictionary}
             yaml.dump(master_dictionary, yaml_file, default_flow_style=False)
+            rospy.loginfo(f'writing boxes to yaml file: {yaml_path_to_write}')
+
+    def transform_to_frame(self, object_frame, target_frame):
+        # get object transform
+        input_pose = PoseStamped()
+        for box in self.box_list_dictionary:
+            if object_frame == box['scene_name']:
+                input_pose.header.frame_id = box['frame_id']
+                input_pose.pose.position.x = box['box_position_x']
+                input_pose.pose.position.y = box['box_position_y']
+                input_pose.pose.position.z = box['box_position_z']
+                input_pose.pose.orientation.x = box['box_orientation_x']
+                input_pose.pose.orientation.y = box['box_orientation_y']
+                input_pose.pose.orientation.z = box['box_orientation_z']
+                input_pose.pose.orientation.w = box['box_orientation_w']
+                # Wait for the transform to be available
+                self.listener.waitForTransform(target_frame, input_pose.header.frame_id, rospy.Time(), rospy.Duration(1.0))
+                transformed_pose = self.listener.transformPose(target_frame, input_pose)
+                return transformed_pose
+
+    def change_boxes_ref_frame(self, target_frame_dic):
+        '''
+        express the boxes in a custom target reference frame
+        e.g.:
+        target_frame_dic = {'table_2':'table_3'} # express table_2 in table_3 reference frame
+        '''
+        for key in target_frame_dic:
+            for box in self.box_list_dictionary:
+                if key == box['scene_name']:
+                    rospy.loginfo(f'expressing {key} in {target_frame_dic[key]} ref frame')
+                    # perform the transformation
+                    new_pose = self.transform_to_frame(key, target_frame_dic[key])
+                    x = new_pose.pose.position.x
+                    y = new_pose.pose.position.y
+                    z = new_pose.pose.position.z
+                    qx = new_pose.pose.orientation.x
+                    qy = new_pose.pose.orientation.y
+                    qz = new_pose.pose.orientation.z
+                    qw = new_pose.pose.orientation.w
+                    # next line is useful for debugging purposes
+                    # self.broadcast_tf(x, y, z, qx, qy, qz, qw, target_frame_dic[key], f'{key}_debug')
+                    self.modify_box(box['scene_name'],
+                        modify_box_position_x=True, box_position_x=round(float(new_pose.pose.position.x), 3),
+                        modify_box_position_y=True, box_position_y=round(float(new_pose.pose.position.y), 3),
+                        modify_box_position_z=True, box_position_z=round(float(new_pose.pose.position.z), 3),
+                        modify_box_orientation_x=True, box_orientation_x=round(float(new_pose.pose.orientation.x), 4),
+                        modify_box_orientation_y=True, box_orientation_y=round(float(new_pose.pose.orientation.y), 4),
+                        modify_box_orientation_z=True, box_orientation_z=round(float(new_pose.pose.orientation.z), 4),
+                        modify_box_orientation_w=True, box_orientation_w=round(float(new_pose.pose.orientation.w), 4),
+                        modify_frame_id=True, new_frame_id=new_pose.header.frame_id)
 
     def symbolic_to_rgb_color(self, symbolic_color):
         if symbolic_color == 'green':
