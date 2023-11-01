@@ -366,4 +366,4 @@ if __name__ == '__main__':
         psv.publish_boxes()
         rospy.sleep(0.2)
     else:
-        print("yaml file does not exist:", yaml_path)
+        print('yaml file does not exist:', yaml_path)
