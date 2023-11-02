@@ -298,7 +298,7 @@ def obj_to_plane(support_obj: str, planning_scene: PlanningScene, offset: float 
     if len(collision_object.primitives) != 1 or collision_object.primitives[0].type != 1:
         raise ValueError(f"Object '{support_obj}' is not a box")
      
-    rotation_angle = tf.euler_from_quaternion(
+    rotation_angle = tf.transformations.euler_from_quaternion(
         [collision_object.pose.orientation.x, collision_object.pose.orientation.y,
         collision_object.pose.orientation.z, collision_object.pose.orientation.w]
     )
