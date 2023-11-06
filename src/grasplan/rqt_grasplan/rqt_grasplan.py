@@ -12,7 +12,7 @@ from python_qt_binding import loadUi
 from python_qt_binding.QtWidgets import QWidget, QFileDialog, QMessageBox
 
 from grasplan.rqt_grasplan.grasps import Grasps
-from grasplan.visualisation.grasp_visualiser import GraspVisualiser
+from grasplan.visualisation.grasp_visualizer import GraspVisualizer
 
 from std_msgs.msg import Int8, String
 from geometry_msgs.msg import Pose, PoseArray, PoseStamped
@@ -95,8 +95,8 @@ class RqtGrasplan(Plugin):
                 rospy.logwarn('object name parameter is set but grasps_yaml_path param is missing, is this correct?')
 
         # publish object mesh to rviz with texture
-        grasp_visualiser = GraspVisualiser()
-        grasp_visualiser.update_mesh(object_name=self.object_class, object_pkg=obj_pkg_name)
+        grasp_visualizer = GraspVisualizer()
+        grasp_visualizer.update_mesh(object_name=self.object_class, object_pkg=obj_pkg_name)
 
         # visualise grasps at startup
         self.publish_grasps()
