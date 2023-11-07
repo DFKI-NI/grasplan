@@ -13,7 +13,7 @@ from grasplan.grasp_planner.handcoded_grasp_planner import HandcodedGraspPlanner
 Load grasp configurations from yaml file and display them on rviz.
 '''
 
-class GraspVisualiser:
+class GraspVisualizer:
     def __init__(self):
         # parameters
         self.object_name = rospy.get_param('~object_name', 'multimeter')
@@ -91,13 +91,13 @@ class GraspVisualiser:
         rospy.loginfo(f'publishing mesh:{mesh_path}')
         self.object_mesh_publisher.publish(marker_msg)
 
-    def start_grasp_visualiser(self):
+    def start_grasp_visualizer(self):
         self.update_mesh(object_name=self.object_name, object_pkg=self.object_pkg)
         # visualise grasps
         self.publish_grasps_as_pose_array()
         rospy.spin()
 
 if __name__ == '__main__':
-    rospy.init_node('grasp_visualiser', anonymous=False)
-    grasp_visualiser = GraspVisualiser()
-    grasp_visualiser.start_grasp_visualiser()
+    rospy.init_node('grasp_visualizer', anonymous=False)
+    grasp_visualizer = GraspVisualizer()
+    grasp_visualizer.start_grasp_visualizer()
