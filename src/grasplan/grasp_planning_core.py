@@ -116,7 +116,7 @@ class GraspPlanningCore:
 
         # call grasp planner
         pose_array_msg = self.gen_end_effector_grasp_poses(object_name, object_pose, grasp_type)
-        # publish poses for visualisation purposes
+        # publish poses for visualization purposes
         self.pose_array_pub.publish(pose_array_msg)
 
         pose_stamped = PoseStamped()

@@ -23,8 +23,8 @@ class SimpleGraspPlanner(GraspPlanningCore):
         # move object slightly in z up
         self.z_offset = rospy.get_param('~z_offset', 0.03)
 
-        # setup publishers for visualisation purposes
-        self.grasp_pose_pub = rospy.Publisher('~visualisation/grasp_pose', PoseStamped, queue_size=1)
+        # setup publishers for visualization purposes
+        self.grasp_pose_pub = rospy.Publisher('~visualization/grasp_pose', PoseStamped, queue_size=1)
         rospy.sleep(0.5) # give some time for publisher to register
         rospy.loginfo('simple pregrasp planner object was created')
 
@@ -45,7 +45,7 @@ class SimpleGraspPlanner(GraspPlanningCore):
         grasp_pose.pose.orientation.y = rotation[1]
         grasp_pose.pose.orientation.z = rotation[2]
         grasp_pose.pose.orientation.w = rotation[3]
-        # publish grasp pose for visualisation purposes
+        # publish grasp pose for visualization purposes
         self.grasp_pose_pub.publish(grasp_pose)
         return grasp_pose
 

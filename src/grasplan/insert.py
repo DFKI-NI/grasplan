@@ -141,7 +141,7 @@ class InsertTools():
         place_poses_as_object_list_msg = gen_insert_poses_from_obj(object_class_tbi, support_object_pose,\
                 compute_object_height_for_insertion(object_class_tbi, support_object.obj_class),\
                 frame_id=self.place.global_reference_frame, same_orientation_as_support_obj=same_orientation_as_support_obj)
-        # send places poses to place pose selector for visualisation purposes
+        # send places poses to place pose selector for visualization purposes
         self.insert_poses_pub.publish(place_poses_as_object_list_msg)
 
         # clear octomap before placing, this is experimental and not sure is needed

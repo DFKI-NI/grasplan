@@ -34,7 +34,7 @@ class GraspVisualizer:
         # use helper function to convert gripper poses to pose array
         self.handcoded_grasp_planner_obj = HandcodedGraspPlanner(call_parent_constructor=False)
         rospy.sleep(0.5)
-        rospy.loginfo('grasp visualiser node started')
+        rospy.loginfo('grasp visualizer node started')
 
     def UpdateObjectMeshCB(self, msg):
         self.update_mesh(object_name=msg.data, object_pkg=self.object_pkg)
@@ -93,7 +93,7 @@ class GraspVisualizer:
 
     def start_grasp_visualizer(self):
         self.update_mesh(object_name=self.object_name, object_pkg=self.object_pkg)
-        # visualise grasps
+        # visualize grasps
         self.publish_grasps_as_pose_array()
         rospy.spin()
 

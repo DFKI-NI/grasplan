@@ -342,7 +342,7 @@ def attached_obj_height(attached_obj: str, planning_scene: PlanningScene, offset
 
 # Example usage
 if __name__ == '__main__':
-    rospy.init_node('plane_visualiser', anonymous=False)
+    rospy.init_node('plane_visualizer', anonymous=False)
     support_plane_marker_pub = rospy.Publisher('support_plane_as_marker', Marker, queue_size=1, latch=True)
     point_pub = rospy.Publisher('plane_points', PointStamped, queue_size=1, latch=False)
     place_poses_pub = rospy.Publisher('~place_poses', ObjectList, queue_size=1, latch=True)
@@ -356,7 +356,7 @@ if __name__ == '__main__':
     # the animation helps to make sure the order is correct so that the functions can work correctly
     animate_plane_points(plane_1, point_pub)
     plane_1 = reduce_plane_area(plane_1, -0.2)
-    # visualise plane as marker
+    # visualize plane as marker
     marker_msg = make_plane_marker_msg('map', plane_1)
     support_plane_marker_pub.publish(marker_msg)
     object_list_msg = gen_place_poses_from_plane(object_tbp, support_object, plane_1)

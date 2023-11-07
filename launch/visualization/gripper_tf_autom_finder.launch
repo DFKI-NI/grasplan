@@ -3,9 +3,9 @@
 
   <!-- automatically find all trasformations in the gripper to generate a config file out of it -->
   <node pkg="grasplan" type="gripper_tf_autom_finder.py" name="gripper_tf_autom_finder_node" output="screen" >
-    <rosparam file="$(find grasplan)/config/visualisation/gripper_tf_autom_finder_params.yaml" command="load" />
+    <rosparam file="$(find grasplan)/config/visualization/gripper_tf_autom_finder_params.yaml" command="load" />
     <!-- the path where to save the configuration in yaml format -->
-    <param name="yaml_path" value="$(find grasplan)/config/visualisation/gripper_transformations.yaml"/>
+    <param name="yaml_path" value="$(find grasplan)/config/visualization/gripper_transformations.yaml"/>
   </node>
 
 </launch>

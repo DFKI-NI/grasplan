@@ -1,7 +1,7 @@
 # node will get URDF model from param server under this name
 robot_description: robot_description
 
-# the list of links that you wish to visualise in rviz, make sure that a mesh visual is associated with each link in URDF
+# the list of links that you wish to visualize in rviz, make sure that a mesh visual is associated with each link in URDF
 required_links: ['MCP1','MCP4','MCP5','index_finger_sensor','middle_finger_sensor','wrist']
 
 # the gripper end effector link

@@ -272,7 +272,7 @@ Visualization Manager:
           Shaft Length: 1
           Shaft Radius: 0.05000000074505806
           Shape: Axes
-          Topic: /pick_object_node/visualisation/grasp_pose
+          Topic: /pick_object_node/visualization/grasp_pose
           Unreliable: false
           Value: true
         - Class: moveit_rviz_plugin/PlanningScene
@@ -430,7 +430,7 @@ Visualization Manager:
         - Class: rviz/MarkerArray
           Enabled: true
           Marker Topic: /gripper
-          Name: gripper_visualisation
+          Name: gripper_visualization
           Namespaces:
             {}
           Queue Size: 100

@@ -26,7 +26,7 @@ class GripperVisualiser:
 
         self.index_of_pose_to_highlight = -1
 
-        # publish marker array to rviz for visualising the gripper
+        # publish marker array to rviz for visualizing the gripper
         self.marker_array_pub = rospy.Publisher('gripper', MarkerArray, queue_size=1)
         # subscribe to pose array to place the gripper in multiple locations
         rospy.Subscriber('pose_array', PoseArray, self.poseArrayCB)
@@ -36,7 +36,7 @@ class GripperVisualiser:
         self.listener = tf.TransformListener()
         self.tf_gripper_to_world = None
         self.mesh_count = 0
-        rospy.loginfo('gripper visualisation node started')
+        rospy.loginfo('gripper visualization node started')
 
     def highlightCB(self, msg):
         self.index_of_pose_to_highlight = msg.data
@@ -151,6 +151,6 @@ class GripperVisualiser:
         return marker_array_msg
 
 if __name__=='__main__':
-    rospy.init_node('gripper_visualiser_node', anonymous=False)
+    rospy.init_node('gripper_visualizer_node', anonymous=False)
     gv = GripperVisualiser()
     rospy.spin()

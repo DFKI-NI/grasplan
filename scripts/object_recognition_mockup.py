@@ -176,7 +176,7 @@ class ObjRecognitionMockup:
 
     def publish_perception_fov(self, config):
         '''
-        publish a cube in rviz as visualisation marker to represent the fov of the camera
+        publish a cube in rviz as visualization marker to represent the fov of the camera
         this is done for object recognition mockup purposes
         '''
         marker_msg = Marker()

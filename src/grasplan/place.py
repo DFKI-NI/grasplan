@@ -203,7 +203,7 @@ class PlaceTools():
         # scale down plane to account for obj width and length
         plane = adjust_plane(plane, 0.05)
 
-        # publish plane as marker for visualisation purposes
+        # publish plane as marker for visualization purposes
         self.plane_vis_pub.publish(make_plane_marker_msg(self.global_reference_frame, plane))
         
         # generate random places within the plane

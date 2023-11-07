@@ -12,7 +12,7 @@ from python_qt_binding import loadUi
 from python_qt_binding.QtWidgets import QWidget, QFileDialog, QMessageBox
 
 from grasplan.rqt_grasplan.grasps import Grasps
-from grasplan.visualisation.grasp_visualizer import GraspVisualizer
+from grasplan.visualization.grasp_visualizer import GraspVisualizer
 
 from std_msgs.msg import Int8, String
 from geometry_msgs.msg import Pose, PoseArray, PoseStamped
@@ -77,7 +77,7 @@ class RqtGrasplan(Plugin):
         self.global_reference_frame = 'object'
 
         # publications
-        self.pose_highlight_pub = rospy.Publisher('/rviz_gripper_visualiser/highlight_pose', Int8, queue_size=1)
+        self.pose_highlight_pub = rospy.Publisher('/rviz_gripper_visualizer/highlight_pose', Int8, queue_size=1)
         self.object_mesh_pub = rospy.Publisher('/grasp_editor/update_object_mesh', String, queue_size=1)
         self.grasp_poses_pub = rospy.Publisher('/grasp_editor/grasp_poses', PoseArray, queue_size=1)
         self.test_pose_pub = rospy.Publisher('/test_pose', PoseStamped, queue_size=1)
@@ -98,7 +98,7 @@ class RqtGrasplan(Plugin):
         grasp_visualizer = GraspVisualizer()
         grasp_visualizer.update_mesh(object_name=self.object_class, object_pkg=obj_pkg_name)
 
-        # visualise grasps at startup
+        # visualize grasps at startup
         self.publish_grasps()
 
         ## make a connection between the qt objects and this class methods
@@ -169,7 +169,7 @@ class RqtGrasplan(Plugin):
     def publish_test_pose(self, linear=[0,0,0], angular_q=[0,0,0,1]):
         '''
         build pose stamped msg from input lists
-        publish to test topic to visualise in rviz
+        publish to test topic to visualize in rviz
         '''
         pose_stamped_msg = self.list_to_pose_stamped_msg(linear, angular_q)
         self.test_pose_pub.publish(pose_stamped_msg)
@@ -235,7 +235,7 @@ class RqtGrasplan(Plugin):
     def handle_transform_q_2_rpy_button(self):
         '''
         button that allows to explicitely change a quaternion to rpy
-        additionally it publishes the transform as pose stamped msg for visualisation purposes
+        additionally it publishes the transform as pose stamped msg for visualization purposes
         '''
         linear, angular_rpy, angular_q = self.read_transform(apply_rpy_to_q=False)
         angular_rpy = list(tf.transformations.euler_from_quaternion(angular_q))
@@ -254,17 +254,17 @@ class RqtGrasplan(Plugin):
     def handle_transform_rpy_2_q_button(self):
         '''
         button that allows to explicitely change a rpy to quaternion
-        additionally it publishes the transform as pose stamped msg for visualisation purposes
+        additionally it publishes the transform as pose stamped msg for visualization purposes
         '''
         linear, angular_rpy, angular_q = self.read_transform(apply_rpy_to_q=True)
         self.write_q_to_tf_textbox(angular_q)
-        # publish transform to rviz for visualisation purposes
+        # publish transform to rviz for visualization purposes
         self.publish_test_pose(angular_q=angular_q)
 
     def publish_grasps(self):
         '''
         publish a string topic that indicates an integer containing which grasp needs to be drawn in different color
-        publish grasps as pose array msg for visualisation purposes
+        publish grasps as pose array msg for visualization purposes
         '''
         self.pose_highlight_pub.publish(self.grasps.get_selected_grasp_index())
         self.grasp_poses_pub.publish(self.grasps.get_grasps_as_pose_array_msg())

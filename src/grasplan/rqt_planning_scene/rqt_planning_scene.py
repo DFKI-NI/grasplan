@@ -15,7 +15,7 @@ from python_qt_binding import loadUi
 from python_qt_binding.QtWidgets import QWidget, QFileDialog, QMessageBox
 
 from grasplan.rqt_grasplan.grasps import Grasps
-from grasplan.visualisation.grasp_visualizer import GraspVisualizer
+from grasplan.visualization.grasp_visualizer import GraspVisualizer
 
 from std_msgs.msg import Int8, String
 from geometry_msgs.msg import Pose, PoseArray, PoseStamped
