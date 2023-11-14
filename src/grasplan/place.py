@@ -34,13 +34,14 @@ class PlaceTools():
         self.min_dist = rospy.get_param('~min_dist', 0.2)
         self.ignore_min_dist_list = rospy.get_param('~ignore_min_dist_list', ['foo_obj'])
         self.group_name = rospy.get_param('~group_name', 'arm')
-        self.arm_name = rospy.get_param('~arm_name', 'ur10e')
+        self.arm_name = rospy.get_param('~arm_name', 'ur5')
         self.gripper_joint_names = rospy.get_param('~gripper_joint_names')
         self.gripper_joint_efforts = rospy.get_param('~gripper_joint_efforts')
         self.place_object_server_name = rospy.get_param('~place_object_server_name', 'place') # /mobipick/place
         self.gripper_release_distance = rospy.get_param('~gripper_release_distance', 0.1)
         self.planning_time = rospy.get_param('~planning_time', 20.0)
         arm_goal_tolerance = rospy.get_param('~arm_goal_tolerance', 0.01)
+        self.use_path_constraints = rospy.get_param('~use_path_constraints', False)
         self.disentangle_required = rospy.get_param('~disentangle_required', False)
         self.poses_to_go_before_place = rospy.get_param('~poses_to_go_before_place', [])
 
@@ -220,7 +221,9 @@ class PlaceTools():
 
         if action_client.wait_for_server(timeout=rospy.Duration.from_sec(2.0)):
             rospy.loginfo(f'found {self.place_object_server_name} action server')
-            goal = self.make_place_goal_msg(object_to_be_placed, support_object, place_poses_as_object_list_msg, use_path_constraints=True)
+            goal = self.make_place_goal_msg(object_to_be_placed, support_object, \
+                                            place_poses_as_object_list_msg, \
+                                            use_path_constraints=self.use_path_constraints)
 
             # allow disentangle to happen only on first place attempt, no need to do it every time
             if not override_disentangle_dont_doit:
@@ -285,9 +288,9 @@ class PlaceTools():
             return False
         return False
 
-    def make_constraints_msg(self):
+    def make_constraints_msg(self): # TODO: not yet tested on mobipick
         constraints_msg = Constraints()
-        constraints_msg.name = 'keep_bag_upright'
+        constraints_msg.name = 'keep_object_upright'
 
         now = rospy.Time.now()
         self.tf_listener.waitForTransform(self.arm_name + '_base_link', 'hand_ee_link', now, rospy.Duration(2.0))
@@ -474,11 +477,11 @@ class PlaceTools():
         # The approach motion
         # GripperTranslation pre_place_approach
         # TODO after tables demo: make robot place from the left as well by parameterizing this value
-        place_msg.pre_place_approach = self.make_gripper_translation_msg(self.arm_name + '_base_link', 0.2, vector_z=-1.0)
+        place_msg.pre_place_approach = self.make_gripper_translation_msg('mobipick/base_link', 0.2, vector_z=-1.0)
 
         # The retreat motion
         # GripperTranslation post_place_retreat
-        place_msg.post_place_retreat = self.make_gripper_translation_msg('world', 0.25, vector_z=1.0)
+        place_msg.post_place_retreat = self.make_gripper_translation_msg('mobipick/gripper_tcp', 0.25, vector_x=-1.0)
 
         # an optional list of obstacles that we have semantic information about
         # and that can be touched/pushed/moved in the course of grasping

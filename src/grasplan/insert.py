@@ -47,7 +47,7 @@ class InsertTools():
                 # disentangle cable only on first attempt
                 override_disentangle_dont_doit = False
                 override_observe_before_place_dont_doit = False
-                same_orientation_as_support_obj = False
+                same_orientation_as_support_obj = True
                 # do not disentangle if we dont go to observe arm pose
                 if not goal.observe_before_insert:
                     override_disentangle_dont_doit = True

@@ -50,9 +50,7 @@ def compute_object_height_for_insertion(object_class_tbi, support_obj_class, gap
            'klt': 0.14699999809265138,
            'multimeter': 0.04206399992108345,
            'relay': 0.10436400026082993,
-           'screwdriver': 0.034412000328302383,
-           'insole': 0.21,
-           'bag': 0.34}
+           'screwdriver': 0.034412000328302383}
     return (ohd[support_obj_class] / 2.0) + (ohd[object_class_tbi] / 2.0) + gap_between_objects
 
 def gen_insert_poses_from_obj(object_class, support_object_pose, obj_height, frame_id='map', same_orientation_as_support_obj=False):
@@ -75,8 +73,6 @@ def gen_insert_poses_from_obj(object_class, support_object_pose, obj_height, fra
     # HACK: object specific rotations
     if object_class == 'power_drill_with_grip':
         roll = - math.pi / 2.0
-    elif object_class == 'insole':
-        roll = -1.54
     
     if not same_orientation_as_support_obj:
         for i in range(7):
@@ -88,27 +84,19 @@ def gen_insert_poses_from_obj(object_class, support_object_pose, obj_height, fra
             object_pose_msg.instance_id = insert_poses_id
             object_list_msg.objects.append(copy.deepcopy(object_pose_msg))
             insert_poses_id +=1
-            if object_class == 'insole':
-                yaw += 3.14159 # ~ 180 degree
-            else:
-                yaw += 0.5 # ~ 30 degree
+            yaw += 0.5 # ~ 30 degree
     else:
         object_pose_msg.pose.orientation.x = support_object_pose.pose.orientation.x
         object_pose_msg.pose.orientation.y = support_object_pose.pose.orientation.y
         object_pose_msg.pose.orientation.z = support_object_pose.pose.orientation.z
         object_pose_msg.pose.orientation.w = support_object_pose.pose.orientation.w
-        if object_class == 'insole':
-            object_pose_msg.pose.orientation.x -= 1.54
         object_pose_msg.instance_id = insert_poses_id
         object_list_msg.objects.append(copy.deepcopy(object_pose_msg))
         insert_poses_id +=1
         q = [support_object_pose.pose.orientation.x, support_object_pose.pose.orientation.y,
              support_object_pose.pose.orientation.z, support_object_pose.pose.orientation.w]
         euler_rot = tf.transformations.euler_from_quaternion(q)
-        if object_class == 'insole':
-            q_new = tf.transformations.quaternion_from_euler(-1.54, euler_rot[1], euler_rot[2] + 3.14159) # roll + 90 degree for insole, yaw + 180 degree
-        else:
-            q_new = tf.transformations.quaternion_from_euler(euler_rot[0], euler_rot[1], euler_rot[2] + 3.14159) # yaw + 180 degree
+        q_new = tf.transformations.quaternion_from_euler(euler_rot[0], euler_rot[1], euler_rot[2] + 3.14159) # yaw + 180 degree
         object_pose_msg.pose.orientation.x = q_new[0]
         object_pose_msg.pose.orientation.y = q_new[1]
         object_pose_msg.pose.orientation.z = q_new[2]

@@ -7,8 +7,6 @@ grasp_orientations:
 object_offset_params:
   cylinder:
     side_grasp: [0.0, 0.0, 0.0]
-  tall_insole:
-    side_grasp: [0.0, 0.0, 0.0]
 
 # Pose generator (sampling) params
 spherical_sampling:

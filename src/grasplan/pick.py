@@ -81,6 +81,7 @@ class PickTools():
             rospy.loginfo('waiting for move_group action server')
             moveit_commander.roscpp_initialize(sys.argv)
             self.robot = moveit_commander.RobotCommander()
+            self.gripper = getattr(self.robot, gripper_group_name)
             self.robot.arm.set_planning_time(self.planning_time)
             self.robot.arm.set_goal_tolerance(arm_goal_tolerance)
             self.scene = moveit_commander.PlanningSceneInterface()
@@ -102,8 +103,8 @@ class PickTools():
         self.pose_selector_objects_marker_array_pub = rospy.Publisher('/pose_selector_objects', MarkerArray, queue_size=1)
 
         # subscribers
-        self.grasp_type = 'side_grasp' # TODO remove, get from actionlib
-        rospy.Subscriber('~grasp_type', String, self.graspTypeCB) # TODO remove, get from actionlib
+        self.grasp_type = 'side_grasp' # only used for simple_pregrasp_planner at the moment
+        rospy.Subscriber('~grasp_type', String, self.graspTypeCB)
 
         # offer action lib server
         self.pick_action_server = actionlib.SimpleActionServer('pick_object', PickObjectAction, self.pick_obj_action_callback, False)
@@ -229,7 +230,7 @@ class PickTools():
 
     def detach_all_objects(self):
         for attached_object in self.scene.get_attached_objects().keys():
-            self.robot.hand.detach_object(name=attached_object)
+            self.gripper.detach_object(name=attached_object)
 
     def clear_mesh_markers(self, namespace, publisher):
         marker_array_msg = MarkerArray()
