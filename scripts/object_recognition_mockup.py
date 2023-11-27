@@ -11,7 +11,7 @@ from visualization_msgs.msg import Marker
 from geometry_msgs.msg import PoseStamped
 from gazebo_msgs.msg import ModelStates
 from std_msgs.msg import String
-from grasplan.common_grasp_tools import separate_object_class_from_id
+from grasplan.tools.common import separate_object_class_from_id
 
 from cob_perception_msgs.msg import Detection, DetectionArray
 

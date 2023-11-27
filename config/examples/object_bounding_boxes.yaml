@@ -1,0 +1,26 @@
+# value taken manually from sdf model
+bounding_boxes:
+  relay:
+    box_x: 0.0575   # bb_width
+    box_y: 0.0451   # bb_length
+    box_z: 0.104364 # bb_height
+
+  multimeter:
+    box_x: 0.179500 # bb_width
+    box_y: 0.087488 # bb_length
+    box_z: 0.042064 # bb_height
+
+  screwdriver:
+    box_x: 0.245    # bb_width
+    box_y: 0.034418 # bb_length
+    box_z: 0.034418 # bb_height
+
+  klt:
+    box_x: 0.2121    # bb_width
+    box_y: 0.2121    # bb_length
+    box_z: 0.2121    # bb_height
+
+  powerdrill_with_grip:
+    box_x: 0.2121    # bb_width
+    box_y: 0.2121    # bb_length
+    box_z: 0.2121    # bb_height
