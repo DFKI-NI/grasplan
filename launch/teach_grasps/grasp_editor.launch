@@ -5,7 +5,7 @@
 
   <arg name="object_name" default="multimeter"/>
   <arg name="grasps_yaml_path" default="$(find mobipick_pick_n_place)/config/grasplan/object_grasps"/>
-  <arg name="obj_pkg_name" default="mobipick_gazebo" />
+  <arg name="obj_pkg_name" default="pbr_objects" />
 
   <!-- apply a transform to the object -->
   <arg name="object_transform_linear_x" default="0.0" />

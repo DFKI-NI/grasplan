@@ -79,7 +79,7 @@ class GraspVisualizer:
         mesh_accepted_formats = ['.dae', '.obj']
         mesh_path = None
         for mesh_accepted_format in mesh_accepted_formats:
-            mesh_path = f'package://{object_pkg}/meshes/{object_name}{mesh_accepted_format}'
+            mesh_path = f'package://{object_pkg}/meshes/{object_name}/{object_name}{mesh_accepted_format}'
             if os.path.exists(mesh_path):
                 continue
         if mesh_path is None:
