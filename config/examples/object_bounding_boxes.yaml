@@ -20,7 +20,7 @@ bounding_boxes:
     box_y: 0.2121    # bb_length
     box_z: 0.2121    # bb_height
 
-  powerdrill_with_grip:
+  power_drill_with_grip:
     box_x: 0.2121    # bb_width
     box_y: 0.2121    # bb_length
     box_z: 0.2121    # bb_height
