@@ -12,7 +12,6 @@
 
   <!-- bringup robot gripper in a zero gravity environment -->
   <include file="$(find mobipick_gazebo)/launch/robotiq_2f_140/robotiq_2f_140_floating.gazebo.launch">
-    <arg name="world_name" value="$(find grasplan)/resources/simulation/zero_gravity_empty_world.sdf"/>
     <arg name="start_paused" value="false" />
     <arg name="gripper_z" value="$(arg gripper_z)" />
     <arg name="gripper_roll" value="3.1415" />
