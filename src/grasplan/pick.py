@@ -174,7 +174,9 @@ class PickTools():
                     rospy.loginfo(f'found specific object to be picked in pose selector: {object_name}')
                 # planning scene exceptions
                 if object_name in ignore_object_list:
-                    self.scene.remove_world_object(object_name)
+                    # check if object is already in the planning scene, if so, remove it
+                    if object_name in self.scene.get_known_object_names():
+                        self.scene.remove_world_object(object_name)
                 else:
                     rospy.loginfo(f'adding object {object_name} to planning scene')
                     # add all perceived objects to planning scene (one at at time)
