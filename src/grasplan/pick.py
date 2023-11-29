@@ -253,7 +253,7 @@ class PickTools():
         '''
         rospy.loginfo(f'attempting to pick object : {object_name_as_string}')
         if len(ignore_object_list) > 0:
-            rospy.logwarn(f'the following objects: {ignore_object_list} will not be added to the planning scene')
+            rospy.logwarn(f'the following objects: {ignore_object_list} will be ignored from the planning scene')
 
         if not self.detach_all_objects_flag and len(self.scene.get_attached_objects().keys()) > 0:
             rospy.logerr('cannot pick object, another object is currently attached to the gripper already')
