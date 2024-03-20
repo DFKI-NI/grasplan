@@ -6,7 +6,7 @@ example on how to place an object using grasplan and moveit
 
 import sys
 import copy
-import tf
+import tf2_ros
 import rospy
 import actionlib
 import moveit_commander
@@ -94,7 +94,8 @@ class PlaceTools():
             self.place_action_server = actionlib.SimpleActionServer('place_object', PlaceObjectAction, self.place_obj_action_callback, False)
             self.place_action_server.start()
 
-        self.tf_listener = tf.TransformListener()
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
         
     def clear_place_poses_markers(self):
         marker_array_msg = MarkerArray()
