@@ -260,13 +260,12 @@ def get_obj_from_planning_scene(obj_name: str, planning_scene: PlanningScene) ->
         raise ValueError(f"Object '{obj_name}' not in planning scene")
     return planning_scene.get_objects([obj_name])[obj_name]
 
-# TODO: consider shape_msgs/Plane instead of 4 points
 def obj_to_plane(support_obj: str, planning_scene: PlanningScene, offset: float = 0.001) -> List[Point]:
     """
-    Get a top surface plane from an object in the MoveIt planning scene.
- 
-    NOTE: Currently only works for boxes parallel to the XY plane.
+    Get a surface plane from an object in the MoveIt planning scene.
 
+    NOTE: Currently only works for boxes
+ 
     Parameters
     ----------
     support_obj : str
@@ -275,36 +274,26 @@ def obj_to_plane(support_obj: str, planning_scene: PlanningScene, offset: float 
         The MoveIt planning scene.
     offset : float, optional
         The offset from the MoveIt object and the created plane. Defaults to 0.001.
-
+ 
     Returns
     -------
     List[Point]
-        A list of four points representing the corners of the top surface plane.
+        A list of four points (top right, top left, buttom left, buttom right) 
+        representing the corners of the top surface plane.
     """
     collision_object = get_obj_from_planning_scene(support_obj, planning_scene)
 
     if len(collision_object.primitives) != 1 or collision_object.primitives[0].type != 1:
         raise ValueError(f"Object '{support_obj}' is not a box")
      
-    rotation_angle = tf.transformations.euler_from_quaternion(
-        [collision_object.pose.orientation.x, collision_object.pose.orientation.y,
-        collision_object.pose.orientation.z, collision_object.pose.orientation.w]
-    )
-
-    # TODO: this should be checked in a central place and not in each function
-    if rotation_angle[0] != 0 or rotation_angle[1] != 0:
-        raise ValueError(f"Object '{support_obj}' is not aligned with the XY plane")
-
     half_width = collision_object.primitives[0].dimensions[0] / 2
     half_depth = collision_object.primitives[0].dimensions[1] / 2
     
-    center_point = [collision_object.pose.position.x, collision_object.pose.position.y, collision_object.pose.position.z * 2]
+    corners = [(half_width, half_depth), (-half_width, half_depth), (-half_width, -half_depth), (half_width, -half_depth)]
 
-    corner_offsets = [(half_width, half_depth), (-half_width, half_depth), (-half_width, -half_depth), (half_width, -half_depth)]
+    half_height = collision_object.primitives[0].dimensions[2] / 2
 
-    return [Point(center_point[0] + dx * math.cos(rotation_angle[2]) - dy * math.sin(rotation_angle[2]),
-             center_point[1] + dx * math.sin(rotation_angle[2]) + dy * math.cos(rotation_angle[2]),
-             center_point[2] + offset) for dx, dy in corner_offsets]
+    return [Point(dx, dy, half_height + offset) for dx, dy in corners]
 
 def attached_obj_height(attached_obj: str, planning_scene: PlanningScene, offset: float = 0.001) -> float:
     """
@@ -329,7 +318,7 @@ def attached_obj_height(attached_obj: str, planning_scene: PlanningScene, offset
     if any('power_drill_with_grip' in key for key in planning_scene.get_attached_objects()):
         dimension_index = 1
     half_height_att_obj = list(planning_scene.get_attached_objects().values())[0].object.primitives[0].dimensions[dimension_index] / 2
-    return half_height_att_obj + collision_object.pose.position.z * 2 + offset
+    return half_height_att_obj + collision_object.primitives[0].dimensions[2] / 2 + offset
 
 # Example usage
 if __name__ == '__main__':

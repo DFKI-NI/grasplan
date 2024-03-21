@@ -17,7 +17,8 @@ from grasplan.tools.common import separate_object_class_from_id
 from grasplan.tools.moveit_errors import print_moveit_error
 from std_srvs.srv import Empty, SetBool, Trigger
 from object_pose_msgs.msg import ObjectList
-from geometry_msgs.msg import Vector3Stamped, PoseStamped
+import tf2_geometry_msgs
+from geometry_msgs.msg import Vector3Stamped, PoseStamped, TransformStamped, PointStamped, Point, Transform
 from moveit_msgs.msg import PlaceAction, PlaceGoal, PlaceLocation, GripperTranslation, PlanningOptions, Constraints, OrientationConstraint
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from visualization_msgs.msg import Marker
@@ -25,6 +26,8 @@ from grasplan.msg import PlaceObjectAction, PlaceObjectResult
 from moveit_msgs.msg import MoveItErrorCodes
 from pose_selector.srv import GetPoses
 from visualization_msgs.msg import Marker, MarkerArray
+from typing import List
+from std_msgs.msg import Header
 
 class PlaceTools():
     def __init__(self, action_server_required=True):
@@ -167,6 +170,40 @@ class PlaceTools():
         else:
             self.place_action_server.set_aborted(PlaceObjectResult(success=False))
 
+    def transform_obj_list(self, obj_list: ObjectList, target_frame_id: str) -> ObjectList:
+        """Transforms an object list from a source frame to a target frame."""
+        if self.tf_buffer.can_transform(obj_list.header.frame_id, target_frame_id, rospy.Time(0)):
+            for obj in obj_list.objects:
+                source_pose = PoseStamped(header=obj_list.header, pose=obj.pose)
+                tf = self.tf_buffer.lookup_transform(target_frame_id, obj_list.header.frame_id, rospy.Time(0))
+                target_pose = tf2_geometry_msgs.do_transform_pose(source_pose, tf)
+                obj.pose = target_pose.pose
+        else:
+            raise RuntimeError(f"Error while transformin obj_list, no tf from {target_frame_id} -> {obj_list.header.frame_id}")
+        obj_list.header.frame_id = target_frame_id
+        return obj_list
+    
+    def transform_points(self, points: List[Point], target_frame_id: str, source_frame_id: str) -> List[Point]:
+        """Transforms a list of points from a source frame to a target frame."""
+        if self.tf_buffer.can_transform(target_frame_id, source_frame_id, rospy.Time(0)):
+            transformed_points = []
+            for point in points:
+                source_point = PointStamped(header=Header(frame_id=source_frame_id), point=point) 
+                tf = self.tf_buffer.lookup_transform(target_frame_id, source_frame_id, rospy.Time(0))
+                target_point = tf2_geometry_msgs.do_transform_point(source_point, tf)
+                transformed_points.append(target_point.point)
+        else:
+            raise RuntimeError(f"Error while transforming points, no tf from {target_frame_id} -> {source_frame_id}")
+        return transformed_points
+
+    def add_planning_scene_objects(self, planning_scene) -> None:
+        """Adds all objects in the planning scene to the local tf buffer as static transforms."""
+        for obj_name in planning_scene.get_known_object_names():
+            obj = planning_scene.get_objects([obj_name])[obj_name]
+            tf = TransformStamped(header=Header(frame_id="map"), child_frame_id=obj_name,
+                     transform=Transform(translation=obj.pose.position, rotation=obj.pose.orientation))
+            self.tf_buffer.set_transform_static(tf, "grasplan")
+
     def place_object(self, support_object, observe_before_place=False, number_of_poses=5,\
                      override_disentangle_dont_doit=False, override_observe_before_place_dont_doit=False):
         '''
@@ -182,6 +219,9 @@ class PlaceTools():
         # deduce object_to_be_placed by querying which object the gripper currently has attached to its gripper
         object_to_be_placed = list(self.scene.get_attached_objects().keys())[0]
         rospy.loginfo(f'received request to place the object that the robot is currently holding : {object_to_be_placed}')
+
+        # TODO: find a better place for adding the static transforms, it shouldn't be done for each place
+        self.add_planning_scene_objects(self.scene)
 
         # clear pose selector before starting to place in case some data is left over from previous runs
         self.place_pose_selector_clear_srv()
@@ -206,15 +246,17 @@ class PlaceTools():
         plane = adjust_plane(plane, -0.15, -0.15)
 
         # publish plane as marker for visualization purposes
-        self.plane_vis_pub.publish(make_plane_marker_msg(self.global_reference_frame, plane))
+        self.plane_vis_pub.publish(make_plane_marker_msg(self.global_reference_frame, self.transform_points(plane, self.global_reference_frame, support_object)))
         
         # generate random places within the plane
         object_class_tbp = separate_object_class_from_id(object_to_be_placed)[0]
-        place_poses_as_object_list_msg = gen_place_poses_from_plane(object_class_tbp, support_object, plane, self.scene, \
-                frame_id=self.global_reference_frame, number_of_poses=number_of_poses, \
+        local_place_poses = gen_place_poses_from_plane(object_class_tbp, support_object, plane, self.scene, \
+                frame_id=support_object, number_of_poses=number_of_poses, \
                 min_dist=self.min_dist, ignore_min_dist_list=self.ignore_min_dist_list)
+        
+        global_place_poses = self.transform_obj_list(local_place_poses, self.global_reference_frame)
 
-        self.place_poses_pub.publish(place_poses_as_object_list_msg)
+        self.place_poses_pub.publish(global_place_poses)
 
         # clear octomap before placing, this is experimental and not sure is needed
         rospy.logwarn('clearing octomap')
@@ -223,7 +265,7 @@ class PlaceTools():
         if action_client.wait_for_server(timeout=rospy.Duration.from_sec(2.0)):
             rospy.loginfo(f'found {self.place_object_server_name} action server')
             goal = self.make_place_goal_msg(object_to_be_placed, support_object, \
-                                            place_poses_as_object_list_msg, \
+                                            global_place_poses, \
                                             use_path_constraints=self.use_path_constraints)
 
             # allow disentangle to happen only on first place attempt, no need to do it every time
