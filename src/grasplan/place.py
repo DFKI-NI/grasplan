@@ -202,7 +202,7 @@ class PlaceTools():
         plane = obj_to_plane(support_object, self.scene)
 
         # scale down plane to account for obj width and length
-        plane = adjust_plane(plane, 0.05)
+        plane = adjust_plane(plane, -0.15, -0.15)
 
         # publish plane as marker for visualization purposes
         self.plane_vis_pub.publish(make_plane_marker_msg(self.global_reference_frame, plane))
