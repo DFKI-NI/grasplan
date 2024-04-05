@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+
 def separate_object_class_from_id(anchored_object_as_string):
     '''
     e.g. input  : relay_1
@@ -14,12 +15,13 @@ def separate_object_class_from_id(anchored_object_as_string):
             break
     chars_before_number = anchored_object_as_string[:-count]
     try:
-        object_id = int(anchored_object_as_string[-count+1:])
+        object_id = int(anchored_object_as_string[-count + 1 :])
         return chars_before_number, object_id
     except:
         return anchored_object_as_string, None
 
-class objectToPick():
+
+class objectToPick:
     def __init__(self, obj_class_and_id_as_string=None):
         '''
         this class is meant to be used as a struct that holds info on:

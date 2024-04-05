@@ -9,11 +9,13 @@ from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 from grasplan.tools.common import separate_object_class_from_id
 
+
 class GraspPlanningCore:
     '''
     Abstract class that defines classes to interact with a grasp planning module
     It cannot be used by itself, you need to inherit from it and implement virtual methods
     '''
+
     def __init__(self):
 
         # parameters
@@ -82,11 +84,17 @@ class GraspPlanningCore:
         # The internal posture of the hand for the pre-grasp
         # only positions are used
         object_class = separate_object_class_from_id(object_name)[0]
-        g.pre_grasp_posture = self.make_gripper_trajectory(self.gripper_open_distance, self.distance_gripper_open_per_obj, object_class=object_class)
+        g.pre_grasp_posture = self.make_gripper_trajectory(
+            self.gripper_open_distance, self.distance_gripper_open_per_obj, object_class=object_class
+        )
 
         # The approach direction to take before picking an object
-        g.pre_grasp_approach = self.make_gripper_translation_msg(end_effector_frame,
-            min_dist=self.pre_grasp_approach_min_dist, desired=self.pre_grasp_approach_desired, axis=self.pre_grasp_approach_axis)
+        g.pre_grasp_approach = self.make_gripper_translation_msg(
+            end_effector_frame,
+            min_dist=self.pre_grasp_approach_min_dist,
+            desired=self.pre_grasp_approach_desired,
+            axis=self.pre_grasp_approach_axis,
+        )
 
         # The position of the end-effector for the grasp.  This is the pose of
         # the 'parent_link' of the end-effector, not actually the pose of any
@@ -96,11 +104,17 @@ class GraspPlanningCore:
 
         # The internal posture of the hand for the grasp
         # positions and efforts are used
-        g.grasp_posture = self.make_gripper_trajectory(self.gripper_close_distance, self.distance_gripper_close_per_obj, object_class=object_class)
+        g.grasp_posture = self.make_gripper_trajectory(
+            self.gripper_close_distance, self.distance_gripper_close_per_obj, object_class=object_class
+        )
 
         # The retreat direction to take after a grasp has been completed (object is attached)
-        g.post_grasp_retreat = self.make_gripper_translation_msg(self.post_grasp_retreat_frame_id,
-            min_dist=self.post_grasp_retreat_min_dist, desired=self.post_grasp_retreat_desired, axis=self.post_grasp_retreat_axis)
+        g.post_grasp_retreat = self.make_gripper_translation_msg(
+            self.post_grasp_retreat_frame_id,
+            min_dist=self.post_grasp_retreat_min_dist,
+            desired=self.post_grasp_retreat_desired,
+            axis=self.post_grasp_retreat_axis,
+        )
 
         # the maximum contact force to use while grasping (<=0 to disable)
         g.max_contact_force = self.max_contact_force

@@ -13,8 +13,8 @@ from geometry_msgs.msg import Pose
 
 import logging
 
-class TestGrasps(unittest.TestCase):
 
+class TestGrasps(unittest.TestCase):
     def get_identity_grasp_msg(self):
         grasp = Pose()
         grasp.position.x = 0.0
@@ -27,10 +27,7 @@ class TestGrasps(unittest.TestCase):
         return copy.deepcopy(grasp)
 
     def pose_to_quaternion_list(self, pose):
-        q_list = [pose.orientation.x,
-                  pose.orientation.y,
-                  pose.orientation.z,
-                  pose.orientation.w]
+        q_list = [pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w]
         return q_list
 
     def get_grasps_object(self):
@@ -125,7 +122,7 @@ class TestGrasps(unittest.TestCase):
         self.assertEquals(grasp_index, 0)
 
     def test_replace_grasp_by_index(self):
-        log= logging.getLogger( "TestGrasps.test_replace_grasp_by_index" )
+        log = logging.getLogger("TestGrasps.test_replace_grasp_by_index")
         log.info('hola')
         g = self.get_grasps_object()
         grasp = g.get_grasp_by_index(0)
@@ -147,15 +144,15 @@ class TestGrasps(unittest.TestCase):
         n_grasp.position.y = 0.0
         n_grasp.position.z = 0.0
         # ---
-        n_grasp.orientation.x = q[0] # passes test
+        n_grasp.orientation.x = q[0]  # passes test
         n_grasp.orientation.y = q[1]
         n_grasp.orientation.z = q[2]
         n_grasp.orientation.w = q[3]
         # ---
-        #n_grasp.orientation.x = desired_q[0] # fails test
-        #n_grasp.orientation.y = desired_q[1]
-        #n_grasp.orientation.z = desired_q[2]
-        #n_grasp.orientation.w = desired_q[3]
+        # n_grasp.orientation.x = desired_q[0] # fails test
+        # n_grasp.orientation.y = desired_q[1]
+        # n_grasp.orientation.z = desired_q[2]
+        # n_grasp.orientation.w = desired_q[3]
         # ---
         self.assertEquals(desired_q, list(q))
         g.add_grasp(g.transform_grasp(self.get_identity_grasp_msg(), angular_rpy=[0.0, math.radians(90.0), 0.0]))
@@ -179,9 +176,11 @@ class TestGrasps(unittest.TestCase):
         g.transform_selected_grasps(angular_rpy=[0.0, math.radians(45.0), 0.0], replace=True)
         g.undo()
         grasp = g.get_selected_grasp()
-        q = [0.0, 0.3826834323650898, 0.0, 0.9238795325112867] # q corresponds to a 45 deg rotation around y axis
+        q = [0.0, 0.3826834323650898, 0.0, 0.9238795325112867]  # q corresponds to a 45 deg rotation around y axis
         self.assertEquals(self.pose_to_quaternion_list(grasp), q)
+
 
 if __name__ == '__main__':
     import rostest
+
     rostest.rosrun(PKG, 'test_g', TestGrasps)

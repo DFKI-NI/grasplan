@@ -16,6 +16,7 @@ import copy
 from visualization_msgs.msg import Marker, MarkerArray
 from geometry_msgs.msg import PoseStamped
 
+
 class PlanningSceneVizSettings:
     # default settings
     text_on = True
@@ -28,6 +29,7 @@ class PlanningSceneVizSettings:
     yaml_path_to_read = ''
     yaml_path_to_write = ''
     publish_tf = True
+
 
 class PlanningSceneViz:
     def __init__(self, settings, load_boxes_from_yaml=True):
@@ -77,30 +79,58 @@ class PlanningSceneViz:
             if box['scene_name'] == scene_name:
                 for box_bkp in self.box_list_dictionary_bkp:
                     if box_bkp['scene_name'] == scene_name:
-                        self.modify_box(scene_name, modify_box_position_x=True, box_position_x=box_bkp['box_position_x'], modify_box_position_y=True, box_position_y=box_bkp['box_position_y'],
-                            modify_box_position_z=True, box_position_z=box_bkp['box_position_z'],
-                            modify_box_orientation_x=True, box_orientation_x=box_bkp['box_orientation_x'],
-                            modify_box_orientation_y=True, box_orientation_y=box_bkp['box_orientation_y'],
-                            modify_box_orientation_z=True, box_orientation_z=box_bkp['box_orientation_z'],
-                            modify_box_orientation_w=True, box_orientation_w=box_bkp['box_orientation_w'],
-                            modify_box_x_dimension=True, box_x_dimension=box_bkp['box_x_dimension'],
-                            modify_box_y_dimension=True, box_y_dimension=box_bkp['box_y_dimension'],
-                            modify_box_z_dimension=True, box_z_dimension=box_bkp['box_z_dimension'])
+                        self.modify_box(
+                            scene_name,
+                            modify_box_position_x=True,
+                            box_position_x=box_bkp['box_position_x'],
+                            modify_box_position_y=True,
+                            box_position_y=box_bkp['box_position_y'],
+                            modify_box_position_z=True,
+                            box_position_z=box_bkp['box_position_z'],
+                            modify_box_orientation_x=True,
+                            box_orientation_x=box_bkp['box_orientation_x'],
+                            modify_box_orientation_y=True,
+                            box_orientation_y=box_bkp['box_orientation_y'],
+                            modify_box_orientation_z=True,
+                            box_orientation_z=box_bkp['box_orientation_z'],
+                            modify_box_orientation_w=True,
+                            box_orientation_w=box_bkp['box_orientation_w'],
+                            modify_box_x_dimension=True,
+                            box_x_dimension=box_bkp['box_x_dimension'],
+                            modify_box_y_dimension=True,
+                            box_y_dimension=box_bkp['box_y_dimension'],
+                            modify_box_z_dimension=True,
+                            box_z_dimension=box_bkp['box_z_dimension'],
+                        )
                         return
         rospy.logerr(f'could not found scene name: {scene_name}')
 
-    def modify_box(self, scene_name,
-                   modify_box_position_x=False, box_position_x=0.0,
-                   modify_box_position_y=False, box_position_y=0.0,
-                   modify_box_position_z=False, box_position_z=0.0,
-                   modify_box_orientation_x=False, box_orientation_x=0.0,
-                   modify_box_orientation_y=False, box_orientation_y=0.0,
-                   modify_box_orientation_z=False, box_orientation_z=0.0,
-                   modify_box_orientation_w=False, box_orientation_w=1.0,
-                   modify_box_x_dimension=False, box_x_dimension=1.0,
-                   modify_box_y_dimension=False, box_y_dimension=1.0,
-                   modify_box_z_dimension=False, box_z_dimension=1.0,
-                   modify_frame_id=False, new_frame_id='world'):
+    def modify_box(
+        self,
+        scene_name,
+        modify_box_position_x=False,
+        box_position_x=0.0,
+        modify_box_position_y=False,
+        box_position_y=0.0,
+        modify_box_position_z=False,
+        box_position_z=0.0,
+        modify_box_orientation_x=False,
+        box_orientation_x=0.0,
+        modify_box_orientation_y=False,
+        box_orientation_y=0.0,
+        modify_box_orientation_z=False,
+        box_orientation_z=0.0,
+        modify_box_orientation_w=False,
+        box_orientation_w=1.0,
+        modify_box_x_dimension=False,
+        box_x_dimension=1.0,
+        modify_box_y_dimension=False,
+        box_y_dimension=1.0,
+        modify_box_z_dimension=False,
+        box_z_dimension=1.0,
+        modify_frame_id=False,
+        new_frame_id='world',
+    ):
         found = False
         for box in self.box_list_dictionary:
             if box['scene_name'] == scene_name:
@@ -173,7 +203,9 @@ class PlanningSceneViz:
                 input_pose.pose.orientation.z = box['box_orientation_z']
                 input_pose.pose.orientation.w = box['box_orientation_w']
                 # Wait for the transform to be available
-                self.listener.waitForTransform(target_frame, input_pose.header.frame_id, rospy.Time(), rospy.Duration(1.0))
+                self.listener.waitForTransform(
+                    target_frame, input_pose.header.frame_id, rospy.Time(), rospy.Duration(1.0)
+                )
                 transformed_pose = self.listener.transformPose(target_frame, input_pose)
                 return transformed_pose
 
@@ -198,15 +230,25 @@ class PlanningSceneViz:
                     qw = new_pose.pose.orientation.w
                     # next line is useful for debugging purposes
                     # self.broadcast_tf(x, y, z, qx, qy, qz, qw, target_frame_dic[key], f'{key}_debug')
-                    self.modify_box(box['scene_name'],
-                        modify_box_position_x=True, box_position_x=round(float(new_pose.pose.position.x), 3),
-                        modify_box_position_y=True, box_position_y=round(float(new_pose.pose.position.y), 3),
-                        modify_box_position_z=True, box_position_z=round(float(new_pose.pose.position.z), 3),
-                        modify_box_orientation_x=True, box_orientation_x=round(float(new_pose.pose.orientation.x), 4),
-                        modify_box_orientation_y=True, box_orientation_y=round(float(new_pose.pose.orientation.y), 4),
-                        modify_box_orientation_z=True, box_orientation_z=round(float(new_pose.pose.orientation.z), 4),
-                        modify_box_orientation_w=True, box_orientation_w=round(float(new_pose.pose.orientation.w), 4),
-                        modify_frame_id=True, new_frame_id=new_pose.header.frame_id)
+                    self.modify_box(
+                        box['scene_name'],
+                        modify_box_position_x=True,
+                        box_position_x=round(float(new_pose.pose.position.x), 3),
+                        modify_box_position_y=True,
+                        box_position_y=round(float(new_pose.pose.position.y), 3),
+                        modify_box_position_z=True,
+                        box_position_z=round(float(new_pose.pose.position.z), 3),
+                        modify_box_orientation_x=True,
+                        box_orientation_x=round(float(new_pose.pose.orientation.x), 4),
+                        modify_box_orientation_y=True,
+                        box_orientation_y=round(float(new_pose.pose.orientation.y), 4),
+                        modify_box_orientation_z=True,
+                        box_orientation_z=round(float(new_pose.pose.orientation.z), 4),
+                        modify_box_orientation_w=True,
+                        box_orientation_w=round(float(new_pose.pose.orientation.w), 4),
+                        modify_frame_id=True,
+                        new_frame_id=new_pose.header.frame_id,
+                    )
 
     def symbolic_to_rgb_color(self, symbolic_color):
         if symbolic_color == 'green':
@@ -232,16 +274,28 @@ class PlanningSceneViz:
         self.marker_id_count += 1
         marker.text = text
         marker.pose.position.z += marker.scale.z / 2.0 + 0.1
-        marker.scale.z = 0.2 # text size
+        marker.scale.z = 0.2  # text size
         marker.color.r = 1.0
         marker.color.g = 1.0
         marker.color.b = 1.0
         return marker
 
-    def make_marker(self, scene_name, frame_id, origin_x, origin_y, origin_z,
-                    orientation_x, orientation_y, orientation_z, orientation_w,
-                    scale_x, scale_y, scale_z):
-        rgb_color_list = self.symbolic_to_rgb_color('green') # default
+    def make_marker(
+        self,
+        scene_name,
+        frame_id,
+        origin_x,
+        origin_y,
+        origin_z,
+        orientation_x,
+        orientation_y,
+        orientation_z,
+        orientation_w,
+        scale_x,
+        scale_y,
+        scale_z,
+    ):
+        rgb_color_list = self.symbolic_to_rgb_color('green')  # default
         if scene_name in self.settings.colors:
             rgb_color_list = self.symbolic_to_rgb_color(self.settings.colors[scene_name])
         marker = Marker()
@@ -294,7 +348,7 @@ class PlanningSceneViz:
 
     def broadcast_tf(self, x, y, z, qx, qy, qz, qw, parent_frame_id, child_frame_id):
         if self.br:
-            self.br.sendTransform((x,y,z), (qx, qy, qz, qw), rospy.Time.now(), child_frame_id, parent_frame_id)
+            self.br.sendTransform((x, y, z), (qx, qy, qz, qw), rospy.Time.now(), child_frame_id, parent_frame_id)
         else:
             rospy.logerr('cannot broadcast to tf')
 
@@ -304,9 +358,17 @@ class PlanningSceneViz:
         does not take into account ignore_set
         '''
         for box in self.box_list_dictionary:
-            self.broadcast_tf(box['box_position_x'], box['box_position_y'], box['box_position_z'],\
-                box['box_orientation_x'], box['box_orientation_y'], box['box_orientation_z'], box['box_orientation_w'],\
-                box['frame_id'], box['scene_name'])
+            self.broadcast_tf(
+                box['box_position_x'],
+                box['box_position_y'],
+                box['box_position_z'],
+                box['box_orientation_x'],
+                box['box_orientation_y'],
+                box['box_orientation_z'],
+                box['box_orientation_w'],
+                box['frame_id'],
+                box['scene_name'],
+            )
 
     def publish_boxes(self):
         self.delete_all_markers()
@@ -321,28 +383,39 @@ class PlanningSceneViz:
         for box in self.box_list_dictionary:
             if box['scene_name'] in ignore_set:
                 continue
-            marker = self.make_marker(box['scene_name'],
-                                box['frame_id'],
-                                box['box_position_x'],
-                                box['box_position_y'],
-                                box['box_position_z'],
-                                box['box_orientation_x'],
-                                box['box_orientation_y'],
-                                box['box_orientation_z'],
-                                box['box_orientation_w'],
-                                box['box_x_dimension'],
-                                box['box_y_dimension'],
-                                box['box_z_dimension'])
+            marker = self.make_marker(
+                box['scene_name'],
+                box['frame_id'],
+                box['box_position_x'],
+                box['box_position_y'],
+                box['box_position_z'],
+                box['box_orientation_x'],
+                box['box_orientation_y'],
+                box['box_orientation_z'],
+                box['box_orientation_w'],
+                box['box_x_dimension'],
+                box['box_y_dimension'],
+                box['box_z_dimension'],
+            )
             marker_array_msg.markers.append(marker)
             if self.settings.text_on:
                 text_marker = self.make_text_marker(copy.deepcopy(marker), box['scene_name'])
                 marker_array_msg.markers.append(text_marker)
             if self.settings.publish_tf:
-                self.broadcast_tf(box['box_position_x'], box['box_position_y'], box['box_position_z'],\
-                    box['box_orientation_x'], box['box_orientation_y'], box['box_orientation_z'], box['box_orientation_w'],\
-                    box['frame_id'], box['scene_name'])
+                self.broadcast_tf(
+                    box['box_position_x'],
+                    box['box_position_y'],
+                    box['box_position_z'],
+                    box['box_orientation_x'],
+                    box['box_orientation_y'],
+                    box['box_orientation_z'],
+                    box['box_orientation_w'],
+                    box['frame_id'],
+                    box['scene_name'],
+                )
 
         self.marker_array_pub.publish(marker_array_msg)
+
 
 if __name__ == '__main__':
     rospy.init_node('planning_scene_publisher', anonymous=False)

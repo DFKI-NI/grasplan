@@ -41,19 +41,25 @@ def make_plane_marker_msg(ref_frame, plane):
     marker_msg.points.append(plane[3])
     marker_msg.points.append(plane[0])
     marker_msg.scale = Vector3(1.0, 1.0, 1.0)
-    marker_msg.color = ColorRGBA(1.0, 0.61, 0.16, 1.0) # orange
+    marker_msg.color = ColorRGBA(1.0, 0.61, 0.16, 1.0)  # orange
     return marker_msg
+
 
 def compute_object_height_for_insertion(object_class_tbi, support_obj_class, gap_between_objects=0.02):
     # ohd : objects height dictionary, object_class_tbi : object class to be inserted
-    ohd = {'power_drill_with_grip': 0.2205359935760498,
-           'klt': 0.14699999809265138,
-           'multimeter': 0.04206399992108345,
-           'relay': 0.10436400026082993,
-           'screwdriver': 0.034412000328302383}
+    ohd = {
+        'power_drill_with_grip': 0.2205359935760498,
+        'klt': 0.14699999809265138,
+        'multimeter': 0.04206399992108345,
+        'relay': 0.10436400026082993,
+        'screwdriver': 0.034412000328302383,
+    }
     return (ohd[support_obj_class] / 2.0) + (ohd[object_class_tbi] / 2.0) + gap_between_objects
 
-def gen_insert_poses_from_obj(object_class, support_object_pose, obj_height, frame_id='map', same_orientation_as_support_obj=False):
+
+def gen_insert_poses_from_obj(
+    object_class, support_object_pose, obj_height, frame_id='map', same_orientation_as_support_obj=False
+):
     '''
     if same_orientation_as_support_obj is True then the object is aligned with the support object (e.g. box)
     if same_orientation_as_support_obj is False then 360 degree orientations are used to place the object (can be used if first time fails)
@@ -72,7 +78,7 @@ def gen_insert_poses_from_obj(object_class, support_object_pose, obj_height, fra
     yaw = 0.0
     # HACK: object specific rotations
     if object_class == 'power_drill_with_grip':
-        roll = - math.pi / 2.0
+        roll = -math.pi / 2.0
 
     if not same_orientation_as_support_obj:
         for i in range(7):
@@ -83,8 +89,8 @@ def gen_insert_poses_from_obj(object_class, support_object_pose, obj_height, fra
             object_pose_msg.pose.orientation.w = angular_q[3]
             object_pose_msg.instance_id = insert_poses_id
             object_list_msg.objects.append(copy.deepcopy(object_pose_msg))
-            insert_poses_id +=1
-            yaw += 0.5 # ~ 30 degree
+            insert_poses_id += 1
+            yaw += 0.5  # ~ 30 degree
     else:
         object_pose_msg.pose.orientation.x = support_object_pose.pose.orientation.x
         object_pose_msg.pose.orientation.y = support_object_pose.pose.orientation.y
@@ -92,19 +98,26 @@ def gen_insert_poses_from_obj(object_class, support_object_pose, obj_height, fra
         object_pose_msg.pose.orientation.w = support_object_pose.pose.orientation.w
         object_pose_msg.instance_id = insert_poses_id
         object_list_msg.objects.append(copy.deepcopy(object_pose_msg))
-        insert_poses_id +=1
-        q = [support_object_pose.pose.orientation.x, support_object_pose.pose.orientation.y,
-             support_object_pose.pose.orientation.z, support_object_pose.pose.orientation.w]
+        insert_poses_id += 1
+        q = [
+            support_object_pose.pose.orientation.x,
+            support_object_pose.pose.orientation.y,
+            support_object_pose.pose.orientation.z,
+            support_object_pose.pose.orientation.w,
+        ]
         euler_rot = tf.transformations.euler_from_quaternion(q)
-        q_new = tf.transformations.quaternion_from_euler(euler_rot[0], euler_rot[1], euler_rot[2] + 3.14159) # yaw + 180 degree
+        q_new = tf.transformations.quaternion_from_euler(
+            euler_rot[0], euler_rot[1], euler_rot[2] + 3.14159
+        )  # yaw + 180 degree
         object_pose_msg.pose.orientation.x = q_new[0]
         object_pose_msg.pose.orientation.y = q_new[1]
         object_pose_msg.pose.orientation.z = q_new[2]
         object_pose_msg.pose.orientation.w = q_new[3]
         object_pose_msg.instance_id = insert_poses_id
         object_list_msg.objects.append(copy.deepcopy(object_pose_msg))
-        insert_poses_id +=1
+        insert_poses_id += 1
     return object_list_msg
+
 
 def well_separated(x_y_list, candidate_x, candidate_y, min_dist=0.2):
     if len(x_y_list) == 0:
@@ -117,14 +130,25 @@ def well_separated(x_y_list, candidate_x, candidate_y, min_dist=0.2):
         return True
     return False
 
-def gen_place_poses_from_plane(object_class: str, support_object:str, plane: List[str], planning_scene: PlanningScene, frame_id:str = "map",
-                                number_of_poses: int = 10, min_dist: float = 0.2, ignore_min_dist_list: List[str] = []):
+
+def gen_place_poses_from_plane(
+    object_class: str,
+    support_object: str,
+    plane: List[str],
+    planning_scene: PlanningScene,
+    frame_id: str = "map",
+    number_of_poses: int = 10,
+    min_dist: float = 0.2,
+    ignore_min_dist_list: List[str] = [],
+):
     '''
     random sample poses within a plane and populate object list msg with the result
     '''
     if number_of_poses > 100:
         min_dist = 0.03
-        rospy.logwarn(f'number of poses is greater than 100, min_dist will be set to {0.03} instead of desired value of {min_dist}')
+        rospy.logwarn(
+            f'number of poses is greater than 100, min_dist will be set to {0.03} instead of desired value of {min_dist}'
+        )
     object_list_msg = ObjectList()
     object_list_msg.header.frame_id = frame_id
     x_y_list = []
@@ -142,7 +166,7 @@ def gen_place_poses_from_plane(object_class: str, support_object:str, plane: Lis
             if well_separated(x_y_list, candidate_x, candidate_y, min_dist=min_dist):
                 break
             count += 1
-            if count > 50000: # avoid an infinite loop, cap the max attempts
+            if count > 50000:  # avoid an infinite loop, cap the max attempts
                 rospy.logwarn(f'Could not generate poses too much separated from each other, min dist : {min_dist}')
                 break
         x_y_list.append([candidate_x, candidate_y])
@@ -157,7 +181,7 @@ def gen_place_poses_from_plane(object_class: str, support_object:str, plane: Lis
         yaw = round(random.uniform(0.0, math.pi), 4)
         # HACK: object specific rotations
         if object_class == 'power_drill_with_grip':
-            roll = - math.pi / 2.0
+            roll = -math.pi / 2.0
         if number_of_poses > 20:
             rospy.loginfo('covering 360 angle for each pose')
             yaw = 0.0
@@ -169,8 +193,8 @@ def gen_place_poses_from_plane(object_class: str, support_object:str, plane: Lis
                 object_pose_msg.pose.orientation.w = angular_q[3]
                 object_pose_msg.instance_id = place_poses_id
                 object_list_msg.objects.append(copy.deepcopy(object_pose_msg))
-                place_poses_id +=1
-                yaw += 0.5 # ~ 30 degree
+                place_poses_id += 1
+                yaw += 0.5  # ~ 30 degree
         else:
             angular_q = tf.transformations.quaternion_from_euler(roll, pitch, yaw)
             object_pose_msg.pose.orientation.x = angular_q[0]
@@ -179,17 +203,14 @@ def gen_place_poses_from_plane(object_class: str, support_object:str, plane: Lis
             object_pose_msg.pose.orientation.w = angular_q[3]
             object_pose_msg.instance_id = place_poses_id
             object_list_msg.objects.append(copy.deepcopy(object_pose_msg))
-            place_poses_id +=1
+            place_poses_id += 1
     return object_list_msg
+
 
 # TODO: consider using shape_msgs/Plane instead of 4 points
 def adjust_plane(
-        plane: List[Point],
-        x_extend: float = 0.0,
-        y_extend: float = 0.0,
-        x_offset: float = 0.0,
-        y_offset: float = 0.0
-    ) -> List[Point]:
+    plane: List[Point], x_extend: float = 0.0, y_extend: float = 0.0, x_offset: float = 0.0, y_offset: float = 0.0
+) -> List[Point]:
     """
     Adjust the dimensions and position of a plane.
 
@@ -224,16 +245,20 @@ def adjust_plane(
     min_x, max_x = min(p.x for p in plane), max(p.x for p in plane)
     min_y, max_y = min(p.y for p in plane), max(p.y for p in plane)
 
-    return [Point(min_x - x_extend, min_y - y_extend, plane[0].z),
-            Point(max_x + x_extend, min_y - y_extend, plane[0].z),
-            Point(max_x + x_extend, max_y + y_extend, plane[0].z),
-            Point(min_x - x_extend, max_y + y_extend, plane[0].z)]
+    return [
+        Point(min_x - x_extend, min_y - y_extend, plane[0].z),
+        Point(max_x + x_extend, min_y - y_extend, plane[0].z),
+        Point(max_x + x_extend, max_y + y_extend, plane[0].z),
+        Point(min_x - x_extend, max_y + y_extend, plane[0].z),
+    ]
+
 
 def visualize_points(points: List[Point], point_publisher: rospy.Publisher) -> None:
     """Publish points to view them in RViz"""
     for point in points:
         point_publisher.publish(PointStamped(header=Header(frame_id='map'), point=point))
         rospy.sleep(0.5)
+
 
 def get_obj_from_planning_scene(obj_name: str, planning_scene: PlanningScene) -> CollisionObject:
     """
@@ -259,6 +284,7 @@ def get_obj_from_planning_scene(obj_name: str, planning_scene: PlanningScene) ->
     if obj_name not in planning_scene.get_known_object_names():
         raise ValueError(f"Object '{obj_name}' not in planning scene")
     return planning_scene.get_objects([obj_name])[obj_name]
+
 
 def obj_to_plane(support_obj: str, planning_scene: PlanningScene, offset: float = 0.001) -> List[Point]:
     """
@@ -289,11 +315,17 @@ def obj_to_plane(support_obj: str, planning_scene: PlanningScene, offset: float 
     half_width = collision_object.primitives[0].dimensions[0] / 2
     half_depth = collision_object.primitives[0].dimensions[1] / 2
 
-    corners = [(half_width, half_depth), (-half_width, half_depth), (-half_width, -half_depth), (half_width, -half_depth)]
+    corners = [
+        (half_width, half_depth),
+        (-half_width, half_depth),
+        (-half_width, -half_depth),
+        (half_width, -half_depth),
+    ]
 
     half_height = collision_object.primitives[0].dimensions[2] / 2
 
     return [Point(dx, dy, half_height + offset) for dx, dy in corners]
+
 
 def attached_obj_height(attached_obj: str, planning_scene: PlanningScene, offset: float = 0.001) -> float:
     """
@@ -317,8 +349,11 @@ def attached_obj_height(attached_obj: str, planning_scene: PlanningScene, offset
     dimension_index = 2
     if any('power_drill_with_grip' in key for key in planning_scene.get_attached_objects()):
         dimension_index = 1
-    half_height_att_obj = list(planning_scene.get_attached_objects().values())[0].object.primitives[0].dimensions[dimension_index] / 2
+    half_height_att_obj = (
+        list(planning_scene.get_attached_objects().values())[0].object.primitives[0].dimensions[dimension_index] / 2
+    )
     return half_height_att_obj + collision_object.primitives[0].dimensions[2] / 2 + offset
+
 
 # Example usage
 if __name__ == '__main__':
@@ -329,8 +364,10 @@ if __name__ == '__main__':
     rospy.loginfo('test started')
     rospy.sleep(0.2)
 
-    support_object = 'table_3' # the object from which a surface will be generated and later on an object needs to be placed
-    object_tbp = 'power_drill_with_grip' # the obj class to be place on a surface
+    support_object = (
+        'table_3'  # the object from which a surface will be generated and later on an object needs to be placed
+    )
+    object_tbp = 'power_drill_with_grip'  # the obj class to be place on a surface
     plane_1 = obj_to_plane(support_object)
     # currently the points need to be specified in a specific order (this is a workaround)
     # the animation helps to make sure the order is correct so that the functions can work correctly

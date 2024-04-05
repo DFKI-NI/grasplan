@@ -11,6 +11,7 @@ from geometry_msgs.msg import Pose, PoseArray
 
 from grasplan.tools.common import separate_object_class_from_id
 
+
 class HandcodedGraspPlanner(GraspPlanningCore):
     '''
     Implement concrete methods out of GraspPlanningCore class
@@ -19,6 +20,7 @@ class HandcodedGraspPlanner(GraspPlanningCore):
     2) query from paramters fixed transforms wrt object
     3) sample around it in roll, pitch, yaw angles as needed
     '''
+
     def __init__(self, call_parent_constructor=True):
         if call_parent_constructor:
             super().__init__()
@@ -26,7 +28,7 @@ class HandcodedGraspPlanner(GraspPlanningCore):
         # get transforms as a dictionary
         self.grasp_poses = rospy.get_param('~handcoded_grasp_planner_transforms', [])
 
-        rospy.sleep(0.5) # give some time for publisher to register
+        rospy.sleep(0.5)  # give some time for publisher to register
         rospy.loginfo('handcoded grasp planner object was created')
 
     def gen_end_effector_grasp_poses(self, object_name, object_pose, grasp_type):
@@ -41,9 +43,9 @@ class HandcodedGraspPlanner(GraspPlanningCore):
         rot.append(object_pose.pose.orientation.w)
         euler_rot = tf.transformations.euler_from_quaternion(rot)
         tf_object_to_world = tf.transformations.euler_matrix(euler_rot[0], euler_rot[1], euler_rot[2])
-        tf_object_to_world[0][3] = object_pose.pose.position.x # x
-        tf_object_to_world[1][3] = object_pose.pose.position.y # y
-        tf_object_to_world[2][3] = object_pose.pose.position.z # z
+        tf_object_to_world[0][3] = object_pose.pose.position.x  # x
+        tf_object_to_world[1][3] = object_pose.pose.position.y  # y
+        tf_object_to_world[2][3] = object_pose.pose.position.z  # z
 
         tf_pose = Pose()
         pose_array_msg = PoseArray()
@@ -55,7 +57,9 @@ class HandcodedGraspPlanner(GraspPlanningCore):
 
         # transform all poses from object reference frame to world reference frame
         if not object_class in self.grasp_poses:
-            rospy.logerr(f'object "{object_class}" not found in dictionary, have you included in handcoded_grasp_planner_transforms parameter?')
+            rospy.logerr(
+                f'object "{object_class}" not found in dictionary, have you included in handcoded_grasp_planner_transforms parameter?'
+            )
             return pose_array_msg
 
         for transform in self.grasp_poses[object_class]['grasp_poses']:
@@ -63,9 +67,9 @@ class HandcodedGraspPlanner(GraspPlanningCore):
             rot = transform['rotation']
             euler_rot = tf.transformations.euler_from_quaternion(rot)
             tf_gripper_to_object = tf.transformations.euler_matrix(euler_rot[0], euler_rot[1], euler_rot[2])
-            tf_gripper_to_object[0][3] = transform['translation'][0] # x
-            tf_gripper_to_object[1][3] = transform['translation'][1] # y
-            tf_gripper_to_object[2][3] = transform['translation'][2] # z
+            tf_gripper_to_object[0][3] = transform['translation'][0]  # x
+            tf_gripper_to_object[1][3] = transform['translation'][1]  # y
+            tf_gripper_to_object[2][3] = transform['translation'][2]  # z
 
             # convert rotation matrix to position and quaternion orientation
             gripper_pose_wrt_world = np.dot(tf_object_to_world, tf_gripper_to_object)

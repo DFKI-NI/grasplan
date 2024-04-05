@@ -18,6 +18,7 @@ from cob_perception_msgs.msg import Detection, DetectionArray
 import tf2_ros
 import tf2_geometry_msgs
 
+
 class ObjRecognitionMockup:
     '''
     Define a virtual box with position and dimensions that represents the field of view of a camera
@@ -85,14 +86,15 @@ class ObjRecognitionMockup:
 
         try:
             transform = self.tf_buffer.lookup_transform(
-                                       # target reference frame
-                                       target_frame_id,
-                                       # source frame:
-                                       input_pose_reference_frame,
-                                       # get the tf at the time the pose was valid
-                                       pose_stamped_msg.header.stamp,
-                                       # wait for at most 1 second for transform, otherwise throw
-                                       rospy.Duration(1.0))
+                # target reference frame
+                target_frame_id,
+                # source frame:
+                input_pose_reference_frame,
+                # get the tf at the time the pose was valid
+                pose_stamped_msg.header.stamp,
+                # wait for at most 1 second for transform, otherwise throw
+                rospy.Duration(1.0),
+            )
         except:
             rospy.logerr(f'could not transform pose from {input_pose_reference_frame} to {target_frame_id}')
             return None
@@ -125,7 +127,7 @@ class ObjRecognitionMockup:
                 detection.pose.pose = copy.deepcopy(pose_msg.pose)
 
                 # get bounding box from parameter yaml file
-                object_class = separate_object_class_from_id(model_name)[0] # get object class from anchored object
+                object_class = separate_object_class_from_id(model_name)[0]  # get object class from anchored object
                 if self.bounding_boxes:
                     if object_class in self.bounding_boxes:
                         detection.bounding_box_lwh.x = self.bounding_boxes[object_class]['box_x']
@@ -133,7 +135,9 @@ class ObjRecognitionMockup:
                         detection.bounding_box_lwh.z = self.bounding_boxes[object_class]['box_z']
                     else:
                         if not self.supress_warnings:
-                            rospy.logwarn(f'object_class: {object_class} bounding box not found in parameters, will leave bb empty')
+                            rospy.logwarn(
+                                f'object_class: {object_class} bounding box not found in parameters, will leave bb empty'
+                            )
                         detection.bounding_box_lwh.x = 0.0
                         detection.bounding_box_lwh.y = 0.0
                         detection.bounding_box_lwh.z = 0.0
@@ -144,9 +148,22 @@ class ObjRecognitionMockup:
                 detections_msg.detections.append(detection)
                 if self.broadcast_object_tf:
                     # broadcast object tf
-                    self.tf_broadcaster.sendTransform((detection.pose.pose.position.x, detection.pose.pose.position.y, detection.pose.pose.position.z),
-                        (detection.pose.pose.orientation.x, detection.pose.pose.orientation.y, detection.pose.pose.orientation.z, detection.pose.pose.orientation.w),
-                        detection.pose.header.stamp, self.model_states_msg.name[i], self.objects_desired_reference_frame)
+                    self.tf_broadcaster.sendTransform(
+                        (
+                            detection.pose.pose.position.x,
+                            detection.pose.pose.position.y,
+                            detection.pose.pose.position.z,
+                        ),
+                        (
+                            detection.pose.pose.orientation.x,
+                            detection.pose.pose.orientation.y,
+                            detection.pose.pose.orientation.z,
+                            detection.pose.pose.orientation.w,
+                        ),
+                        detection.pose.header.stamp,
+                        self.model_states_msg.name[i],
+                        self.objects_desired_reference_frame,
+                    )
 
         if len(detections_msg.detections) == 0:
             if not self.supress_warnings:
@@ -189,7 +206,7 @@ class ObjRecognitionMockup:
         marker_msg.color.r = 0.0
         marker_msg.color.g = 1.0
         marker_msg.color.b = 0.0
-        marker_msg.color.a = 0.5 # transparency
+        marker_msg.color.a = 0.5  # transparency
         marker_msg.pose.position.x = config['x_box_position']
         marker_msg.pose.position.y = config['y_box_position']
         marker_msg.pose.position.z = config['z_box_position']
@@ -238,6 +255,7 @@ class ObjRecognitionMockup:
     def start_object_recognition(self):
         srv = Server(objBoundsConfig, self.reconfigureCB)
         rospy.spin()
+
 
 if __name__ == '__main__':
     rospy.init_node('object_recognition', anonymous=False)

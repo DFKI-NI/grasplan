@@ -22,11 +22,13 @@ from tf.transformations import quaternion_from_euler
 from grasplan.rqt_planning_scene.visualize_planning_scene import PlanningSceneVizSettings, PlanningSceneViz
 from grasplan.rqt_planning_scene.rosbag_interval_pub import RosbagIntervalPub
 
+
 class OpenFileDialog(QWidget):
     '''
     allow the user to select a different yaml file with a button,
     this will open a dialog to select and open a yaml file
     '''
+
     def __init__(self, initial_path=None):
         super().__init__()
         left, top, width, height = 10, 10, 640, 480
@@ -41,19 +43,21 @@ class OpenFileDialog(QWidget):
         else:
             initial_path = self.initial_path
         if save_file_name_dialog:
-            fileName, _ = QFileDialog.getSaveFileName(self, 'Select boxes yaml file',\
-                          initial_path, 'Yaml Files (*.yaml)', options=options)
+            fileName, _ = QFileDialog.getSaveFileName(
+                self, 'Select boxes yaml file', initial_path, 'Yaml Files (*.yaml)', options=options
+            )
         else:
-            fileName, _ = QFileDialog.getOpenFileName(self, 'Select boxes yaml file',\
-                          initial_path, 'Yaml Files (*.yaml)', options=options)
+            fileName, _ = QFileDialog.getOpenFileName(
+                self, 'Select boxes yaml file', initial_path, 'Yaml Files (*.yaml)', options=options
+            )
         if fileName:
             return fileName
 
     def saveFileNameDialog(self):
         return self.openFileNameDialog(save_file_name_dialog=True)
 
-class RqtPlanningScene(Plugin):
 
+class RqtPlanningScene(Plugin):
     def __init__(self, context):
         super(RqtPlanningScene, self).__init__(context)
         rospy.loginfo('Initializing grasplan rqt, have a happy planning scene editing !')
@@ -95,9 +99,13 @@ class RqtPlanningScene(Plugin):
 
         # parameters
         settings = PlanningSceneVizSettings()
-        settings.yaml_path_to_read = rospy.get_param('~yaml_path_to_read', grasplan_path + '/config/examples/planning_scene.yaml')
-        settings.yaml_path_to_write = rospy.get_param('~yaml_path_to_write', grasplan_path + '/config/examples/auto_generated_planning_scene.yaml')
-        self.psv = PlanningSceneViz(settings) # TODO: add use case: create planning scene from scratch
+        settings.yaml_path_to_read = rospy.get_param(
+            '~yaml_path_to_read', grasplan_path + '/config/examples/planning_scene.yaml'
+        )
+        settings.yaml_path_to_write = rospy.get_param(
+            '~yaml_path_to_write', grasplan_path + '/config/examples/auto_generated_planning_scene.yaml'
+        )
+        self.psv = PlanningSceneViz(settings)  # TODO: add use case: create planning scene from scratch
         self.psv.publish_boxes()
 
         # publications
@@ -127,30 +135,34 @@ class RqtPlanningScene(Plugin):
         self._widget.comboExistingBoxes.currentIndexChanged.connect(self.comboExistingBoxes_changed)
 
         # chk hide changes
-        self.hide_chks = [self._widget.chkHide1,
-                            self._widget.chkHide2,
-                            self._widget.chkHide3,
-                            self._widget.chkHide4,
-                            self._widget.chkHide5,
-                            self._widget.chkHide6,
-                            self._widget.chkHide7,
-                            self._widget.chkHide8,
-                            self._widget.chkHide9,
-                            self._widget.chkHide10]
+        self.hide_chks = [
+            self._widget.chkHide1,
+            self._widget.chkHide2,
+            self._widget.chkHide3,
+            self._widget.chkHide4,
+            self._widget.chkHide5,
+            self._widget.chkHide6,
+            self._widget.chkHide7,
+            self._widget.chkHide8,
+            self._widget.chkHide9,
+            self._widget.chkHide10,
+        ]
         for hide_chk in self.hide_chks:
             hide_chk.stateChanged.connect(self.chkHide_changed)
 
         # viz widgets
-        self.viz_widgets = [self._widget.txtViz1,
-                            self._widget.txtViz2,
-                            self._widget.txtViz3,
-                            self._widget.txtViz4,
-                            self._widget.txtViz5,
-                            self._widget.txtViz6,
-                            self._widget.txtViz7,
-                            self._widget.txtViz8,
-                            self._widget.txtViz9,
-                            self._widget.txtViz10]
+        self.viz_widgets = [
+            self._widget.txtViz1,
+            self._widget.txtViz2,
+            self._widget.txtViz3,
+            self._widget.txtViz4,
+            self._widget.txtViz5,
+            self._widget.txtViz6,
+            self._widget.txtViz7,
+            self._widget.txtViz8,
+            self._widget.txtViz9,
+            self._widget.txtViz10,
+        ]
 
         self.populate_visibility_panel_box_names()
 
@@ -181,7 +193,7 @@ class RqtPlanningScene(Plugin):
     def slideRosbagProgress_slider_released(self):
         self.lock_progress_bar = False
         rosbag_progress_slide_value = self._widget.slideRosbagProgress.value()
-        percentage_to_play = 1.0 # parameter to control how much from the bag to play in percentage
+        percentage_to_play = 1.0  # parameter to control how much from the bag to play in percentage
         delta = percentage_to_play / 2.0
         start_value = rosbag_progress_slide_value - delta
         if rosbag_progress_slide_value - delta < 0.0:
@@ -224,26 +236,26 @@ class RqtPlanningScene(Plugin):
 
     def update_slide_values(self, scene_name):
         box = self.psv.get_box_values(scene_name)
-        value_x, min_x, max_x  = self.get_slide_value_and_limits('x')
-        value_y, min_y, max_y  = self.get_slide_value_and_limits('y')
-        value_z, min_z, max_z  = self.get_slide_value_and_limits('z')
+        value_x, min_x, max_x = self.get_slide_value_and_limits('x')
+        value_y, min_y, max_y = self.get_slide_value_and_limits('y')
+        value_z, min_z, max_z = self.get_slide_value_and_limits('z')
 
         box_position_x = box['box_position_x']
         box_position_y = box['box_position_y']
         box_position_z = box['box_position_z']
 
         # make sure box values are within range
-        #continue_ = False
-        #if box_position_x > min_x:
-            #if box_position_x < max_x:
-                #if box_position_y < min_y:
-                    #if box_position_y < max_y:
-                        #if box_position_z < min_z:
-                            #if box_position_z < max_z:
-                                #continue_ = True
-        #if not continue_:
-            #rospy.logwarn('box values are outside limits, will not update slide values')
-            #return
+        # continue_ = False
+        # if box_position_x > min_x:
+        # if box_position_x < max_x:
+        # if box_position_y < min_y:
+        # if box_position_y < max_y:
+        # if box_position_z < min_z:
+        # if box_position_z < max_z:
+        # continue_ = True
+        # if not continue_:
+        # rospy.logwarn('box values are outside limits, will not update slide values')
+        # return
 
         # diff   -> 100%   # diff = max_scroll_limit - min_scroll_limit
         # value  -> slide_value?  # value = box_position_x
@@ -311,11 +323,17 @@ class RqtPlanningScene(Plugin):
 
     def update_angles(self):
         quaternion = quaternion_from_euler(self.roll_angle, self.pitch_angle, self.yaw_angle)
-        self.psv.modify_box(self.selected_box,
-                                modify_box_orientation_x=True, box_orientation_x=float(quaternion[0]),
-                                modify_box_orientation_y=True, box_orientation_y=float(quaternion[1]),
-                                modify_box_orientation_z=True, box_orientation_z=float(quaternion[2]),
-                                modify_box_orientation_w=True, box_orientation_w=float(quaternion[3]))
+        self.psv.modify_box(
+            self.selected_box,
+            modify_box_orientation_x=True,
+            box_orientation_x=float(quaternion[0]),
+            modify_box_orientation_y=True,
+            box_orientation_y=float(quaternion[1]),
+            modify_box_orientation_z=True,
+            box_orientation_z=float(quaternion[2]),
+            modify_box_orientation_w=True,
+            box_orientation_w=float(quaternion[3]),
+        )
         # write values to rqt
         self._widget.txtTFQx.setPlainText(str(round(quaternion[0], 6)))
         self._widget.txtTFQy.setPlainText(str(round(quaternion[1], 6)))
@@ -341,7 +359,7 @@ class RqtPlanningScene(Plugin):
         self.handle_angle_change(self._widget.slideRoll.value(), 'roll')
 
     def slidePitch_value_changed(self):
-         self.handle_angle_change(self._widget.slidePitch.value(), 'pitch')
+        self.handle_angle_change(self._widget.slidePitch.value(), 'pitch')
 
     def slideYaw_value_changed(self):
         self.handle_angle_change(self._widget.slideYaw.value(), 'yaw')
@@ -367,17 +385,23 @@ class RqtPlanningScene(Plugin):
         slide can take values of 'x', 'y', or 'z'
         '''
         if slide == 'x':
-            return float(self._widget.slideX.value()),\
-                    float(self._widget.txtScrollMinX.toPlainText()),\
-                    float(self._widget.txtScrollMaxX.toPlainText())
+            return (
+                float(self._widget.slideX.value()),
+                float(self._widget.txtScrollMinX.toPlainText()),
+                float(self._widget.txtScrollMaxX.toPlainText()),
+            )
         elif slide == 'y':
-            return float(self._widget.slideY.value()),\
-                    float(self._widget.txtScrollMinY.toPlainText()),\
-                    float(self._widget.txtScrollMaxY.toPlainText())
+            return (
+                float(self._widget.slideY.value()),
+                float(self._widget.txtScrollMinY.toPlainText()),
+                float(self._widget.txtScrollMaxY.toPlainText()),
+            )
         elif slide == 'z':
-            return float(self._widget.slideZ.value()),\
-                    float(self._widget.txtScrollMinZ.toPlainText()),\
-                    float(self._widget.txtScrollMaxZ.toPlainText())
+            return (
+                float(self._widget.slideZ.value()),
+                float(self._widget.txtScrollMinZ.toPlainText()),
+                float(self._widget.txtScrollMaxZ.toPlainText()),
+            )
 
     def slideX_value_changed(self):
         value = self.compute_value('x')

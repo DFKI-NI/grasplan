@@ -13,6 +13,7 @@ import rosbag
 import yaml
 import subprocess
 
+
 class RosbagIntervalPub:
     '''
     # Usage example:
@@ -47,7 +48,15 @@ class RosbagIntervalPub:
         start_time, end_time in seconds
         '''
         duration = end_time - start_time
-        subprocess_args = ['rosbag', 'play', str(self.bag_path), '--start', str(start_time - self.bag_start), '--duration', str(duration)]
+        subprocess_args = [
+            'rosbag',
+            'play',
+            str(self.bag_path),
+            '--start',
+            str(start_time - self.bag_start),
+            '--duration',
+            str(duration),
+        ]
         cmd_str = ''
         for arg in subprocess_args:
             cmd_str += arg + ' '
