@@ -37,7 +37,7 @@ class GripperFindTransforms:
         rospy.loginfo('-- parsing urdf --')
         try:
             self.robot = URDF.from_parameter_server(robot_description)
-        except:
+        except KeyError:
             rospy.logerr(
                 f'could not get URDF from param server, make sure that the parameter {robot_description} is set'
             )
@@ -59,7 +59,7 @@ class GripperFindTransforms:
 
     def generate_config_file(self):
         f = open(self.yaml_path, 'w+')
-        f.write(f'# This file was automatically generated, manual editing is not recommended\n\n')
+        f.write('# This file was automatically generated, manual editing is not recommended\n\n')
         for link in self.robot.links:
             if link.name in self.required_links:
                 for i, visual in enumerate(link.visuals):

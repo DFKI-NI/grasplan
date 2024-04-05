@@ -23,7 +23,8 @@ class ObjRecognitionMockup:
     '''
     Define a virtual box with position and dimensions that represents the field of view of a camera
     Query Gazebo for all objects in the scene
-    Iterate over all objects, see if they are inside the box, if so then publish their pose as cob_perception_msgs/DetectionArray
+    Iterate over all objects, see if they are inside the box, if so then publish their pose as
+        cob_perception_msgs/DetectionArray
     Publish the object detections as tf
     This node can be used as a mockup for object 6D pose estimation and classification
     '''
@@ -59,7 +60,7 @@ class ObjRecognitionMockup:
         self.tf_broadcaster = tf.TransformBroadcaster()
         # to transform the object pose into another reference frame (self.objects_desired_reference_frame)
         self.tf_buffer = tf2_ros.Buffer(rospy.Duration(100.0))  # tf buffer length
-        tf_listener = tf2_ros.TransformListener(self.tf_buffer)
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
         # keep track of the most approximate gazebo gt timestamp
         self.model_states_timestamp = rospy.Time.now()
 
@@ -95,7 +96,7 @@ class ObjRecognitionMockup:
                 # wait for at most 1 second for transform, otherwise throw
                 rospy.Duration(1.0),
             )
-        except:
+        except tf2_ros.TransformException:
             rospy.logerr(f'could not transform pose from {input_pose_reference_frame} to {target_frame_id}')
             return None
 
@@ -136,7 +137,8 @@ class ObjRecognitionMockup:
                     else:
                         if not self.supress_warnings:
                             rospy.logwarn(
-                                f'object_class: {object_class} bounding box not found in parameters, will leave bb empty'
+                                f'object_class: {object_class} bounding box not found in parameters,'
+                                ' will leave bb empty'
                             )
                         detection.bounding_box_lwh.x = 0.0
                         detection.bounding_box_lwh.y = 0.0
@@ -247,13 +249,14 @@ class ObjRecognitionMockup:
 
     def reconfigureCB(self, config, level):
         self.marker_msg = self.publish_perception_fov(config)
-        # test the publication of a pose defined in dynamic dynamic_reconfigure from within this node to see if the node logic is working
+        # test the publication of a pose defined in dynamic dynamic_reconfigure from within
+        # this node to see if the node logic is working
         if self.test_pose:
             self.test_pose_method(config)
         return config
 
     def start_object_recognition(self):
-        srv = Server(objBoundsConfig, self.reconfigureCB)
+        Server(objBoundsConfig, self.reconfigureCB)
         rospy.spin()
 
 

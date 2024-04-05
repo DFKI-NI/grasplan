@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 
-import time
 import rospy
 import tf
+
 
 # function taken from : https://stackoverflow.com/questions/3136059/getting-one-value-from-a-tuple
 # reads a single key pressed
@@ -20,7 +20,10 @@ def read_single_keypress():
     handled.
 
     """
-    import termios, fcntl, sys, os
+    import termios
+    import fcntl
+    import sys
+    import os
 
     fd = sys.stdin.fileno()
     # save old state

@@ -62,7 +62,8 @@ def gen_insert_poses_from_obj(
 ):
     '''
     if same_orientation_as_support_obj is True then the object is aligned with the support object (e.g. box)
-    if same_orientation_as_support_obj is False then 360 degree orientations are used to place the object (can be used if first time fails)
+    if same_orientation_as_support_obj is False then 360 degree orientations are used to place the object (can
+        be used if first time fails)
     '''
     object_list_msg = ObjectList()
     object_list_msg.header.frame_id = frame_id
@@ -147,7 +148,7 @@ def gen_place_poses_from_plane(
     if number_of_poses > 100:
         min_dist = 0.03
         rospy.logwarn(
-            f'number of poses is greater than 100, min_dist will be set to {0.03} instead of desired value of {min_dist}'
+            f'number of poses is greater than 100, min_dist will be set to 0.03 instead of desired value of {min_dist}'
         )
     object_list_msg = ObjectList()
     object_list_msg.header.frame_id = frame_id
@@ -356,28 +357,28 @@ def attached_obj_height(attached_obj: str, planning_scene: PlanningScene, offset
 
 
 # Example usage
-if __name__ == '__main__':
-    rospy.init_node('plane_visualizer', anonymous=False)
-    support_plane_marker_pub = rospy.Publisher('support_plane_as_marker', Marker, queue_size=1, latch=True)
-    point_pub = rospy.Publisher('plane_points', PointStamped, queue_size=1, latch=False)
-    place_poses_pub = rospy.Publisher('~place_poses', ObjectList, queue_size=1, latch=True)
-    rospy.loginfo('test started')
-    rospy.sleep(0.2)
-
-    support_object = (
-        'table_3'  # the object from which a surface will be generated and later on an object needs to be placed
-    )
-    object_tbp = 'power_drill_with_grip'  # the obj class to be place on a surface
-    plane_1 = obj_to_plane(support_object)
-    # currently the points need to be specified in a specific order (this is a workaround)
-    # the animation helps to make sure the order is correct so that the functions can work correctly
-    animate_plane_points(plane_1, point_pub)
-    plane_1 = reduce_plane_area(plane_1, -0.2)
-    # visualize plane as marker
-    marker_msg = make_plane_marker_msg('map', plane_1)
-    support_plane_marker_pub.publish(marker_msg)
-    object_list_msg = gen_place_poses_from_plane(object_tbp, support_object, plane_1)
-    place_poses_pub.publish(object_list_msg)
-
-    rospy.loginfo('test finished')
-    rospy.sleep(1.0)
+# if __name__ == '__main__':
+#     rospy.init_node('plane_visualizer', anonymous=False)
+#     support_plane_marker_pub = rospy.Publisher('support_plane_as_marker', Marker, queue_size=1, latch=True)
+#     point_pub = rospy.Publisher('plane_points', PointStamped, queue_size=1, latch=False)
+#     place_poses_pub = rospy.Publisher('~place_poses', ObjectList, queue_size=1, latch=True)
+#     rospy.loginfo('test started')
+#     rospy.sleep(0.2)
+#
+#     support_object = (
+#         'table_3'  # the object from which a surface will be generated and later on an object needs to be placed
+#     )
+#     object_tbp = 'power_drill_with_grip'  # the obj class to be place on a surface
+#     plane_1 = obj_to_plane(support_object)
+#     # currently the points need to be specified in a specific order (this is a workaround)
+#     # the animation helps to make sure the order is correct so that the functions can work correctly
+#     animate_plane_points(plane_1, point_pub)
+#     plane_1 = reduce_plane_area(plane_1, -0.2)
+#     # visualize plane as marker
+#     marker_msg = make_plane_marker_msg('map', plane_1)
+#     support_plane_marker_pub.publish(marker_msg)
+#     object_list_msg = gen_place_poses_from_plane(object_tbp, support_object, plane_1)
+#     place_poses_pub.publish(object_list_msg)
+#
+#     rospy.loginfo('test finished')
+#     rospy.sleep(1.0)

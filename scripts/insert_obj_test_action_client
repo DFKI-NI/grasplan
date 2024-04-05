@@ -40,11 +40,11 @@ if __name__ == '__main__':
         if action_client.wait_for_result(rospy.Duration.from_sec(timeout)):
             result = action_client.get_result()
             rospy.loginfo(f'{insert_object_server_name} is done with execution, resuĺt was = "{result}"')
-            if result.success == True:
-                rospy.loginfo(f'Succesfully inserted object')
+            if result.success:
+                rospy.loginfo('Succesfully inserted object')
             else:
-                rospy.logerr(f'Failed to insert object')
+                rospy.logerr('Failed to insert object')
         else:
-            rospy.logerr(f'Failed to insert object, timeout?')
+            rospy.logerr('Failed to insert object, timeout?')
     else:
-        rospy.logerr(f'action server {insert_object_server_name} not available')
+        rospy.logerr('action server {insert_object_server_name} not available')

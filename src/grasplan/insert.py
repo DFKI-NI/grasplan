@@ -11,10 +11,7 @@ from grasplan.tools.common import separate_object_class_from_id
 from grasplan.tools.support_plane_tools import gen_insert_poses_from_obj, compute_object_height_for_insertion
 from grasplan.tools.moveit_errors import print_moveit_error
 from object_pose_msgs.msg import ObjectList
-from moveit_msgs.msg import (
-    PlaceAction,
-    PlaceGoal,
-)  # PlaceLocation, GripperTranslation, PlanningOptions, Constraints, OrientationConstraint
+from moveit_msgs.msg import PlaceAction
 from moveit_msgs.msg import MoveItErrorCodes
 from std_srvs.srv import Empty
 from pose_selector.srv import ClassQuery
@@ -93,7 +90,8 @@ class InsertTools:
         resp = self.pick_pose_selector_class_query_srv(support_object.obj_class)
         if len(resp.poses) == 0:
             rospy.logerr(
-                f'Object of class {support_object.obj_class} was not perceived, therefore its pose is not available and cannot be picked'
+                f'Object of class {support_object.obj_class} was not perceived, therefore its pose is not available'
+                ' and cannot be picked'
             )
             return None
         # at least one object of the same class as the object we want to pick was perceived, continue
@@ -104,7 +102,8 @@ class InsertTools:
                 )
                 return pose  # of type object_pose_msgs/ObjectPose.msg
         rospy.logerr(
-            f'At least one object of the class {support_object.obj_class} was perceived but is not the one you want, with id: {support_object.id}'
+            f'At least one object of the class {support_object.obj_class} was perceived but is not the one you want,'
+            ' with id: {support_object.id}'
         )
         return None
 
@@ -146,9 +145,9 @@ class InsertTools:
                 # optionally find the support object: look at table, update planning scene
                 self.place.move_arm_to_posture(self.place.arm_pose_with_objs_in_fov)
                 # activate pick pose selector to observe table
-                resp = self.place.activate_pick_pose_selector_srv(True)
+                self.place.activate_pick_pose_selector_srv(True)
                 rospy.sleep(0.5)  # give some time to observe
-                resp = self.place.activate_pick_pose_selector_srv(False)
+                self.place.activate_pick_pose_selector_srv(False)
                 self.place.add_objs_to_planning_scene()
 
         # allow disentangle to happen only on first place attempt, no need to do it every time
@@ -200,13 +199,13 @@ class InsertTools:
 
                 # handle moveit pick result
                 if result.error_code.val == MoveItErrorCodes.SUCCESS:
-                    rospy.loginfo(f'Successfully inserted object')
+                    rospy.loginfo('Successfully inserted object')
                     self.place.place_pose_selector_clear_srv()
                     # clear possible place poses markers in rviz
                     self.place.clear_place_poses_markers()
                     return True
                 else:
-                    rospy.logerr(f'insert object failed')
+                    rospy.logerr('insert object failed')
                     self.place.place_pose_selector_clear_srv()
                     # clear possible place poses markers in rviz
                     # self.place.clear_place_poses_markers() # leave markers for debugging if failed to insert

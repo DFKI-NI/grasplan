@@ -105,7 +105,7 @@ class RqtGrasplan(Plugin):
         # visualize grasps at startup
         self.publish_grasps()
 
-        ## make a connection between the qt objects and this class methods
+        # make a connection between the qt objects and this class methods
         self._widget.cmdFilePrintG.clicked.connect(self.handle_file_print_grasps_button)
         self._widget.cmdFileLoadG.clicked.connect(self.handle_file_load_grasps_button)
         self._widget.cmdFileSaveG.clicked.connect(self.handle_file_save_grasps_button)
@@ -191,7 +191,8 @@ class RqtGrasplan(Plugin):
             translation_str = f'{tab}{tab}{tab}translation: [{linear[0]:.6f}, {linear[1]:.6f}, {linear[2]:.6f}]'
             grasp_stream_list.append(translation_str)
             # rotation
-            rotation_str = f'{tab}{tab}{tab}rotation: [{angular_q[0]:.6f}, {angular_q[1]:.6f}, {angular_q[2]:.6f}, {angular_q[3]:.6f}]'
+            rotation_str = f'{tab}{tab}{tab}rotation: [{angular_q[0]:.6f}, {angular_q[1]:.6f}, {angular_q[2]:.6f},'
+            ' {angular_q[3]:.6f}]'
             grasp_stream_list.append(rotation_str)
         rospy.loginfo(f'writing grasps to file: {grasps_yaml_path}')
         f = open(grasps_yaml_path, 'w+')
@@ -298,7 +299,7 @@ class RqtGrasplan(Plugin):
         if grasps_dic is None:
             return None
         # load grasps from param server
-        if not object_class in grasps_dic:
+        if object_class not in grasps_dic:
             self.log_error(
                 f'Object "{object_class}" not found in dictionary, check input yaml file: {grasps_yaml_path}'
             )

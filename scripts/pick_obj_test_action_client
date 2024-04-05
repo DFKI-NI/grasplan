@@ -20,7 +20,8 @@ if __name__ == '__main__':
         support_surface_name = myargv[2]
     else:
         rospy.logwarn(
-            'you have run this node without arguments, at least the mobipick namespace is expected! ( __ns:=mobipick ) ... exiting'
+            'you have run this node without arguments, at least the mobipick namespace is expected!'
+            ' ( __ns:=mobipick ) ... exiting'
         )
         sys.exit(1)
     timeout = 50.0  # in seconds, default: 50.0
@@ -38,7 +39,8 @@ if __name__ == '__main__':
             for i in range(len(myargv) - 3):
                 goal.ignore_object_list.append(myargv[i + 3])
         rospy.loginfo(
-            f'sending -> pick {object_to_pick} from {support_surface_name} <- goal to {pick_object_server_name} action server'
+            f'sending -> pick {object_to_pick} from {support_surface_name}'
+            ' <- goal to {pick_object_server_name} action server'
         )
         if len(goal.ignore_object_list) > 0:
             rospy.logwarn(f'the following objects: {goal.ignore_object_list} will not be added to the planning scene')
@@ -49,7 +51,7 @@ if __name__ == '__main__':
         if action_client.wait_for_result(rospy.Duration.from_sec(timeout)):
             result = action_client.get_result()
             rospy.loginfo(f'{pick_object_server_name} is done with execution, resuĺt was = "{result}"')
-            if result.success == True:
+            if result.success:
                 rospy.loginfo(f'Succesfully picked {object_to_pick}')
             else:
                 rospy.logerr(f'Failed to pick {object_to_pick}')

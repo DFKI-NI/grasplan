@@ -38,7 +38,7 @@ from visualization_msgs.msg import Marker
 from grasplan.msg import PlaceObjectAction, PlaceObjectResult
 from moveit_msgs.msg import MoveItErrorCodes
 from pose_selector.srv import GetPoses
-from visualization_msgs.msg import Marker, MarkerArray
+from visualization_msgs.msg import MarkerArray
 from typing import List
 from std_msgs.msg import Header
 
@@ -80,8 +80,9 @@ class PlaceTools:
             '~pick_pose_selector_get_all_poses_srv_name', '/pose_selector_get_all'
         )
         rospy.loginfo(
-            f'waiting for pose selector services: {place_pose_selector_activate_srv_name}, {place_pose_selector_clear_srv_name}\
-                      {pick_pose_selector_activate_srv_name}, {pick_pose_selector_get_all_poses_srv_name}'
+            'waiting for pose selector services: {place_pose_selector_activate_srv_name},'
+            ' {place_pose_selector_clear_srv_name} {pick_pose_selector_activate_srv_name},'
+            ' {pick_pose_selector_get_all_poses_srv_name}'
         )
         rospy.wait_for_service(place_pose_selector_activate_srv_name, 30.0)
         rospy.wait_for_service(place_pose_selector_clear_srv_name, 30.0)
@@ -103,7 +104,7 @@ class PlaceTools:
             rospy.signal_shutdown('fatal error')
 
         # activate place pose selector to be ready to store the place poses
-        resp = self.activate_place_pose_selector_srv(True)
+        self.activate_place_pose_selector_srv(True)
 
         # wait for moveit to become available, TODO: find a cleaner way to wait for moveit
         rospy.wait_for_service('move_group/planning_scene_monitor/set_parameters', 30.0)
@@ -281,9 +282,9 @@ class PlaceTools:
                 # optionally find free space in table: look at table, update planning scene
                 self.move_arm_to_posture(self.arm_pose_with_objs_in_fov)
                 # activate pick pose selector to observe table
-                resp = self.activate_pick_pose_selector_srv(True)
+                self.activate_pick_pose_selector_srv(True)
                 rospy.sleep(0.5)  # give some time to observe
-                resp = self.activate_pick_pose_selector_srv(False)
+                self.activate_pick_pose_selector_srv(False)
                 self.add_objs_to_planning_scene()
 
         action_client = actionlib.SimpleActionClient(self.place_object_server_name, PlaceAction)
@@ -344,29 +345,29 @@ class PlaceTools:
                 result = action_client.get_result()
                 # rospy.loginfo(f'{self.place_object_server_name} is done with execution, resuĺt was = "{result}"')
 
-                ## ------ result handling
+                # # ------ result handling
 
-                ## The result of the place attempt
+                # # The result of the place attempt
                 # MoveItErrorCodes error_code
 
-                ## The full starting state of the robot at the start of the trajectory
+                # # The full starting state of the robot at the start of the trajectory
                 # RobotState trajectory_start
 
-                ## The trajectory that moved group produced for execution
+                # # The trajectory that moved group produced for execution
                 # RobotTrajectory[] trajectory_stages
 
                 # string[] trajectory_descriptions
 
-                ## The successful place location, if any
+                # # The successful place location, if any
                 # PlaceLocation place_location
 
-                ## The amount of time in seconds it took to complete the plan
+                # # The amount of time in seconds it took to complete the plan
                 # float64 planning_time
 
                 # ---
 
                 # how to know if place was successful from result?
-                # if result.success == True:
+                # if result.success:
                 # rospy.loginfo(f'Succesfully placed {object_to_be_placed}')
                 # else:
                 # rospy.logerr(f'Failed to place {object_to_be_placed}')
@@ -375,13 +376,13 @@ class PlaceTools:
 
                 # handle moveit pick result
                 if result.error_code.val == MoveItErrorCodes.SUCCESS:
-                    rospy.loginfo(f'Successfully placed object')
+                    rospy.loginfo('Successfully placed object')
                     self.place_pose_selector_clear_srv()
                     # clear possible place poses markers in rviz
                     self.clear_place_poses_markers()
                     return True
                 else:
-                    rospy.logerr(f'place object failed')
+                    rospy.logerr('place object failed')
                     self.place_pose_selector_clear_srv()
                     # clear possible place poses markers in rviz
                     self.clear_place_poses_markers()
@@ -438,7 +439,7 @@ class PlaceTools:
         # ---
         place_locations = []
         frame_id = place_poses_as_object_list_msg.header.frame_id  # 'mobipick/base_link'
-        object_class = separate_object_class_from_id(object_to_be_placed)[0]
+        # object_class = separate_object_class_from_id(object_to_be_placed)[0]
         # for obj in self.gen_place_poses(object_class, frame_id=frame_id).objects:
         for obj in place_poses_as_object_list_msg.objects:
             pose_stamped_msg = PoseStamped()

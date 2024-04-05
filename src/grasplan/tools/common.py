@@ -17,7 +17,7 @@ def separate_object_class_from_id(anchored_object_as_string):
     try:
         object_id = int(anchored_object_as_string[-count + 1 :])
         return chars_before_number, object_id
-    except:
+    except ValueError:
         return anchored_object_as_string, None
 
 
@@ -31,7 +31,7 @@ class objectToPick:
         self.obj_class = None
         self.id = None
         self.any_obj_id = None
-        if not obj_class_and_id_as_string is None:
+        if obj_class_and_id_as_string is not None:
             assert isinstance(obj_class_and_id_as_string, str)
             self.obj_class, self.id = separate_object_class_from_id(obj_class_and_id_as_string)
             if self.id is None:

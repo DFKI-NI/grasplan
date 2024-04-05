@@ -11,7 +11,6 @@ import traceback
 
 import rospy
 import actionlib
-import tf
 import moveit_commander
 
 from tf import TransformListener
@@ -43,7 +42,8 @@ class PickTools:
         self.clear_octomap_flag = rospy.get_param('~clear_octomap', False)
         self.poses_to_go_before_pick = rospy.get_param('~poses_to_go_before_pick', [])
         self.list_of_disentangle_objects = rospy.get_param('~list_of_disentangle_objects', [])
-        # if true the arm is moved to a pose where objects are inside fov and pose selector is triggered to accept obj pose updates
+        # if true the arm is moved to a pose where objects are inside fov and pose selector is triggered
+        # to accept obj pose updates
         self.perceive_object = rospy.get_param('~perceive_object', True)
         # the arm pose where the objects are inside the fov (used to move the arm to perceive objs right after)
         self.arm_pose_with_objs_in_fov = rospy.get_param('~arm_pose_with_objs_in_fov', 'observe100cm_right')
@@ -68,8 +68,9 @@ class PickTools:
         )
         pose_selector_delete_srv_name = rospy.get_param('~pose_selector_delete_srv_name', '/pose_selector_delete')
         rospy.loginfo(
-            f'waiting for pose selector services: {pose_selector_activate_srv_name}, {pose_selector_class_query_srv_name},\
-                                                            {pose_selector_get_all_poses_srv_name}, {pose_selector_delete_srv_name}'
+            f'waiting for pose selector services: {pose_selector_activate_srv_name},'
+            ' {pose_selector_class_query_srv_name}, {pose_selector_get_all_poses_srv_name},'
+            ' {pose_selector_delete_srv_name}'
         )
         # if wait_for_service fails, it will throw a
         # rospy.exceptions.ROSException, and the node will exit (as long as
@@ -142,15 +143,16 @@ class PickTools:
 
     def make_object_pose_and_add_objs_to_planning_scene(self, object_to_pick, ignore_object_list=[]):
         '''
-        ignore_object_list: if an object is inside another one, you can add it to the ignore_object_list and it will not be
-        added to the planning scene, but it will rather be removed from the planning scene
+        ignore_object_list: if an object is inside another one, you can add it to the ignore_object_list and it will
+                            not be added to the planning scene, but it will rather be removed from the planning scene
         '''
         assert isinstance(object_to_pick, objectToPick)
         # query pose selector
         resp = self.pose_selector_class_query_srv(object_to_pick.obj_class)
         if len(resp.poses) == 0:
             rospy.logerr(
-                f'Object of class {object_to_pick.obj_class} was not perceived, therefore its pose is not available and cannot be picked'
+                f'Object of class {object_to_pick.obj_class} was not perceived, therefore its pose is not available and'
+                ' cannot be picked'
             )
             return None, None, None
         # at least one object of the same class as the object we want to pick was perceived, continue
@@ -200,7 +202,8 @@ class PickTools:
                     self.scene.add_box(object_name, pose_stamped_msg, object_bounding_box)
         if not object_found:
             rospy.logerr(
-                f'the specific object you want to pick was not found : {object_to_pick.get_object_class_and_id_as_string()}'
+                'the specific object you want to pick was not found:'
+                ' {object_to_pick.get_object_class_and_id_as_string()}'
             )
             return None, None, None
         return (
@@ -292,20 +295,17 @@ class PickTools:
         if self.detach_all_objects_flag:
             self.detach_all_objects()
 
-        # flag to keep track of the state of the grasp
-        success = False
-
         # ::::::::: perceive object to be picked (optional, read from parameter server if this is required)
 
         if self.perceive_object:
             # send arm to a pose where objects are inside fov
             self.move_arm_to_posture(self.arm_pose_with_objs_in_fov)
             # populate pose selector with pose information
-            resp = self.activate_pose_selector_srv(True)
+            self.activate_pose_selector_srv(True)
             # wait until pose selector gets updates
             rospy.sleep(4.0)
             # deactivate pose selector detections
-            resp = self.activate_pose_selector_srv(False)
+            self.activate_pose_selector_srv(False)
 
         # ::::::::: setup planning scene
         rospy.loginfo('setup planning scene')
@@ -332,7 +332,8 @@ class PickTools:
             table_pose.pose.orientation.w = planning_scene_box['box_orientation_w']
             self.scene.add_box(planning_scene_box['scene_name'], table_pose, (box_x, box_y, box_z))
 
-        # add all perceived objects of interest to planning scene and return the pose, bb, and id of the object to be picked
+        # add all perceived objects of interest to planning scene and return the pose, bb, and id of the
+        # object to be picked
         object_pose, bounding_box, id = self.make_object_pose_and_add_objs_to_planning_scene(
             object_to_pick, ignore_object_list=ignore_object_list
         )
@@ -354,7 +355,7 @@ class PickTools:
             self.move_arm_to_posture(self.pregrasp_posture)
 
         # ::::::::: pick
-        rospy.loginfo(f'picking object now')
+        rospy.loginfo('picking object now')
 
         # generate a list of moveit grasp messages, poses are also published for visualization purposes
         grasps = self.grasp_planner.make_grasps_msgs(
@@ -387,7 +388,7 @@ class PickTools:
             self.clear_mesh_markers(namespace='object', publisher=self.pose_selector_objects_marker_array_pub)
             return True
         else:
-            rospy.logerr(f'grasp failed')
+            rospy.logerr('grasp failed')
             print_moveit_error(result)
         return False
 

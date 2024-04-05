@@ -56,9 +56,10 @@ class HandcodedGraspPlanner(GraspPlanningCore):
         object_class = separate_object_class_from_id(object_name)[0]
 
         # transform all poses from object reference frame to world reference frame
-        if not object_class in self.grasp_poses:
+        if object_class not in self.grasp_poses:
             rospy.logerr(
-                f'object "{object_class}" not found in dictionary, have you included in handcoded_grasp_planner_transforms parameter?'
+                f'object "{object_class}" not found in dictionary, have you included in'
+                ' handcoded_grasp_planner_transforms parameter?'
             )
             return pose_array_msg
 

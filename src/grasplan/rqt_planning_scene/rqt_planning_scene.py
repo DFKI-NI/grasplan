@@ -2,21 +2,14 @@ import os
 import sys
 import signal
 
-import tf
 import math
 import rospy
 import rospkg
-import yaml
 
 from qt_gui.plugin import Plugin
 from python_qt_binding import loadUi
 from python_qt_binding.QtWidgets import QWidget, QFileDialog, QMessageBox
 
-from grasplan.rqt_grasplan.grasps import Grasps
-from grasplan.visualization.grasp_visualizer import GraspVisualizer
-
-from std_msgs.msg import Int8, String
-from geometry_msgs.msg import Pose, PoseArray, PoseStamped
 from tf.transformations import quaternion_from_euler
 
 from grasplan.rqt_planning_scene.visualize_planning_scene import PlanningSceneVizSettings, PlanningSceneViz
@@ -313,7 +306,7 @@ class RqtPlanningScene(Plugin):
         ofd = OpenFileDialog(initial_path=grasplan_path)
         yaml_path = ofd.saveFileNameDialog()
         if yaml_path:
-            if not '.yaml' in yaml_path:
+            if '.yaml' not in yaml_path:
                 yaml_path += '.yaml'
             self.psv.settings.yaml_path_to_write = yaml_path
             self.psv.write_boxes_to_yaml(yaml_path)

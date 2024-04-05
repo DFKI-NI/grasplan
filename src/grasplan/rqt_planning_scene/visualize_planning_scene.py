@@ -163,7 +163,7 @@ class PlanningSceneViz:
 
     def load_boxes_from_yaml(self, yaml_path):
         if yaml_path == '':
-            rospy.logwarn(f'empty yaml path')
+            rospy.logwarn('empty yaml path')
             return
         if not os.path.exists(yaml_path):
             rospy.logerr(f'yaml path does not exist: {yaml_path}')
@@ -221,13 +221,13 @@ class PlanningSceneViz:
                     rospy.loginfo(f'expressing {key} in {target_frame_dic[key]} ref frame')
                     # perform the transformation
                     new_pose = self.transform_to_frame(key, target_frame_dic[key])
-                    x = new_pose.pose.position.x
-                    y = new_pose.pose.position.y
-                    z = new_pose.pose.position.z
-                    qx = new_pose.pose.orientation.x
-                    qy = new_pose.pose.orientation.y
-                    qz = new_pose.pose.orientation.z
-                    qw = new_pose.pose.orientation.w
+                    # x = new_pose.pose.position.x
+                    # y = new_pose.pose.position.y
+                    # z = new_pose.pose.position.z
+                    # qx = new_pose.pose.orientation.x
+                    # qy = new_pose.pose.orientation.y
+                    # qz = new_pose.pose.orientation.z
+                    # qw = new_pose.pose.orientation.w
                     # next line is useful for debugging purposes
                     # self.broadcast_tf(x, y, z, qx, qy, qz, qw, target_frame_dic[key], f'{key}_debug')
                     self.modify_box(
@@ -262,7 +262,7 @@ class PlanningSceneViz:
         if symbolic_color == 'orange':
             return [1.0, 0.65, 0.0]
         rospy.logwarn(f'color {symbolic_color} not supported, will use default green color')
-        rospy.logwarn(f'supported colors are: green, blue, red, purple, orange')
+        rospy.logwarn('supported colors are: green, blue, red, purple, orange')
         return [0.0, 1.0, 0.0]
 
     def make_text_marker(self, marker, text):

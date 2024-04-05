@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 
-PKG = 'test_roslaunch'
-
 import tf
 import math
 import copy
@@ -12,6 +10,8 @@ from grasplan.rqt_grasplan.grasps import Grasps
 from geometry_msgs.msg import Pose
 
 import logging
+
+PKG = 'test_roslaunch'
 
 
 class TestGrasps(unittest.TestCase):
@@ -125,7 +125,6 @@ class TestGrasps(unittest.TestCase):
         log = logging.getLogger("TestGrasps.test_replace_grasp_by_index")
         log.info('hola')
         g = self.get_grasps_object()
-        grasp = g.get_grasp_by_index(0)
         identity_grasp = self.get_identity_grasp_msg()
         grasp_index = g.grasps_as_pose_array.poses.index(identity_grasp)
         self.assertEquals(grasp_index, 0)
