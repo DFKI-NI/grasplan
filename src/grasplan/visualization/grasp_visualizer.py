@@ -1,5 +1,9 @@
 #!/usr/bin/python3
 
+'''
+Load grasp configurations from yaml file and display them on rviz.
+'''
+
 import os
 import tf
 import rospy
@@ -9,10 +13,6 @@ from pose_selector.srv import ClassQuery
 from geometry_msgs.msg import PoseStamped, PoseArray
 from visualization_msgs.msg import Marker
 from grasplan.grasp_planner.handcoded_grasp_planner import HandcodedGraspPlanner
-
-'''
-Load grasp configurations from yaml file and display them on rviz.
-'''
 
 class GraspVisualizer:
     def __init__(self):

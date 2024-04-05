@@ -18,15 +18,15 @@ from cob_perception_msgs.msg import Detection, DetectionArray
 import tf2_ros
 import tf2_geometry_msgs
 
-'''
-Define a virtual box with position and dimensions that represents the field of view of a camera
-Query Gazebo for all objects in the scene
-Iterate over all objects, see if they are inside the box, if so then publish their pose as cob_perception_msgs/DetectionArray
-Publish the object detections as tf
-This node can be used as a mockup for object 6D pose estimation and classification
-'''
-
 class ObjRecognitionMockup:
+    '''
+    Define a virtual box with position and dimensions that represents the field of view of a camera
+    Query Gazebo for all objects in the scene
+    Iterate over all objects, see if they are inside the box, if so then publish their pose as cob_perception_msgs/DetectionArray
+    Publish the object detections as tf
+    This node can be used as a mockup for object 6D pose estimation and classification
+    '''
+
     def __init__(self, test_pose=False):
         # get object bounding box from parameter
         self.bounding_boxes = rospy.get_param('~bounding_boxes', [])

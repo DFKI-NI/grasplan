@@ -5,13 +5,13 @@ import tf
 
 from gazebo_msgs.msg import LinkStates
 
-'''
-subscribe to /gazebo/link_states
-take from parameter server a desired link to track
-publish link pose as tf
-'''
-
 class LinkTFgtPublisher:
+    '''
+    subscribe to /gazebo/link_states
+    take from parameter server a desired link to track
+    publish link pose as tf
+    '''
+
     def __init__(self):
         # parameters
         self.prefix = rospy.get_param('~prefix', 'gazebo_ros_vel/mia_hand::') # robot_name::
