@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 import rospy
 from moveit_msgs.msg import MoveItErrorCodes
 
