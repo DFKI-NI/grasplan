@@ -8,7 +8,7 @@
 
   <license>MIT</license>
 
-  <author email="oscar.lima@dfki.de">Oscar Lima</author> 
+  <author email="oscar.lima@dfki.de">Oscar Lima</author>
 
   <build_export_depend>rqt_gui</build_export_depend>
   <build_export_depend>rqt_gui_py</build_export_depend>
@@ -36,7 +36,7 @@
   <buildtool_depend>catkin</buildtool_depend>
 
   <export>
-    <rqt_gui plugin="${prefix}/plugin.xml"/> 
+    <rqt_gui plugin="${prefix}/plugin.xml"/>
   </export>
 
 </package>

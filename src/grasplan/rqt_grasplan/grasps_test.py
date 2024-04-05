@@ -81,7 +81,7 @@ class TestGrasps(unittest.TestCase):
         q = self.pose_to_quaternion_list(grasp)
         # quaternion with a 90.0 degree yaw rotation
         desired_q = [0.0, 0.0, 0.7071067811865475, 0.7071067811865476]
-        self.assertEquals(np.allclose(desired_q, q), True)        
+        self.assertEquals(np.allclose(desired_q, q), True)
 
     def test_rotate_selected_grasps_replace_true(self):
         g = self.get_grasps_object()

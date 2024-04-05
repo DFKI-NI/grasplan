@@ -73,7 +73,7 @@ def gen_insert_poses_from_obj(object_class, support_object_pose, obj_height, fra
     # HACK: object specific rotations
     if object_class == 'power_drill_with_grip':
         roll = - math.pi / 2.0
-    
+
     if not same_orientation_as_support_obj:
         for i in range(7):
             angular_q = tf.transformations.quaternion_from_euler(roll, pitch, yaw)
@@ -185,9 +185,9 @@ def gen_place_poses_from_plane(object_class: str, support_object:str, plane: Lis
 # TODO: consider using shape_msgs/Plane instead of 4 points
 def adjust_plane(
         plane: List[Point],
-        x_extend: float = 0.0, 
-        y_extend: float = 0.0, 
-        x_offset: float = 0.0, 
+        x_extend: float = 0.0,
+        y_extend: float = 0.0,
+        x_offset: float = 0.0,
         y_offset: float = 0.0
     ) -> List[Point]:
     """
@@ -265,7 +265,7 @@ def obj_to_plane(support_obj: str, planning_scene: PlanningScene, offset: float 
     Get a surface plane from an object in the MoveIt planning scene.
 
     NOTE: Currently only works for boxes
- 
+
     Parameters
     ----------
     support_obj : str
@@ -274,21 +274,21 @@ def obj_to_plane(support_obj: str, planning_scene: PlanningScene, offset: float 
         The MoveIt planning scene.
     offset : float, optional
         The offset from the MoveIt object and the created plane. Defaults to 0.001.
- 
+
     Returns
     -------
     List[Point]
-        A list of four points (top right, top left, buttom left, buttom right) 
+        A list of four points (top right, top left, buttom left, buttom right)
         representing the corners of the top surface plane.
     """
     collision_object = get_obj_from_planning_scene(support_obj, planning_scene)
 
     if len(collision_object.primitives) != 1 or collision_object.primitives[0].type != 1:
         raise ValueError(f"Object '{support_obj}' is not a box")
-     
+
     half_width = collision_object.primitives[0].dimensions[0] / 2
     half_depth = collision_object.primitives[0].dimensions[1] / 2
-    
+
     corners = [(half_width, half_depth), (-half_width, half_depth), (-half_width, -half_depth), (half_width, -half_depth)]
 
     half_height = collision_object.primitives[0].dimensions[2] / 2

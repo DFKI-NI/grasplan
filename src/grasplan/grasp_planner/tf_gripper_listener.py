@@ -14,8 +14,8 @@ def read_single_keypress():
     then read the single keystroke then revert stdin back after reading the
     keystroke.
 
-    Returns a tuple of characters of the key that was pressed - on Linux, 
-    pressing keys like up arrow results in a sequence of characters. Returns 
+    Returns a tuple of characters of the key that was pressed - on Linux,
+    pressing keys like up arrow results in a sequence of characters. Returns
     ('\x03',) on KeyboardInterrupt which can happen when a signal gets
     handled.
 

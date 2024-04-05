@@ -211,7 +211,7 @@ if __name__=="__main__":
                 yaw = 0
                 if (key == '\x03'):
                     break
- 
+
             pub_thread.update(x, y, z, roll, pitch, yaw, speed, turn)
 
     except Exception as e:

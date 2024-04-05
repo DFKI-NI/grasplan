@@ -334,7 +334,7 @@ class PickTools():
         # generate a list of moveit grasp messages, poses are also published for visualization purposes
         grasps = self.grasp_planner.make_grasps_msgs(object_to_pick.get_object_class_and_id_as_string(),\
                                                      object_pose, self.robot.arm.get_end_effector_link(), grasp_type)
-        
+
         # clear octomap from the planning scene if needed
         if self.clear_octomap_flag:
             self.clear_octomap()

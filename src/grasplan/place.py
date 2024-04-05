@@ -99,7 +99,7 @@ class PlaceTools():
 
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
-        
+
     def clear_place_poses_markers(self):
         marker_array_msg = MarkerArray()
         marker = Marker()
@@ -182,13 +182,13 @@ class PlaceTools():
             raise RuntimeError(f"Error while transformin obj_list, no tf from {target_frame_id} -> {obj_list.header.frame_id}")
         obj_list.header.frame_id = target_frame_id
         return obj_list
-    
+
     def transform_points(self, points: List[Point], target_frame_id: str, source_frame_id: str) -> List[Point]:
         """Transforms a list of points from a source frame to a target frame."""
         if self.tf_buffer.can_transform(target_frame_id, source_frame_id, rospy.Time(0)):
             transformed_points = []
             for point in points:
-                source_point = PointStamped(header=Header(frame_id=source_frame_id), point=point) 
+                source_point = PointStamped(header=Header(frame_id=source_frame_id), point=point)
                 tf = self.tf_buffer.lookup_transform(target_frame_id, source_frame_id, rospy.Time(0))
                 target_point = tf2_geometry_msgs.do_transform_point(source_point, tf)
                 transformed_points.append(target_point.point)
@@ -247,13 +247,13 @@ class PlaceTools():
 
         # publish plane as marker for visualization purposes
         self.plane_vis_pub.publish(make_plane_marker_msg(self.global_reference_frame, self.transform_points(plane, self.global_reference_frame, support_object)))
-        
+
         # generate random places within the plane
         object_class_tbp = separate_object_class_from_id(object_to_be_placed)[0]
         local_place_poses = gen_place_poses_from_plane(object_class_tbp, support_object, plane, self.scene, \
                 frame_id=support_object, number_of_poses=number_of_poses, \
                 min_dist=self.min_dist, ignore_min_dist_list=self.ignore_min_dist_list)
-        
+
         global_place_poses = self.transform_obj_list(local_place_poses, self.global_reference_frame)
 
         self.place_poses_pub.publish(global_place_poses)
@@ -436,7 +436,7 @@ class PlaceTools():
 
         # The diff to consider for the planning scene (optional)
         # PlanningScene planning_scene_diff
-        # planning_options_msg.planning_scene_diff = 
+        # planning_options_msg.planning_scene_diff =
         # NOTE: It's important to set is_diff = True, otherwise MoveIt will
         # overwrite its planning scene with this one (empty), thereby ignoring
         # collisions with e.g. the octomap
