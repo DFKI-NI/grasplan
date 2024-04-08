@@ -381,6 +381,9 @@ class PickTools:
         # handle moveit pick result
         if result == MoveItErrorCodes.SUCCESS:
             # remove picked object pose from pose selector
+            rospy.loginfo(
+                'removing picked object from pose selector due to succesfull execution (as reported by moveit)'
+            )
             self.pose_selector_delete_srv(class_id=object_to_pick.obj_class, instance_id=object_to_pick.id)
             rospy.loginfo(f'Successfully picked object : {object_to_pick.get_object_class_and_id_as_string()}')
             # clear possible grasps shown as mesh in rviz
