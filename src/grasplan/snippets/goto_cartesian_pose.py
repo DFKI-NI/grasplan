@@ -6,6 +6,7 @@ from geometry_msgs.msg import PoseStamped
 
 arm = moveit_commander.MoveGroupCommander('arm', wait_for_servers=10.0)
 
+
 def test_go_to_cartesian_pose():
     '''
     goto cartesian pose with moveit
@@ -28,20 +29,21 @@ def test_go_to_cartesian_pose():
     # rotation = [-0.703003, 0.082303, 0.701726, 0.081197]
 
     rospy.loginfo(f'planning frame : {arm.get_planning_frame()}')
-    target_pose.header.frame_id =     arm.get_planning_frame() # 'world'
-    target_pose.pose.position.x =     translation[0]
-    target_pose.pose.position.y =     translation[1]
-    target_pose.pose.position.z =     translation[2]
-    target_pose.pose.orientation.x =  rotation[0]
-    target_pose.pose.orientation.y =  rotation[1]
-    target_pose.pose.orientation.z =  rotation[2]
-    target_pose.pose.orientation.w =  rotation[3]
+    target_pose.header.frame_id = arm.get_planning_frame()  # 'world'
+    target_pose.pose.position.x = translation[0]
+    target_pose.pose.position.y = translation[1]
+    target_pose.pose.position.z = translation[2]
+    target_pose.pose.orientation.x = rotation[0]
+    target_pose.pose.orientation.y = rotation[1]
+    target_pose.pose.orientation.z = rotation[2]
+    target_pose.pose.orientation.w = rotation[3]
     rospy.loginfo('going to cartesian pose')
     arm.set_pose_target(target_pose, end_effector_link='hand_ee_link')
     arm.go()
     rospy.loginfo('finished going to cartesian pose...')
     rospy.spin()
 
-if __name__=='__main__':
+
+if __name__ == '__main__':
     rospy.init_node('goto_cart_test_node', anonymous=False)
     test_go_to_cartesian_pose()

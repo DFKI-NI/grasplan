@@ -12,35 +12,49 @@ import actionlib
 import moveit_commander
 import traceback
 
-from grasplan.tools.support_plane_tools import obj_to_plane, adjust_plane, gen_place_poses_from_plane, make_plane_marker_msg
+from grasplan.tools.support_plane_tools import (
+    obj_to_plane,
+    adjust_plane,
+    gen_place_poses_from_plane,
+    make_plane_marker_msg,
+)
 from grasplan.tools.common import separate_object_class_from_id
 from grasplan.tools.moveit_errors import print_moveit_error
 from std_srvs.srv import Empty, SetBool, Trigger
 from object_pose_msgs.msg import ObjectList
 import tf2_geometry_msgs
 from geometry_msgs.msg import Vector3Stamped, PoseStamped, TransformStamped, PointStamped, Point, Transform
-from moveit_msgs.msg import PlaceAction, PlaceGoal, PlaceLocation, GripperTranslation, PlanningOptions, Constraints, OrientationConstraint
+from moveit_msgs.msg import (
+    PlaceAction,
+    PlaceGoal,
+    PlaceLocation,
+    GripperTranslation,
+    PlanningOptions,
+    Constraints,
+    OrientationConstraint,
+)
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from visualization_msgs.msg import Marker
 from grasplan.msg import PlaceObjectAction, PlaceObjectResult
 from moveit_msgs.msg import MoveItErrorCodes
 from pose_selector.srv import GetPoses
-from visualization_msgs.msg import Marker, MarkerArray
+from visualization_msgs.msg import MarkerArray
 from typing import List
 from std_msgs.msg import Header
 
-class PlaceTools():
+
+class PlaceTools:
     def __init__(self, action_server_required=True):
         self.global_reference_frame = rospy.get_param('~global_reference_frame', 'map')
         self.arm_pose_with_objs_in_fov = rospy.get_param('~arm_pose_with_objs_in_fov', 'observe100cm_right')
-        self.timeout = rospy.get_param('~timeout', 50.0) # in seconds
+        self.timeout = rospy.get_param('~timeout', 50.0)  # in seconds
         self.min_dist = rospy.get_param('~min_dist', 0.2)
         self.ignore_min_dist_list = rospy.get_param('~ignore_min_dist_list', ['foo_obj'])
         self.group_name = rospy.get_param('~group_name', 'arm')
         self.arm_name = rospy.get_param('~arm_name', 'ur5')
         self.gripper_joint_names = rospy.get_param('~gripper_joint_names')
         self.gripper_joint_efforts = rospy.get_param('~gripper_joint_efforts')
-        self.place_object_server_name = rospy.get_param('~place_object_server_name', 'place') # /mobipick/place
+        self.place_object_server_name = rospy.get_param('~place_object_server_name', 'place')  # /mobipick/place
         self.gripper_release_distance = rospy.get_param('~gripper_release_distance', 0.1)
         self.planning_time = rospy.get_param('~planning_time', 20.0)
         arm_goal_tolerance = rospy.get_param('~arm_goal_tolerance', 0.01)
@@ -53,12 +67,23 @@ class PlaceTools():
         self.marker_array_pub = rospy.Publisher('/place_pose_selector_objects', MarkerArray, queue_size=1)
 
         # service clients
-        place_pose_selector_activate_srv_name = rospy.get_param('~place_pose_selector_activate_srv_name', '/place_pose_selector_activate')
-        place_pose_selector_clear_srv_name = rospy.get_param('~place_pose_selector_clear_srv_name', '/place_pose_selector_clear')
-        pick_pose_selector_activate_srv_name = rospy.get_param('~pick_pose_selector_activate_srv_name', '/pick_pose_selector_activate')
-        pick_pose_selector_get_all_poses_srv_name = rospy.get_param('~pick_pose_selector_get_all_poses_srv_name', '/pose_selector_get_all')
-        rospy.loginfo(f'waiting for pose selector services: {place_pose_selector_activate_srv_name}, {place_pose_selector_clear_srv_name}\
-                      {pick_pose_selector_activate_srv_name}, {pick_pose_selector_get_all_poses_srv_name}')
+        place_pose_selector_activate_srv_name = rospy.get_param(
+            '~place_pose_selector_activate_srv_name', '/place_pose_selector_activate'
+        )
+        place_pose_selector_clear_srv_name = rospy.get_param(
+            '~place_pose_selector_clear_srv_name', '/place_pose_selector_clear'
+        )
+        pick_pose_selector_activate_srv_name = rospy.get_param(
+            '~pick_pose_selector_activate_srv_name', '/pick_pose_selector_activate'
+        )
+        pick_pose_selector_get_all_poses_srv_name = rospy.get_param(
+            '~pick_pose_selector_get_all_poses_srv_name', '/pose_selector_get_all'
+        )
+        rospy.loginfo(
+            'waiting for pose selector services: {place_pose_selector_activate_srv_name},'
+            ' {place_pose_selector_clear_srv_name} {pick_pose_selector_activate_srv_name},'
+            ' {pick_pose_selector_get_all_poses_srv_name}'
+        )
         rospy.wait_for_service(place_pose_selector_activate_srv_name, 30.0)
         rospy.wait_for_service(place_pose_selector_clear_srv_name, 30.0)
         rospy.wait_for_service(pick_pose_selector_activate_srv_name, 30.0)
@@ -67,14 +92,19 @@ class PlaceTools():
             self.activate_place_pose_selector_srv = rospy.ServiceProxy(place_pose_selector_activate_srv_name, SetBool)
             self.place_pose_selector_clear_srv = rospy.ServiceProxy(place_pose_selector_clear_srv_name, Trigger)
             self.activate_pick_pose_selector_srv = rospy.ServiceProxy(pick_pose_selector_activate_srv_name, SetBool)
-            self.get_all_poses_pick_pose_selector_srv = rospy.ServiceProxy(pick_pose_selector_get_all_poses_srv_name, GetPoses)
+            self.get_all_poses_pick_pose_selector_srv = rospy.ServiceProxy(
+                pick_pose_selector_get_all_poses_srv_name, GetPoses
+            )
             rospy.loginfo('found pose selector services')
         except rospy.exceptions.ROSException:
-            rospy.logfatal('grasplan place server could not find pose selector services in time, exiting! \n' + traceback.format_exc())
+            rospy.logfatal(
+                'grasplan place server could not find pose selector services in time, exiting! \n'
+                + traceback.format_exc()
+            )
             rospy.signal_shutdown('fatal error')
 
         # activate place pose selector to be ready to store the place poses
-        resp = self.activate_place_pose_selector_srv(True)
+        self.activate_place_pose_selector_srv(True)
 
         # wait for moveit to become available, TODO: find a cleaner way to wait for moveit
         rospy.wait_for_service('move_group/planning_scene_monitor/set_parameters', 30.0)
@@ -89,17 +119,21 @@ class PlaceTools():
             self.scene = moveit_commander.PlanningSceneInterface()
             rospy.loginfo('found move_group action server')
         except RuntimeError:
-            rospy.logfatal('grasplan place server could not connect to Moveit in time, exiting! \n' + traceback.format_exc())
+            rospy.logfatal(
+                'grasplan place server could not connect to Moveit in time, exiting! \n' + traceback.format_exc()
+            )
             rospy.signal_shutdown('fatal error')
 
         # offer action lib server for object placing if needed
         if action_server_required:
-            self.place_action_server = actionlib.SimpleActionServer('place_object', PlaceObjectAction, self.place_obj_action_callback, False)
+            self.place_action_server = actionlib.SimpleActionServer(
+                'place_object', PlaceObjectAction, self.place_obj_action_callback, False
+            )
             self.place_action_server.start()
 
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
-        
+
     def clear_place_poses_markers(self):
         marker_array_msg = MarkerArray()
         marker = Marker()
@@ -145,7 +179,7 @@ class PlaceTools():
 
     def place_obj_action_callback(self, goal):
         success = False
-        num_poses_list = [5, 25, 50] # first try 5 poses, then 25, then 50
+        num_poses_list = [5, 25, 50]  # first try 5 poses, then 25, then 50
         override_disentangle_dont_doit = False
         override_observe_before_place_dont_doit = False
         for i, num_poses in enumerate(num_poses_list):
@@ -160,9 +194,13 @@ class PlaceTools():
             # do not disentangle if we dont go to observe arm pose
             if not goal.observe_before_place:
                 override_disentangle_dont_doit = True
-            if self.place_object(goal.support_surface_name, observe_before_place=goal.observe_before_place,\
-                                 number_of_poses=num_poses, override_disentangle_dont_doit=override_disentangle_dont_doit,\
-                                 override_observe_before_place_dont_doit=override_observe_before_place_dont_doit):
+            if self.place_object(
+                goal.support_surface_name,
+                observe_before_place=goal.observe_before_place,
+                number_of_poses=num_poses,
+                override_disentangle_dont_doit=override_disentangle_dont_doit,
+                override_observe_before_place_dont_doit=override_observe_before_place_dont_doit,
+            ):
                 success = True
                 break
         if success:
@@ -179,16 +217,18 @@ class PlaceTools():
                 target_pose = tf2_geometry_msgs.do_transform_pose(source_pose, tf)
                 obj.pose = target_pose.pose
         else:
-            raise RuntimeError(f"Error while transformin obj_list, no tf from {target_frame_id} -> {obj_list.header.frame_id}")
+            raise RuntimeError(
+                f"Error while transformin obj_list, no tf from {target_frame_id} -> {obj_list.header.frame_id}"
+            )
         obj_list.header.frame_id = target_frame_id
         return obj_list
-    
+
     def transform_points(self, points: List[Point], target_frame_id: str, source_frame_id: str) -> List[Point]:
         """Transforms a list of points from a source frame to a target frame."""
         if self.tf_buffer.can_transform(target_frame_id, source_frame_id, rospy.Time(0)):
             transformed_points = []
             for point in points:
-                source_point = PointStamped(header=Header(frame_id=source_frame_id), point=point) 
+                source_point = PointStamped(header=Header(frame_id=source_frame_id), point=point)
                 tf = self.tf_buffer.lookup_transform(target_frame_id, source_frame_id, rospy.Time(0))
                 target_point = tf2_geometry_msgs.do_transform_point(source_point, tf)
                 transformed_points.append(target_point.point)
@@ -200,12 +240,21 @@ class PlaceTools():
         """Adds all objects in the planning scene to the local tf buffer as static transforms."""
         for obj_name in planning_scene.get_known_object_names():
             obj = planning_scene.get_objects([obj_name])[obj_name]
-            tf = TransformStamped(header=Header(frame_id="map"), child_frame_id=obj_name,
-                     transform=Transform(translation=obj.pose.position, rotation=obj.pose.orientation))
+            tf = TransformStamped(
+                header=Header(frame_id="map"),
+                child_frame_id=obj_name,
+                transform=Transform(translation=obj.pose.position, rotation=obj.pose.orientation),
+            )
             self.tf_buffer.set_transform_static(tf, "grasplan")
 
-    def place_object(self, support_object, observe_before_place=False, number_of_poses=5,\
-                     override_disentangle_dont_doit=False, override_observe_before_place_dont_doit=False):
+    def place_object(
+        self,
+        support_object,
+        observe_before_place=False,
+        number_of_poses=5,
+        override_disentangle_dont_doit=False,
+        override_observe_before_place_dont_doit=False,
+    ):
         '''
         create action lib client and call moveit place action server
         '''
@@ -218,7 +267,9 @@ class PlaceTools():
 
         # deduce object_to_be_placed by querying which object the gripper currently has attached to its gripper
         object_to_be_placed = list(self.scene.get_attached_objects().keys())[0]
-        rospy.loginfo(f'received request to place the object that the robot is currently holding : {object_to_be_placed}')
+        rospy.loginfo(
+            f'received request to place the object that the robot is currently holding : {object_to_be_placed}'
+        )
 
         # TODO: find a better place for adding the static transforms, it shouldn't be done for each place
         self.add_planning_scene_objects(self.scene)
@@ -231,9 +282,9 @@ class PlaceTools():
                 # optionally find free space in table: look at table, update planning scene
                 self.move_arm_to_posture(self.arm_pose_with_objs_in_fov)
                 # activate pick pose selector to observe table
-                resp = self.activate_pick_pose_selector_srv(True)
-                rospy.sleep(0.5) # give some time to observe
-                resp = self.activate_pick_pose_selector_srv(False)
+                self.activate_pick_pose_selector_srv(True)
+                rospy.sleep(0.5)  # give some time to observe
+                self.activate_pick_pose_selector_srv(False)
                 self.add_objs_to_planning_scene()
 
         action_client = actionlib.SimpleActionClient(self.place_object_server_name, PlaceAction)
@@ -246,14 +297,25 @@ class PlaceTools():
         plane = adjust_plane(plane, -0.15, -0.15)
 
         # publish plane as marker for visualization purposes
-        self.plane_vis_pub.publish(make_plane_marker_msg(self.global_reference_frame, self.transform_points(plane, self.global_reference_frame, support_object)))
-        
+        self.plane_vis_pub.publish(
+            make_plane_marker_msg(
+                self.global_reference_frame, self.transform_points(plane, self.global_reference_frame, support_object)
+            )
+        )
+
         # generate random places within the plane
         object_class_tbp = separate_object_class_from_id(object_to_be_placed)[0]
-        local_place_poses = gen_place_poses_from_plane(object_class_tbp, support_object, plane, self.scene, \
-                frame_id=support_object, number_of_poses=number_of_poses, \
-                min_dist=self.min_dist, ignore_min_dist_list=self.ignore_min_dist_list)
-        
+        local_place_poses = gen_place_poses_from_plane(
+            object_class_tbp,
+            support_object,
+            plane,
+            self.scene,
+            frame_id=support_object,
+            number_of_poses=number_of_poses,
+            min_dist=self.min_dist,
+            ignore_min_dist_list=self.ignore_min_dist_list,
+        )
+
         global_place_poses = self.transform_obj_list(local_place_poses, self.global_reference_frame)
 
         self.place_poses_pub.publish(global_place_poses)
@@ -264,9 +326,9 @@ class PlaceTools():
 
         if action_client.wait_for_server(timeout=rospy.Duration.from_sec(2.0)):
             rospy.loginfo(f'found {self.place_object_server_name} action server')
-            goal = self.make_place_goal_msg(object_to_be_placed, support_object, \
-                                            global_place_poses, \
-                                            use_path_constraints=self.use_path_constraints)
+            goal = self.make_place_goal_msg(
+                object_to_be_placed, support_object, global_place_poses, use_path_constraints=self.use_path_constraints
+            )
 
             # allow disentangle to happen only on first place attempt, no need to do it every time
             if not override_disentangle_dont_doit:
@@ -283,44 +345,44 @@ class PlaceTools():
                 result = action_client.get_result()
                 # rospy.loginfo(f'{self.place_object_server_name} is done with execution, resuĺt was = "{result}"')
 
-                ## ------ result handling
+                # # ------ result handling
 
-                ## The result of the place attempt
+                # # The result of the place attempt
                 # MoveItErrorCodes error_code
 
-                ## The full starting state of the robot at the start of the trajectory
+                # # The full starting state of the robot at the start of the trajectory
                 # RobotState trajectory_start
 
-                ## The trajectory that moved group produced for execution
+                # # The trajectory that moved group produced for execution
                 # RobotTrajectory[] trajectory_stages
 
                 # string[] trajectory_descriptions
 
-                ## The successful place location, if any
+                # # The successful place location, if any
                 # PlaceLocation place_location
 
-                ## The amount of time in seconds it took to complete the plan
+                # # The amount of time in seconds it took to complete the plan
                 # float64 planning_time
 
                 # ---
 
                 # how to know if place was successful from result?
-                # if result.success == True:
-                    # rospy.loginfo(f'Succesfully placed {object_to_be_placed}')
+                # if result.success:
+                # rospy.loginfo(f'Succesfully placed {object_to_be_placed}')
                 # else:
-                    # rospy.logerr(f'Failed to place {object_to_be_placed}')
+                # rospy.logerr(f'Failed to place {object_to_be_placed}')
 
                 # ---
 
                 # handle moveit pick result
                 if result.error_code.val == MoveItErrorCodes.SUCCESS:
-                    rospy.loginfo(f'Successfully placed object')
+                    rospy.loginfo('Successfully placed object')
                     self.place_pose_selector_clear_srv()
                     # clear possible place poses markers in rviz
                     self.clear_place_poses_markers()
                     return True
                 else:
-                    rospy.logerr(f'place object failed')
+                    rospy.logerr('place object failed')
                     self.place_pose_selector_clear_srv()
                     # clear possible place poses markers in rviz
                     self.clear_place_poses_markers()
@@ -331,7 +393,7 @@ class PlaceTools():
             return False
         return False
 
-    def make_constraints_msg(self): # TODO: not yet tested on mobipick
+    def make_constraints_msg(self):  # TODO: not yet tested on mobipick
         constraints_msg = Constraints()
         constraints_msg.name = 'keep_object_upright'
 
@@ -356,7 +418,9 @@ class PlaceTools():
 
         return constraints_msg
 
-    def make_place_goal_msg(self, object_to_be_placed, support_object, place_poses_as_object_list_msg, use_path_constraints):
+    def make_place_goal_msg(
+        self, object_to_be_placed, support_object, place_poses_as_object_list_msg, use_path_constraints
+    ):
         '''
         fill place action lib goal, see: https://github.com/ros-planning/moveit_msgs/blob/master/action/Place.action
         '''
@@ -374,8 +438,8 @@ class PlaceTools():
         # NOTE: multiple place locations are possible to be defined, we just define 1 for now
         # ---
         place_locations = []
-        frame_id = place_poses_as_object_list_msg.header.frame_id # 'mobipick/base_link'
-        object_class = separate_object_class_from_id(object_to_be_placed)[0]
+        frame_id = place_poses_as_object_list_msg.header.frame_id  # 'mobipick/base_link'
+        # object_class = separate_object_class_from_id(object_to_be_placed)[0]
         # for obj in self.gen_place_poses(object_class, frame_id=frame_id).objects:
         for obj in place_poses_as_object_list_msg.objects:
             pose_stamped_msg = PoseStamped()
@@ -406,7 +470,7 @@ class PlaceTools():
         # Optional constraints to be imposed on every point in the motion plan
         # Constraints path_constraints
         if use_path_constraints:
-            goal.path_constraints = self.make_constraints_msg() # add orientation constraints
+            goal.path_constraints = self.make_constraints_msg()  # add orientation constraints
 
         # The name of the motion planner to use. If no name is specified,
         # a default motion planner will be used
@@ -436,7 +500,7 @@ class PlaceTools():
 
         # The diff to consider for the planning scene (optional)
         # PlanningScene planning_scene_diff
-        # planning_options_msg.planning_scene_diff = 
+        # planning_options_msg.planning_scene_diff =
         # NOTE: It's important to set is_diff = True, otherwise MoveIt will
         # overwrite its planning scene with this one (empty), thereby ignoring
         # collisions with e.g. the octomap
@@ -552,7 +616,9 @@ class PlaceTools():
         trajectory.points.append(trajectory_point)
         return trajectory
 
-    def make_gripper_translation_msg(self, frame_id, distance, vector_x=0.0, vector_y=0.0, vector_z=0.0, min_distance=0.1):
+    def make_gripper_translation_msg(
+        self, frame_id, distance, vector_x=0.0, vector_y=0.0, vector_z=0.0, min_distance=0.1
+    ):
         '''
         see: https://github.com/ros-planning/moveit_msgs/blob/master/msg/GripperTranslation.msg
         '''
@@ -588,7 +654,8 @@ class PlaceTools():
         # shutdown moveit cpp interface before exit
         # moveit_commander.roscpp_shutdown()
 
-if __name__=='__main__':
+
+if __name__ == '__main__':
     rospy.init_node('place_object_node', anonymous=False)
     place = PlaceTools()
     place.start_place_node()

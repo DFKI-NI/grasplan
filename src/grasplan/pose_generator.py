@@ -7,10 +7,12 @@ import numpy as np
 
 from geometry_msgs.msg import PoseArray, Pose, PoseStamped
 
-class PoseGenerator():
+
+class PoseGenerator:
     '''
     Receive a pose and generate multiple ones with different orientations
     '''
+
     def __init__(self):
 
         # parameters
@@ -49,9 +51,9 @@ class PoseGenerator():
         result = [3.0, 4.0, 2.0, 5.0, 1.0, 0.0]
         '''
         my_list = []
-        if abs(start - end) < 0.000001: # if start == end
+        if abs(start - end) < 0.000001:  # if start == end
             return [start]
-        assert(start < end)
+        assert start < end
         temp_number = start
         my_list.append(start)
         while temp_number < end:
@@ -65,9 +67,9 @@ class PoseGenerator():
     def spherical_sampling(self, grasp_type, original_pose, offset_vector):
         # offset to object tf
         tf_offset_to_object = tf.transformations.euler_matrix(0, 0, 0)
-        tf_offset_to_object[0][3] = offset_vector[0] # x
-        tf_offset_to_object[1][3] = offset_vector[1] # y
-        tf_offset_to_object[2][3] = offset_vector[2] # z
+        tf_offset_to_object[0][3] = offset_vector[0]  # x
+        tf_offset_to_object[1][3] = offset_vector[1]  # y
+        tf_offset_to_object[2][3] = offset_vector[2]  # z
 
         # object to world tf
         rot = []
@@ -77,9 +79,9 @@ class PoseGenerator():
         rot.append(original_pose.pose.orientation.w)
         euler_rot = tf.transformations.euler_from_quaternion(rot)
         tf_object_to_world = tf.transformations.euler_matrix(euler_rot[0], euler_rot[1], euler_rot[2])
-        tf_object_to_world[0][3] = original_pose.pose.position.x # x
-        tf_object_to_world[1][3] = original_pose.pose.position.y # y
-        tf_object_to_world[2][3] = original_pose.pose.position.z # z
+        tf_object_to_world[0][3] = original_pose.pose.position.x  # x
+        tf_object_to_world[1][3] = original_pose.pose.position.y  # y
+        tf_object_to_world[2][3] = original_pose.pose.position.z  # z
 
         # prepare pose array msg
         pose_array_msg = PoseArray()
@@ -103,12 +105,16 @@ class PoseGenerator():
             for pitch in self.generate_angles(start=pitch_start, end=pitch_end, step=pitch_step):
                 for yaw in self.generate_angles(start=yaw_start, end=yaw_end, step=yaw_step):
                     # apply rotations to identity matrix
-                    nm = tf.transformations.euler_matrix(roll, pitch, yaw) # rpy
+                    nm = tf.transformations.euler_matrix(roll, pitch, yaw)  # rpy
 
                     # transform back to world reference frame
                     processed_pose_in_world_rf_m = np.dot(tf_object_to_world, np.dot(tf_offset_to_object, nm))
                     proll, ppitch, pyaw = tf.transformations.euler_from_matrix(processed_pose_in_world_rf_m)
-                    position = (processed_pose_in_world_rf_m[0][3], processed_pose_in_world_rf_m[1][3], processed_pose_in_world_rf_m[2][3])
+                    position = (
+                        processed_pose_in_world_rf_m[0][3],
+                        processed_pose_in_world_rf_m[1][3],
+                        processed_pose_in_world_rf_m[2][3],
+                    )
                     q_orientation = tf.transformations.quaternion_from_euler(proll, ppitch, pyaw)
 
                     # pack elements into pose
@@ -127,7 +133,8 @@ class PoseGenerator():
     def publish_pose_array_msg(self, pose_array_msg):
         self.pose_array_pub.publish(pose_array_msg)
 
-if __name__=='__main__':
+
+if __name__ == '__main__':
     # example of how to use this node, in practice it is used as a library
     rospy.init_node('pose_generator_node', anonymous=False)
     pose_generator = PoseGenerator()

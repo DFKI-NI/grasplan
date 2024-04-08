@@ -1,15 +1,12 @@
 #!/usr/bin/env python3
 
-from __future__ import print_function
-
 import threading
-
-import roslib; roslib.load_manifest('teleop_twist_keyboard')
 import rospy
-
 from geometry_msgs.msg import Twist
-
-import sys, select, termios, tty
+import sys
+import select
+import termios
+import tty
 
 msg = """
 Reading from the keyboard  and Publishing to Twist!
@@ -32,33 +29,34 @@ CTRL-C to quit
 """
 
 moveBindings = {
-        '8':(1,0,0,0,0,0), # +x
-        '2':(-1,0,0,0,0,0), # -x
-        '6':(0,1,0,0,0,0), # +y
-        '4':(0,-1,0,0,0,0), # -y
-        '9':(0,0,1,0,0,0), # +z
-        '7':(0,0,-1,0,0,0), # -z
-        'r':(0,0,0,1,0,0), # +roll
-        'R':(0,0,0,-1,0,0), # -roll
-        'p':(0,0,0,0,1,0), # +pitch
-        'P':(0,0,0,0,-1,0), # -pitch
-        'y':(0,0,0,0,0,1), # +yaw
-        'Y':(0,0,0,0,0,-1), # -yaw
-    }
+    '8': (1, 0, 0, 0, 0, 0),  # +x
+    '2': (-1, 0, 0, 0, 0, 0),  # -x
+    '6': (0, 1, 0, 0, 0, 0),  # +y
+    '4': (0, -1, 0, 0, 0, 0),  # -y
+    '9': (0, 0, 1, 0, 0, 0),  # +z
+    '7': (0, 0, -1, 0, 0, 0),  # -z
+    'r': (0, 0, 0, 1, 0, 0),  # +roll
+    'R': (0, 0, 0, -1, 0, 0),  # -roll
+    'p': (0, 0, 0, 0, 1, 0),  # +pitch
+    'P': (0, 0, 0, 0, -1, 0),  # -pitch
+    'y': (0, 0, 0, 0, 0, 1),  # +yaw
+    'Y': (0, 0, 0, 0, 0, -1),  # -yaw
+}
 
-speedBindings={
-        'q':(1.1,1.1),
-        'z':(.9,.9),
-        'w':(1.1,1),
-        'x':(.9,1),
-        'e':(1,1.1),
-        'c':(1,.9),
-    }
+speedBindings = {
+    'q': (1.1, 1.1),
+    'z': (0.9, 0.9),
+    'w': (1.1, 1),
+    'x': (0.9, 1),
+    'e': (1, 1.1),
+    'c': (1, 0.9),
+}
+
 
 class PublishThread(threading.Thread):
     def __init__(self, rate):
         super(PublishThread, self).__init__()
-        self.publisher = rospy.Publisher('cmd_vel', Twist, queue_size = 1)
+        self.publisher = rospy.Publisher('cmd_vel', Twist, queue_size=1)
         self.x = 0.0
         self.y = 0.0
         self.z = 0.0
@@ -151,9 +149,10 @@ def getKey(key_timeout):
 
 
 def vels(speed, turn):
-    return "currently:\tspeed %s\tturn %s " % (speed,turn)
+    return "currently:\tspeed %s\tturn %s " % (speed, turn)
 
-if __name__=="__main__":
+
+if __name__ == "__main__":
     settings = termios.tcgetattr(sys.stdin)
 
     rospy.init_node('teleop_twist_keyboard')
@@ -180,8 +179,8 @@ if __name__=="__main__":
         pub_thread.update(x, y, z, roll, pitch, yaw, speed, turn)
 
         print(msg)
-        print(vels(speed,turn))
-        while(1):
+        print(vels(speed, turn))
+        while 1:
             key = getKey(key_timeout)
             if key in moveBindings.keys():
                 x = moveBindings[key][0]
@@ -194,8 +193,8 @@ if __name__=="__main__":
                 speed = speed * speedBindings[key][0]
                 turn = turn * speedBindings[key][1]
 
-                print(vels(speed,turn))
-                if (status == 14):
+                print(vels(speed, turn))
+                if status == 14:
                     print(msg)
                 status = (status + 1) % 15
             else:
@@ -209,9 +208,9 @@ if __name__=="__main__":
                 roll = 0
                 pitch = 0
                 yaw = 0
-                if (key == '\x03'):
+                if key == '\x03':
                     break
- 
+
             pub_thread.update(x, y, z, roll, pitch, yaw, speed, turn)
 
     except Exception as e:

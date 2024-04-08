@@ -22,8 +22,10 @@ if __name__ == '__main__':
         elif myargv[2] == 'false' or myargv[2] == 'False':
             observe_before_insert = False
     else:
-        rospy.logwarn('you have run this node without arguments, at least the mobipick namespace is expected! ( __ns:=mobipick )')
-    timeout = 50.0 # in seconds, default: 50.0
+        rospy.logwarn(
+            'you have run this node without arguments, at least the mobipick namespace is expected! ( __ns:=mobipick )'
+        )
+    timeout = 50.0  # in seconds, default: 50.0
     insert_object_server_name = 'insert_object'
     action_client = actionlib.SimpleActionClient(insert_object_server_name, InsertObjectAction)
     rospy.loginfo(f'waiting for {insert_object_server_name} action server')
@@ -38,11 +40,11 @@ if __name__ == '__main__':
         if action_client.wait_for_result(rospy.Duration.from_sec(timeout)):
             result = action_client.get_result()
             rospy.loginfo(f'{insert_object_server_name} is done with execution, resuĺt was = "{result}"')
-            if result.success == True:
-                rospy.loginfo(f'Succesfully inserted object')
+            if result.success:
+                rospy.loginfo('Succesfully inserted object')
             else:
-                rospy.logerr(f'Failed to insert object')
+                rospy.logerr('Failed to insert object')
         else:
-            rospy.logerr(f'Failed to insert object, timeout?')
+            rospy.logerr('Failed to insert object, timeout?')
     else:
-        rospy.logerr(f'action server {insert_object_server_name} not available')
+        rospy.logerr('action server {insert_object_server_name} not available')

@@ -8,35 +8,49 @@
 
   <license>MIT</license>
 
-  <author email="oscar.lima@dfki.de">Oscar Lima</author> 
+  <author email="oscar.lima@dfki.de">Oscar Lima</author>
 
+  <build_export_depend>actionlib_msgs</build_export_depend>
+  <build_export_depend>dynamic_reconfigure</build_export_depend>
+  <build_export_depend>geometry_msgs</build_export_depend>
   <build_export_depend>rqt_gui</build_export_depend>
   <build_export_depend>rqt_gui_py</build_export_depend>
-  <build_export_depend>dynamic_reconfigure</build_export_depend>
+  <build_export_depend>std_msgs</build_export_depend>
 
   <build_depend>actionlib_msgs</build_depend>
+  <build_depend>dynamic_reconfigure</build_depend>
   <build_depend>geometry_msgs</build_depend>
   <build_depend>message_generation</build_depend>
+  <build_depend>rqt_gui</build_depend>
+  <build_depend>rqt_gui_py</build_depend>
   <build_depend>std_msgs</build_depend>
 
   <exec_depend>actionlib</exec_depend>
   <exec_depend>actionlib_msgs</exec_depend>
   <exec_depend>dynamic_reconfigure</exec_depend>
+  <exec_depend>gazebo_ros</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>message_runtime</exec_depend>
+  <exec_depend>mobipick_description</exec_depend>
+  <exec_depend>mobipick_gazebo</exec_depend>
+  <exec_depend>mobipick_pick_n_place</exec_depend>
   <exec_depend>moveit_commander</exec_depend>
   <exec_depend>moveit_msgs</exec_depend>
+  <exec_depend>rostopic</exec_depend>
   <exec_depend>rqt_gui</exec_depend>
   <exec_depend>rqt_gui_py</exec_depend>
+  <exec_depend>rviz</exec_depend>
+  <exec_depend>spacenav_node</exec_depend>
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>std_srvs</exec_depend>
+  <exec_depend>tables_demo_bringup</exec_depend>
   <exec_depend>tf</exec_depend>
   <exec_depend>trajectory_msgs</exec_depend>
+  <exec_depend>xacro</exec_depend>
 
   <buildtool_depend>catkin</buildtool_depend>
 
   <export>
-    <rqt_gui plugin="${prefix}/plugin.xml"/> 
+    <rqt_gui plugin="${prefix}/plugin.xml"/>
   </export>
-
 </package>

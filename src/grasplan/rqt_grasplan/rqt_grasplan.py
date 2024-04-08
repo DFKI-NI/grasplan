@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 import os
 import tf
 import math
@@ -17,11 +15,13 @@ from grasplan.visualization.grasp_visualizer import GraspVisualizer
 from std_msgs.msg import Int8, String
 from geometry_msgs.msg import Pose, PoseArray, PoseStamped
 
+
 class OpenFileDialog(QWidget):
     '''
     allow the user to select a different yaml file with a button,
     this will open a dialog to select and open a yaml file
     '''
+
     def __init__(self, initial_path=None):
         super().__init__()
         left, top, width, height = 10, 10, 640, 480
@@ -36,19 +36,21 @@ class OpenFileDialog(QWidget):
         else:
             initial_path = self.initial_path
         if save_file_name_dialog:
-            fileName, _ = QFileDialog.getSaveFileName(self, 'Select grasps yaml file',\
-                          initial_path, 'Yaml Files (*.yaml)', options=options)
+            fileName, _ = QFileDialog.getSaveFileName(
+                self, 'Select grasps yaml file', initial_path, 'Yaml Files (*.yaml)', options=options
+            )
         else:
-            fileName, _ = QFileDialog.getOpenFileName(self, 'Select grasps yaml file',\
-                          initial_path, 'Yaml Files (*.yaml)', options=options)
+            fileName, _ = QFileDialog.getOpenFileName(
+                self, 'Select grasps yaml file', initial_path, 'Yaml Files (*.yaml)', options=options
+            )
         if fileName:
             return fileName
 
     def saveFileNameDialog(self):
         return self.openFileNameDialog(save_file_name_dialog=True)
 
-class RqtGrasplan(Plugin):
 
+class RqtGrasplan(Plugin):
     def __init__(self, context):
         super(RqtGrasplan, self).__init__(context)
         rospy.loginfo('Initializing grasplan rqt, have a happy grasp editing !')
@@ -70,10 +72,10 @@ class RqtGrasplan(Plugin):
             self._widget.setWindowTitle(self._widget.windowTitle() + (' (%d)' % context.serial_number()))
 
         # variables
-        self.grasps = Grasps() # stores all grasps
+        self.grasps = Grasps()  # stores all grasps
         self.grasps_yaml_path = None
         self.object_class = None
-        self.tab = '    ' # used in save function
+        self.tab = '    '  # used in save function
         self.global_reference_frame = 'object'
 
         # publications
@@ -89,7 +91,9 @@ class RqtGrasplan(Plugin):
             # set object name to textbox
             self._widget.txtFileObjectName.setText(self.object_class)
             if rospy.has_param('~grasps_yaml_path'):
-                self.grasps_yaml_path = rospy.get_param('~grasps_yaml_path') + f'/handcoded_grasp_planner_{self.object_class}.yaml'
+                self.grasps_yaml_path = (
+                    rospy.get_param('~grasps_yaml_path') + f'/handcoded_grasp_planner_{self.object_class}.yaml'
+                )
                 self.grasps.add_grasps(self.load_grasps_from_yaml(self.object_class, self.grasps_yaml_path))
             else:
                 rospy.logwarn('object name parameter is set but grasps_yaml_path param is missing, is this correct?')
@@ -101,7 +105,7 @@ class RqtGrasplan(Plugin):
         # visualize grasps at startup
         self.publish_grasps()
 
-        ## make a connection between the qt objects and this class methods
+        # make a connection between the qt objects and this class methods
         self._widget.cmdFilePrintG.clicked.connect(self.handle_file_print_grasps_button)
         self._widget.cmdFileLoadG.clicked.connect(self.handle_file_load_grasps_button)
         self._widget.cmdFileSaveG.clicked.connect(self.handle_file_save_grasps_button)
@@ -135,7 +139,7 @@ class RqtGrasplan(Plugin):
         msg.exec_()
         rospy.logerr(error_msg)
 
-    def list_to_pose_msg(self, linear=[0,0,0], angular_q=[0,0,0,1]):
+    def list_to_pose_msg(self, linear=[0, 0, 0], angular_q=[0, 0, 0, 1]):
         '''
         build a pose msg from input lists
         return the pose msg
@@ -150,7 +154,7 @@ class RqtGrasplan(Plugin):
         pose_msg.orientation.w = angular_q[3]
         return pose_msg
 
-    def list_to_pose_stamped_msg(self, linear=[0,0,0], angular_q=[0,0,0,1]):
+    def list_to_pose_stamped_msg(self, linear=[0, 0, 0], angular_q=[0, 0, 0, 1]):
         '''
         build a pose stamped msg from input lists
         return the pose stamped msg
@@ -166,7 +170,7 @@ class RqtGrasplan(Plugin):
         pose_stamped_msg.pose.orientation.w = angular_q[3]
         return pose_stamped_msg
 
-    def publish_test_pose(self, linear=[0,0,0], angular_q=[0,0,0,1]):
+    def publish_test_pose(self, linear=[0, 0, 0], angular_q=[0, 0, 0, 1]):
         '''
         build pose stamped msg from input lists
         publish to test topic to visualize in rviz
@@ -187,19 +191,20 @@ class RqtGrasplan(Plugin):
             translation_str = f'{tab}{tab}{tab}translation: [{linear[0]:.6f}, {linear[1]:.6f}, {linear[2]:.6f}]'
             grasp_stream_list.append(translation_str)
             # rotation
-            rotation_str = f'{tab}{tab}{tab}rotation: [{angular_q[0]:.6f}, {angular_q[1]:.6f}, {angular_q[2]:.6f}, {angular_q[3]:.6f}]'
+            rotation_str = f'{tab}{tab}{tab}rotation: [{angular_q[0]:.6f}, {angular_q[1]:.6f}, {angular_q[2]:.6f},'
+            ' {angular_q[3]:.6f}]'
             grasp_stream_list.append(rotation_str)
         rospy.loginfo(f'writing grasps to file: {grasps_yaml_path}')
-        f = open(grasps_yaml_path,'w+')
+        f = open(grasps_yaml_path, 'w+')
         for string in grasp_stream_list:
             f.write(string + '\n')
         f.close()
 
     def handle_file_save_grasps_button(self):
         rospy.loginfo('saving grasps!')
-        self.write_grasps_to_yaml_file(self.grasps.get_grasps_as_pose_list(),\
-                                       self._widget.txtFileObjectName.toPlainText(),\
-                                       self.grasps_yaml_path)
+        self.write_grasps_to_yaml_file(
+            self.grasps.get_grasps_as_pose_list(), self._widget.txtFileObjectName.toPlainText(), self.grasps_yaml_path
+        )
 
     def handle_file_save_grasps_as_button(self):
         rospy.loginfo('saving grasps as!')
@@ -275,9 +280,11 @@ class RqtGrasplan(Plugin):
         '''
         rospy.loginfo('print!')
         for grasp in self.grasps.get_grasps_as_pose_list():
-            print(f'{self.tab}-\n{self.tab}  translation: [{grasp.position.x},{grasp.position.y},{grasp.position.z}]\n' +\
-                     f'{self.tab}  rotation: [{grasp.orientation.x},{grasp.orientation.y},\
-                                              {grasp.orientation.z},{grasp.orientation.w}]')
+            print(
+                f'{self.tab}-\n{self.tab}  translation: [{grasp.position.x},{grasp.position.y},{grasp.position.z}]\n'
+                + f'{self.tab}  rotation: [{grasp.orientation.x},{grasp.orientation.y},\
+                                              {grasp.orientation.z},{grasp.orientation.w}]'
+            )
 
     def load_grasps_from_yaml(self, object_class, grasps_yaml_path):
         rospy.loginfo(f'reloading grasps from file: {grasps_yaml_path}')
@@ -292,8 +299,10 @@ class RqtGrasplan(Plugin):
         if grasps_dic is None:
             return None
         # load grasps from param server
-        if not object_class in grasps_dic:
-            self.log_error(f'Object "{object_class}" not found in dictionary, check input yaml file: {grasps_yaml_path}')
+        if object_class not in grasps_dic:
+            self.log_error(
+                f'Object "{object_class}" not found in dictionary, check input yaml file: {grasps_yaml_path}'
+            )
             return None
         else:
             rospy.loginfo(f'loading {object_class} grasps from yaml file: {grasps_yaml_path}')
@@ -333,13 +342,13 @@ class RqtGrasplan(Plugin):
 
     def convert_rpy_rad_to_deg(self, rpy_in_rad):
         rpy_in_deg = []
-        for i in range(3): # 0, 1, 2
+        for i in range(3):  # 0, 1, 2
             rpy_in_deg.append(math.degrees(rpy_in_rad[i]))
         return rpy_in_deg
 
     def convert_rpy_deg_to_rad(self, rpy_in_deg):
         rpy_in_rad = []
-        for i in range(3): # 0, 1, 2
+        for i in range(3):  # 0, 1, 2
             rpy_in_rad.append(math.radians(rpy_in_deg[i]))
         return rpy_in_rad
 
@@ -354,11 +363,15 @@ class RqtGrasplan(Plugin):
             if self._widget.chkTransformLoadSelected.isChecked():
                 if self.grasps.single_grasp_is_selected():
                     selected_grasp = self.grasps.get_selected_grasp()
-                    self.write_linear_to_tf_textbox([selected_grasp.position.x,\
-                                                     selected_grasp.position.y,\
-                                                     selected_grasp.position.z])
-                    angular_q = [selected_grasp.orientation.x, selected_grasp.orientation.y,\
-                                 selected_grasp.orientation.z, selected_grasp.orientation.w]
+                    self.write_linear_to_tf_textbox(
+                        [selected_grasp.position.x, selected_grasp.position.y, selected_grasp.position.z]
+                    )
+                    angular_q = [
+                        selected_grasp.orientation.x,
+                        selected_grasp.orientation.y,
+                        selected_grasp.orientation.z,
+                        selected_grasp.orientation.w,
+                    ]
                     self.write_q_to_tf_textbox(angular_q)
                     angular_rpy = list(tf.transformations.euler_from_quaternion(angular_q))
                     if self._widget.optTransformUnitsDeg.isChecked():
@@ -382,8 +395,10 @@ class RqtGrasplan(Plugin):
                 rospy.loginfo('deleting all grasps!')
                 self.grasps.remove_all_grasps()
             else:
-                rospy.logwarn('deleting all grasps but leaving grasp #0,\
-                               if you want to remove it click delete again')
+                rospy.logwarn(
+                    'deleting all grasps but leaving grasp #0,\
+                               if you want to remove it click delete again'
+                )
                 self.grasps.remove_all_but_one_grasp()
         elif self.update_selected_grasp():
             self.grasps.remove_selected_grasp()
@@ -459,16 +474,22 @@ class RqtGrasplan(Plugin):
         self.publish_grasps()
 
     def read_transform(self, apply_rpy_to_q=False):
-        linear = [float(self._widget.txtTransformLinearX.toPlainText()),\
-            float(self._widget.txtTransformLinearY.toPlainText()),\
-            float(self._widget.txtTransformLinearZ.toPlainText())]
-        angular_rpy = [float(self._widget.txtTransformAngularR.toPlainText()),\
-            float(self._widget.txtTransformAngularP.toPlainText()),\
-            float(self._widget.txtTransformAngularY.toPlainText())]
-        angular_q = [float(self._widget.txtTransformAngularQx.toPlainText()),\
-            float(self._widget.txtTransformAngularQy.toPlainText()),\
-            float(self._widget.txtTransformAngularQz.toPlainText()),\
-            float(self._widget.txtTransformAngularQw.toPlainText())]
+        linear = [
+            float(self._widget.txtTransformLinearX.toPlainText()),
+            float(self._widget.txtTransformLinearY.toPlainText()),
+            float(self._widget.txtTransformLinearZ.toPlainText()),
+        ]
+        angular_rpy = [
+            float(self._widget.txtTransformAngularR.toPlainText()),
+            float(self._widget.txtTransformAngularP.toPlainText()),
+            float(self._widget.txtTransformAngularY.toPlainText()),
+        ]
+        angular_q = [
+            float(self._widget.txtTransformAngularQx.toPlainText()),
+            float(self._widget.txtTransformAngularQy.toPlainText()),
+            float(self._widget.txtTransformAngularQz.toPlainText()),
+            float(self._widget.txtTransformAngularQw.toPlainText()),
+        ]
         if self._widget.optTransformUnitsRad.isChecked():
             # rpy values are in radians
             if angular_rpy[0] > math.pi or angular_rpy[1] > math.pi or angular_rpy[2] > math.pi:

@@ -22,8 +22,11 @@ if __name__ == '__main__':
         elif myargv[2] == 'false' or myargv[2] == 'False':
             observe_before_place = False
     else:
-        rospy.logwarn('you have run this node without arguments, at least the mobiplace namespace is expected! ( __ns:=mobiplace )')
-    timeout = 50.0 # in seconds, default: 50.0
+        rospy.logwarn(
+            'you have run this node without arguments, at least the mobiplace namespace is expected!'
+            ' ( __ns:=mobiplace )'
+        )
+    timeout = 50.0  # in seconds, default: 50.0
     place_object_server_name = 'place_object'
     action_client = actionlib.SimpleActionClient(place_object_server_name, PlaceObjectAction)
     rospy.loginfo(f'waiting for {place_object_server_name} action server')
@@ -38,11 +41,11 @@ if __name__ == '__main__':
         if action_client.wait_for_result(rospy.Duration.from_sec(timeout)):
             result = action_client.get_result()
             rospy.loginfo(f'{place_object_server_name} is done with execution, resuĺt was = "{result}"')
-            if result.success == True:
-                rospy.loginfo(f'Succesfully placed object')
+            if result.success:
+                rospy.loginfo('Succesfully placed object')
             else:
-                rospy.logerr(f'Failed to place object')
+                rospy.logerr('Failed to place object')
         else:
-            rospy.logerr(f'Failed to place object, timeout?')
+            rospy.logerr('Failed to place object, timeout?')
     else:
         rospy.logerr(f'action server {place_object_server_name} not available')

@@ -12,6 +12,7 @@ import rospkg
 from std_msgs.msg import String
 from grasplan.rqt_planning_scene.visualize_planning_scene import PlanningSceneViz, PlanningSceneVizSettings
 
+
 class visualizePlanningSceneNode:
     def __init__(self):
         package_path = rospkg.RosPack().get_path('grasplan')
@@ -68,6 +69,7 @@ class visualizePlanningSceneNode:
         while not rospy.is_shutdown():
             self.psv.publish_tf()
             rate.sleep()
+
 
 if __name__ == '__main__':
     rospy.init_node('planning_scene_visualization_node', anonymous=False)

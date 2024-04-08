@@ -13,7 +13,21 @@ import rosbag
 import yaml
 import subprocess
 
+
 class RosbagIntervalPub:
+    '''
+    # Usage example:
+
+    if __name__ == '__main__':
+        rospy.init_node('rosbag_utils_tester')
+        bag_path = '/home/user/my_bag.bag'
+        rip = RosbagIntervalPub(bag_path)
+
+        # play all msgs within 45 and 50 percent of the rosbag
+        # e.g. rosbag duration = 100.0 secs, will play all msgs between 45.0 and 50.0 secs
+        rip.pub_within_percentage_interval(45.0, 50.0)
+    '''
+
     def __init__(self, bag_path):
         self.bag = rosbag.Bag(bag_path)
         self.bag_path = bag_path
@@ -34,7 +48,15 @@ class RosbagIntervalPub:
         start_time, end_time in seconds
         '''
         duration = end_time - start_time
-        subprocess_args = ['rosbag', 'play', str(self.bag_path), '--start', str(start_time - self.bag_start), '--duration', str(duration)]
+        subprocess_args = [
+            'rosbag',
+            'play',
+            str(self.bag_path),
+            '--start',
+            str(start_time - self.bag_start),
+            '--duration',
+            str(duration),
+        ]
         cmd_str = ''
         for arg in subprocess_args:
             cmd_str += arg + ' '
@@ -50,15 +72,3 @@ class RosbagIntervalPub:
         end_time = percentage_end * self.bag_duration / 100.0 + self.bag_start
         rospy.loginfo(f'playing msgs within time interval : {start_time} - {end_time} [sec] ')
         self.pub_within_interval(start_time, end_time)
-
-# Usage example:
-'''
-if __name__ == '__main__':
-    rospy.init_node('rosbag_utils_tester')
-    bag_path = '/home/user/my_bag.bag'
-    rip = RosbagIntervalPub(bag_path)
-
-    # play all msgs within 45 and 50 percent of the rosbag
-    # e.g. rosbag duration = 100.0 secs, will play all msgs between 45.0 and 50.0 secs
-    rip.pub_within_percentage_interval(45.0, 50.0)
-'''

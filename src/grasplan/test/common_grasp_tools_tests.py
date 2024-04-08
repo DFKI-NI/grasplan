@@ -3,8 +3,8 @@
 import unittest
 from grasplan.common_grasp_tools import separate_object_class_from_id
 
-class TestCommonGraspTools(unittest.TestCase):
 
+class TestCommonGraspTools(unittest.TestCase):
     def test_normal(self):
         self.assertEquals(separate_object_class_from_id('relay_1'), ('relay', 1))
 
@@ -53,6 +53,8 @@ class TestCommonGraspTools(unittest.TestCase):
     def test_only_class_required(self):
         self.assertEquals(separate_object_class_from_id('multimeter')[0], 'multimeter')
 
+
 if __name__ == '__main__':
     import rostest
+
     rostest.rosrun('grasplan', 'test_cgt', TestCommonGraspTools)

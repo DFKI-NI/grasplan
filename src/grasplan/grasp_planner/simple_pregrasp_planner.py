@@ -5,6 +5,7 @@ from grasplan.grasp_planning_core import GraspPlanningCore
 from grasplan.pose_generator import PoseGenerator
 from geometry_msgs.msg import PoseStamped
 
+
 class SimpleGraspPlanner(GraspPlanningCore):
     '''
     Implement concrete methods out of GraspPlanningCore class
@@ -13,6 +14,7 @@ class SimpleGraspPlanner(GraspPlanningCore):
     2) replace it with a prerecorded "example" orientation
     3) sample around it in roll, pitch, yaw angles
     '''
+
     def __init__(self):
         super().__init__()
         self.pose_generator = PoseGenerator()
@@ -25,12 +27,14 @@ class SimpleGraspPlanner(GraspPlanningCore):
 
         # setup publishers for visualization purposes
         self.grasp_pose_pub = rospy.Publisher('~visualization/grasp_pose', PoseStamped, queue_size=1)
-        rospy.sleep(0.5) # give some time for publisher to register
+        rospy.sleep(0.5)  # give some time for publisher to register
         rospy.loginfo('simple pregrasp planner object was created')
 
     def generate_grasp_pose(self, object_pose, grasp_type):
         grasp_pose = PoseStamped()
-        grasp_pose.header.frame_id = object_pose.header.frame_id # object pose must be expressed w.r.t : self.robot.get_planning_frame()
+        grasp_pose.header.frame_id = (
+            object_pose.header.frame_id
+        )  # object pose must be expressed w.r.t : self.robot.get_planning_frame()
 
         # take position from perceived object
         translation = [object_pose.pose.position.x, object_pose.pose.position.y, object_pose.pose.position.z]
