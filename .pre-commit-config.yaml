@@ -61,6 +61,20 @@ repos:
     hooks:
     - id: markdownlint
 
+  - repo: https://github.com/Lucas-C/pre-commit-hooks
+    rev: v1.5.1
+    hooks:
+      - id: insert-license
+        files: \.py$
+        exclude: |
+          (?x)^(
+              .*setup\.py|
+              .*__init__\.py
+          )$
+        args:
+          - --license-filepath
+          - LICENSE
+
   - repo: local
     hooks:
       - id: catkin_lint
