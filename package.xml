@@ -46,7 +46,6 @@
   <exec_depend>spacenav_node</exec_depend>
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>std_srvs</exec_depend>
-  <exec_depend>tables_demo_bringup</exec_depend>
   <exec_depend>tf</exec_depend>
   <exec_depend>trajectory_msgs</exec_depend>
   <exec_depend>xacro</exec_depend>
