@@ -27,7 +27,6 @@ repos:
       - id: check-vcs-permalinks
       - id: check-xml
       - id: check-yaml
-        exclude: mobipick_description/config/joint_limits.yaml
       - id: debug-statements
       - id: end-of-file-fixer
         exclude: &excludes |
