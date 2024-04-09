@@ -18,7 +18,7 @@ class GraspVisualizer:
     def __init__(self):
         # parameters
         self.object_name = rospy.get_param('~object_name', 'multimeter')
-        self.object_pkg = rospy.get_param('~object_pkg', 'mobipick_gazebo')
+        self.object_pkg = rospy.get_param('~object_pkg', 'pbr_objects')
         self.global_reference_frame = rospy.get_param('~global_reference_frame', 'object')
         transform_linear_x = rospy.get_param('~transform_linear_x', 0.0)
         transform_linear_y = rospy.get_param('~transform_linear_y', 0.0)
@@ -77,7 +77,7 @@ class GraspVisualizer:
         )
         self.pose_array_pub.publish(pose_array_msg)
 
-    def update_mesh(self, object_name='multimeter', object_pkg='mobipick_gazebo'):
+    def update_mesh(self, object_name='multimeter', object_pkg='pbr_objects'):
         mesh_accepted_formats = ['.dae', '.obj']
         mesh_path = None
         for mesh_accepted_format in mesh_accepted_formats:
