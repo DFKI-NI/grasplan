@@ -32,8 +32,9 @@ import traceback
 import rospy
 import actionlib
 import moveit_commander
+from base import GraspPlanBase
+import tf2_geometry_msgs
 
-from tf import TransformListener
 from std_msgs.msg import String
 from std_srvs.srv import Empty, SetBool
 from pose_selector.srv import ClassQuery, PoseDelete, GetPoses
@@ -45,8 +46,10 @@ from grasplan.tools.common import objectToPick
 from visualization_msgs.msg import Marker, MarkerArray
 
 
-class PickTools:
+class PickTools(GraspPlanBase):
     def __init__(self):
+
+        super().__init__()
 
         # parameters
         self.global_reference_frame = rospy.get_param('~global_reference_frame', 'map')
@@ -70,10 +73,6 @@ class PickTools:
         # configure the desired grasp planner to use
         import_file = rospy.get_param('~import_file', 'grasp_planner.simple_pregrasp_planner')
         import_class = rospy.get_param('~import_class', 'SimpleGraspPlanner')
-        # TODO: include octomap
-
-        # to be able to transform PoseStamped later in the code
-        self.tf_listener = TransformListener()
 
         # import grasp planner and make object out of it
         self.grasp_planner = getattr(importlib.import_module(import_file), import_class)()
@@ -154,12 +153,14 @@ class PickTools:
     def graspTypeCB(self, msg):
         self.grasp_type = msg.data
 
-    def transform_pose(self, pose, target_reference_frame):
+    def transform_pose(self, pose: PoseStamped, target_frame: str) -> PoseStamped:
         '''
         transform a pose from any rerence frame into the target reference frame
         '''
-        self.tf_listener.getLatestCommonTime(target_reference_frame, pose.header.frame_id)
-        return self.tf_listener.transformPose(target_reference_frame, pose)
+        if pose.header.frame_id == target_frame:
+            return pose
+        tf = self.tf_buffer.lookup_transform(target_frame, pose.header.frame_id, rospy.Time(0))
+        return tf2_geometry_msgs.do_transform_pose(pose, tf)
 
     def make_object_pose_and_add_objs_to_planning_scene(self, object_to_pick, ignore_object_list=[]):
         '''

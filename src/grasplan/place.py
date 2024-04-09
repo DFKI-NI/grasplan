@@ -26,11 +26,11 @@ example on how to place an object using grasplan and moveit
 
 import sys
 import copy
-import tf2_ros
 import rospy
 import actionlib
 import moveit_commander
 import traceback
+from base import GraspPlanBase
 
 from grasplan.tools.support_plane_tools import (
     obj_to_plane,
@@ -63,8 +63,11 @@ from typing import List
 from std_msgs.msg import Header
 
 
-class PlaceTools:
+class PlaceTools(GraspPlanBase):
     def __init__(self, action_server_required=True):
+
+        super().__init__()
+
         self.global_reference_frame = rospy.get_param('~global_reference_frame', 'map')
         self.arm_pose_with_objs_in_fov = rospy.get_param('~arm_pose_with_objs_in_fov', 'observe100cm_right')
         self.timeout = rospy.get_param('~timeout', 50.0)  # in seconds
@@ -150,9 +153,6 @@ class PlaceTools:
                 'place_object', PlaceObjectAction, self.place_obj_action_callback, False
             )
             self.place_action_server.start()
-
-        self.tf_buffer = tf2_ros.Buffer()
-        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
 
     def clear_place_poses_markers(self):
         marker_array_msg = MarkerArray()
