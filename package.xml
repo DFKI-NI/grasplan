@@ -36,6 +36,8 @@
   <exec_depend>mobipick_pick_n_place</exec_depend>
   <exec_depend>moveit_commander</exec_depend>
   <exec_depend>moveit_msgs</exec_depend>
+  <exec_depend>pbr_objects</exec_depend>
+  <exec_depend>resource_retriever</exec_depend>
   <exec_depend>rostopic</exec_depend>
   <exec_depend>rqt_gui</exec_depend>
   <exec_depend>rqt_gui_py</exec_depend>

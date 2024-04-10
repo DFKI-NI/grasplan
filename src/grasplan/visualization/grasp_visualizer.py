@@ -9,6 +9,7 @@ import tf
 import rospy
 import std_msgs
 import geometry_msgs
+import resource_retriever
 from geometry_msgs.msg import PoseStamped, PoseArray
 from visualization_msgs.msg import Marker
 from grasplan.grasp_planner.handcoded_grasp_planner import HandcodedGraspPlanner
@@ -18,7 +19,7 @@ class GraspVisualizer:
     def __init__(self):
         # parameters
         self.object_name = rospy.get_param('~object_name', 'multimeter')
-        self.object_pkg = rospy.get_param('~object_pkg', 'mobipick_gazebo')
+        self.object_pkg = rospy.get_param('~object_pkg', 'pbr_objects')
         self.global_reference_frame = rospy.get_param('~global_reference_frame', 'object')
         transform_linear_x = rospy.get_param('~transform_linear_x', 0.0)
         transform_linear_y = rospy.get_param('~transform_linear_y', 0.0)
@@ -77,14 +78,17 @@ class GraspVisualizer:
         )
         self.pose_array_pub.publish(pose_array_msg)
 
-    def update_mesh(self, object_name='multimeter', object_pkg='mobipick_gazebo'):
+    def update_mesh(self, object_name='multimeter', object_pkg='pbr_objects'):
         mesh_accepted_formats = ['.dae', '.obj']
         mesh_path = None
+        file_was_found = False
         for mesh_accepted_format in mesh_accepted_formats:
             mesh_path = f'package://{object_pkg}/meshes/{object_name}/{object_name}{mesh_accepted_format}'
-            if os.path.exists(mesh_path):
-                continue
-        if mesh_path is None:
+            mesh_file = resource_retriever.get_filename(mesh_path, use_protocol=False)
+            if os.path.exists(mesh_file):
+                file_was_found = True
+                break
+        if not file_was_found:
             rospy.logerr('failed to update mesh')
             return
         angular_q = tf.transformations.quaternion_from_euler(
