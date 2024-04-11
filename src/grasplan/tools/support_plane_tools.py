@@ -28,7 +28,8 @@ import math
 
 from std_msgs.msg import ColorRGBA
 from visualization_msgs.msg import Marker
-from geometry_msgs.msg import Point, Vector3, PointStamped
+from geometry_msgs.msg import Point, Vector3
+from tf2_geometry_msgs import PointStamped
 from std_msgs.msg import Header
 from object_pose_msgs.msg import ObjectList, ObjectPose
 from moveit_msgs.msg import CollisionObject, PlanningScene

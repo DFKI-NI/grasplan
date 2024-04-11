@@ -30,7 +30,6 @@ import importlib
 import rospy
 import actionlib
 from base import GraspPlanBase
-import tf2_geometry_msgs
 import moveit_commander
 
 from std_msgs.msg import String
@@ -129,15 +128,6 @@ class PickTools(GraspPlanBase):
     def graspTypeCB(self, msg):
         self.grasp_type = msg.data
 
-    def transform_pose(self, pose: PoseStamped, target_frame: str) -> PoseStamped:
-        '''
-        transform a pose from any rerence frame into the target reference frame
-        '''
-        if pose.header.frame_id == target_frame:
-            return pose
-        tf = self.tf_buffer.lookup_transform(target_frame, pose.header.frame_id, rospy.Time(0))
-        return tf2_geometry_msgs.do_transform_pose(pose, tf)
-
     def make_object_pose_and_add_objs_to_planning_scene(self, object_to_pick, ignore_object_list=[]):
         '''
         ignore_object_list: if an object is inside another one, you can add it to the ignore_object_list and it will
@@ -204,7 +194,7 @@ class PickTools(GraspPlanBase):
             )
             return None, None, None
         return (
-            self.transform_pose(object_to_pick_pose, self.robot.get_planning_frame()),
+            self.tf_buffer.transform(object_to_pick_pose, self.robot.get_planning_frame()),
             object_to_pick_bounding_box,
             object_to_pick_id,
         )
