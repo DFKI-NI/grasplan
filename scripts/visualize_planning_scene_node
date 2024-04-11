@@ -5,9 +5,7 @@ Visualizes planning scene with visualize_planning_scene.py. (not tied to moveit)
 Allows hiding elements in the scene, a feature MoveIt lacks.
 '''
 
-import os
 import rospy
-import rospkg
 
 from std_msgs.msg import String
 from grasplan.rqt_planning_scene.visualize_planning_scene import PlanningSceneViz, PlanningSceneVizSettings
@@ -15,12 +13,9 @@ from grasplan.rqt_planning_scene.visualize_planning_scene import PlanningSceneVi
 
 class visualizePlanningSceneNode:
     def __init__(self):
-        package_path = rospkg.RosPack().get_path('grasplan')
-        default_yaml_path = package_path + '/config/examples/planning_scene.yaml'
-        yaml_path_to_read = rospy.get_param('~yaml_path_to_read', default_yaml_path)
-        yaml_path_to_write = rospy.get_param('~yaml_path_to_write', default_yaml_path)
-        if not os.path.exists(yaml_path_to_read):
-            rospy.signal_shutdown(f'yaml path does not exist: {yaml_path_to_read}, shutting down node')
+        yaml_path_to_read = rospy.get_param('~yaml_path_to_read')
+        yaml_path_to_write = rospy.get_param('~yaml_path_to_write')
+
         initial_settings = PlanningSceneVizSettings()
         # a list of planning scene boxes to ignore (not draw)
         initial_settings.ignore_set = set(rospy.get_param('~ignore_set', []))
