@@ -1,17 +1,14 @@
 <?xml version="1.0"?>
 <launch>
 
-  <arg name="world_config" default="ai_day" doc="objects arrangement, options: moelk_tables, cic_tables, truck_assembly, ai_day" />
-  <arg name="yaml_path_to_read" default="$(find tables_demo_bringup)/config/$(arg world_config)_planning_scene.yaml" />
+  <arg name="yaml_path_to_read" default="$(find grasplan)/config/examples/planning_scene.yaml" />
   <arg name="yaml_path_to_write" default="$(arg yaml_path_to_read)" />
   <arg name="ignore_set" default="[]" /> <!-- custom list of boxes not to draw in rviz -->
   <arg name="target_frame_dic" default="{'table_2':'table_3'}" /> <!-- express table_2 in table_3 reference frame -->
 
   <!-- rviz visualization of planning scene as markers, by default it publishes to tf -->
   <node pkg="grasplan" type="visualize_planning_scene_node" name="visualize_planning_scene_node" output="screen">
-    <!-- planning scene transforms -->
     <param name="yaml_path_to_read" type="string" value="$(arg yaml_path_to_read)" />
-    <!-- yaml file path to save boxes if requested-->
     <param name="yaml_path_to_write" type="string" value="$(arg yaml_path_to_write)" />
     <!-- a list of planning scene boxes to ignore (not draw) -->
     <rosparam param="ignore_set" subst_value="True">$(arg ignore_set)</rosparam>
