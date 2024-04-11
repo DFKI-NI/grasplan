@@ -24,11 +24,9 @@
 example on how to place an object using grasplan and moveit
 '''
 
-import sys
 import copy
 import rospy
 import actionlib
-import moveit_commander
 import traceback
 from base import GraspPlanBase
 
@@ -64,11 +62,10 @@ from std_msgs.msg import Header
 
 
 class PlaceTools(GraspPlanBase):
-    def __init__(self, action_server_required=True):
+    def __init__(self, action_server_required: bool = True):
 
         super().__init__()
 
-        self.global_reference_frame = rospy.get_param('~global_reference_frame', 'map')
         self.arm_pose_with_objs_in_fov = rospy.get_param('~arm_pose_with_objs_in_fov', 'observe100cm_right')
         self.timeout = rospy.get_param('~timeout', 50.0)  # in seconds
         self.min_dist = rospy.get_param('~min_dist', 0.2)
@@ -79,8 +76,6 @@ class PlaceTools(GraspPlanBase):
         self.gripper_joint_efforts = rospy.get_param('~gripper_joint_efforts')
         self.place_object_server_name = rospy.get_param('~place_object_server_name', 'place')  # /mobipick/place
         self.gripper_release_distance = rospy.get_param('~gripper_release_distance', 0.1)
-        self.planning_time = rospy.get_param('~planning_time', 20.0)
-        arm_goal_tolerance = rospy.get_param('~arm_goal_tolerance', 0.01)
         self.use_path_constraints = rospy.get_param('~use_path_constraints', False)
         self.disentangle_required = rospy.get_param('~disentangle_required', False)
         self.poses_to_go_before_place = rospy.get_param('~poses_to_go_before_place', [])
@@ -128,24 +123,6 @@ class PlaceTools(GraspPlanBase):
 
         # activate place pose selector to be ready to store the place poses
         self.activate_place_pose_selector_srv(True)
-
-        # wait for moveit to become available, TODO: find a cleaner way to wait for moveit
-        rospy.wait_for_service('move_group/planning_scene_monitor/set_parameters', 30.0)
-        rospy.sleep(2.0)
-
-        try:
-            rospy.loginfo('waiting for move_group action server')
-            moveit_commander.roscpp_initialize(sys.argv)
-            self.robot = moveit_commander.RobotCommander()
-            self.robot.arm.set_planning_time(self.planning_time)
-            self.robot.arm.set_goal_tolerance(arm_goal_tolerance)
-            self.scene = moveit_commander.PlanningSceneInterface()
-            rospy.loginfo('found move_group action server')
-        except RuntimeError:
-            rospy.logfatal(
-                'grasplan place server could not connect to Moveit in time, exiting! \n' + traceback.format_exc()
-            )
-            rospy.signal_shutdown('fatal error')
 
         # offer action lib server for object placing if needed
         if action_server_required:

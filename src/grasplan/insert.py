@@ -41,10 +41,7 @@ from grasplan.msg import InsertObjectAction, InsertObjectResult
 
 class InsertTools:
     def __init__(self):
-        # create instance of place
-        self.place = PlaceTools(
-            action_server_required=False
-        )  # we will advertise our own action lib server for insertion
+        self.place = PlaceTools(action_server_required=False)
 
         # parameters
         pick_pose_selector_class_query_srv_name = rospy.get_param(

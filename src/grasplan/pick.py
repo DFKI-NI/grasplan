@@ -24,16 +24,14 @@
 example on how to pick an object using grasplan and moveit
 '''
 
-import sys
 import copy
 import importlib
-import traceback
 
 import rospy
 import actionlib
-import moveit_commander
 from base import GraspPlanBase
 import tf2_geometry_msgs
+import moveit_commander
 
 from std_msgs.msg import String
 from std_srvs.srv import Empty, SetBool
@@ -52,12 +50,8 @@ class PickTools(GraspPlanBase):
         super().__init__()
 
         # parameters
-        self.global_reference_frame = rospy.get_param('~global_reference_frame', 'map')
         self.detach_all_objects_flag = rospy.get_param('~detach_all_objects', False)
         self.arm_group_name = rospy.get_param('~arm_group_name', 'arm')
-        gripper_group_name = rospy.get_param('~gripper_group_name', 'gripper')
-        arm_goal_tolerance = rospy.get_param('~arm_goal_tolerance', 0.01)
-        self.planning_time = rospy.get_param('~planning_time', 20.0)
         self.pregrasp_posture_required = rospy.get_param('~pregrasp_posture_required', False)
         self.pregrasp_posture = rospy.get_param('~pregrasp_posture', 'home')
         self.planning_scene_boxes = rospy.get_param('~planning_scene_boxes', [])
@@ -103,24 +97,6 @@ class PickTools(GraspPlanBase):
         self.pose_selector_get_all_poses_srv = rospy.ServiceProxy(pose_selector_get_all_poses_srv_name, GetPoses)
         self.pose_selector_delete_srv = rospy.ServiceProxy(pose_selector_delete_srv_name, PoseDelete)
         rospy.loginfo('found pose selector services')
-
-        try:
-            rospy.loginfo('waiting for move_group action server')
-            moveit_commander.roscpp_initialize(sys.argv)
-            self.robot = moveit_commander.RobotCommander()
-            self.gripper = getattr(self.robot, gripper_group_name)
-            self.robot.arm.set_planning_time(self.planning_time)
-            self.robot.arm.set_goal_tolerance(arm_goal_tolerance)
-            self.scene = moveit_commander.PlanningSceneInterface()
-            rospy.loginfo('found move_group action server')
-        except RuntimeError:
-            # moveit_commander.roscpp_initialize overwrites the signal handler,
-            # so if a RuntimeError occurs here, we have to manually call
-            # signal_shutdown() in order for the node to properly exit.
-            rospy.logfatal(
-                'grasplan pick server could not connect to Moveit in time, exiting! \n' + traceback.format_exc()
-            )
-            rospy.signal_shutdown('fatal error')
 
         # to publish object pose for debugging purposes
         self.obj_pose_pub = rospy.Publisher('~obj_pose', PoseStamped, queue_size=1)
