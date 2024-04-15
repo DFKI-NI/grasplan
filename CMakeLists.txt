@@ -9,6 +9,7 @@ find_package(catkin REQUIRED COMPONENTS
   rqt_gui
   rqt_gui_py
   std_msgs
+  roslaunch
 )
 
 catkin_python_setup()

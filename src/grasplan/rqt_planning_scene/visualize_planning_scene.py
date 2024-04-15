@@ -30,6 +30,7 @@ import tf
 
 import os
 import sys
+import pathlib
 import yaml
 import copy
 
@@ -181,15 +182,15 @@ class PlanningSceneViz:
         if not found:
             rospy.logerr(f'cannot modify box, scene_name : {scene_name} not found')
 
-    def load_boxes_from_yaml(self, yaml_path):
-        if yaml_path == '':
-            rospy.logwarn('empty yaml path')
-            return
-        if not os.path.exists(yaml_path):
-            rospy.logerr(f'yaml path does not exist: {yaml_path}')
-            return
+    def load_boxes_from_yaml(self, yaml_path: str) -> None:
+
+        yaml_path = pathlib.Path(yaml_path)
+        if not yaml_path.exists() or not yaml_path.is_file():
+            raise FileNotFoundError(f'yaml file does not exist: {yaml_path}')
+
         with open(yaml_path, 'r') as file:
             yaml_content = file.read()
+
         self.box_list_dictionary = yaml.safe_load(yaml_content)['planning_scene_boxes']
         self.box_list_dictionary_bkp = copy.deepcopy(self.box_list_dictionary)
         # construct a list of all boxes
@@ -201,13 +202,15 @@ class PlanningSceneViz:
     def get_all_boxes_names(self):
         return self.all_boxes_names
 
-    def write_boxes_to_yaml(self, yaml_path_to_write, from_settings=False):
-        if from_settings:
-            yaml_path_to_write = self.settings.yaml_path_to_write
-        with open(yaml_path_to_write, 'w') as yaml_file:
+    def write_boxes_to_yaml(self, yaml_path: str) -> None:
+        yaml_path = pathlib.Path(yaml_path)
+        if not yaml_path.exists() or not yaml_path.is_file():
+            raise FileNotFoundError(f'yaml file does not exist: {yaml_path}')
+
+        with open(yaml_path, 'w') as yaml_file:
             master_dictionary = {'planning_scene_boxes': self.box_list_dictionary}
             yaml.dump(master_dictionary, yaml_file, default_flow_style=False)
-            rospy.loginfo(f'writing boxes to yaml file: {yaml_path_to_write}')
+            rospy.loginfo(f'writing boxes to yaml file: {yaml_path}')
 
     def transform_to_frame(self, object_frame, target_frame):
         # get object transform
