@@ -1,9 +1,29 @@
+# Copyright (c) 2024 DFKI GmbH
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
 import tf2_ros
 import moveit_commander
 import rospy
 import sys
 from std_msgs.msg import Header
-from geometry_msgs.msg import Point
+from geometry_msgs.msg import Point, Transform, TransformStamped
 from tf2_geometry_msgs import PoseStamped, PointStamped
 from typing import List
 from object_pose_msgs.msg import ObjectList
@@ -46,3 +66,13 @@ class GraspPlanBase:
             obj.pose = target_pose.pose
         obj_list.header.frame_id = target_frame
         return obj_list
+
+    def add_scene_objs_to_tf(self) -> None:
+        """Adds all objects in the planning scene to the tf tree as static transforms"""
+        for obj in self.scene.get_objects().values():
+            tf = TransformStamped(
+                header=Header(frame_id=self.global_reference_frame),
+                child_frame_id=obj.id,
+                transform=Transform(translation=obj.pose.position, rotation=obj.pose.orientation),
+            )
+            self.tf_buffer.set_transform_static(tf, "grasplan")

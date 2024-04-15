@@ -40,7 +40,7 @@ from grasplan.tools.common import separate_object_class_from_id
 from grasplan.tools.moveit_errors import print_moveit_error
 from std_srvs.srv import Empty, SetBool, Trigger
 from object_pose_msgs.msg import ObjectList
-from geometry_msgs.msg import Vector3Stamped, PoseStamped, TransformStamped, Transform
+from geometry_msgs.msg import Vector3Stamped, PoseStamped
 from moveit_msgs.msg import (
     PlaceAction,
     PlaceGoal,
@@ -56,7 +56,6 @@ from grasplan.msg import PlaceObjectAction, PlaceObjectResult
 from moveit_msgs.msg import MoveItErrorCodes
 from pose_selector.srv import GetPoses
 from visualization_msgs.msg import MarkerArray
-from std_msgs.msg import Header
 
 
 class PlaceTools(GraspPlanBase):
@@ -203,17 +202,6 @@ class PlaceTools(GraspPlanBase):
         else:
             self.place_action_server.set_aborted(PlaceObjectResult(success=False))
 
-    def add_planning_scene_objects(self, planning_scene) -> None:
-        """Adds all objects in the planning scene to the local tf buffer as static transforms."""
-        for obj_name in planning_scene.get_known_object_names():
-            obj = planning_scene.get_objects([obj_name])[obj_name]
-            tf = TransformStamped(
-                header=Header(frame_id="map"),
-                child_frame_id=obj_name,
-                transform=Transform(translation=obj.pose.position, rotation=obj.pose.orientation),
-            )
-            self.tf_buffer.set_transform_static(tf, "grasplan")
-
     def place_object(
         self,
         support_object,
@@ -239,7 +227,7 @@ class PlaceTools(GraspPlanBase):
         )
 
         # TODO: find a better place for adding the static transforms, it shouldn't be done for each place
-        self.add_planning_scene_objects(self.scene)
+        self.add_scene_objs_to_tf()
 
         # clear pose selector before starting to place in case some data is left over from previous runs
         self.place_pose_selector_clear_srv()
