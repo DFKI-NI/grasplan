@@ -199,13 +199,6 @@ class PickTools(GraspPlanBase):
             object_to_pick_id,
         )
 
-    def clean_scene(self):
-        '''
-        iterate over all object in the scene, delete them from the scene
-        '''
-        for item in self.scene.get_known_object_names():
-            self.scene.remove_world_object(item)
-
     def clear_octomap(self, octomap_srv_name='clear_octomap'):
         '''
         call service to clear octomap
@@ -300,7 +293,7 @@ class PickTools(GraspPlanBase):
         # remove all objects from the planning scene if needed
         if self.clear_planning_scene:
             rospy.logwarn('Clearing planning scene')
-            self.clean_scene()
+            self.scene.clear()
 
         # add a list of custom boxes defined by the user to the planning scene
         for planning_scene_box in self.planning_scene_boxes:
