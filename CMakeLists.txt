@@ -61,9 +61,7 @@ catkin_install_python(PROGRAMS
   scripts/place_obj_test_action_client
   scripts/publish_tf_world_to_robot
   scripts/rqt_grasplan
-  scripts/rqt_planning_scene
   scripts/set_rviz_logger_level.py
-  scripts/visualize_planning_scene_node
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
 
 # Mark other files for installation (e.g. launch and bag files, etc.)
