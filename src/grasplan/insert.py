@@ -166,7 +166,8 @@ class InsertTools:
                 self.place.move_arm_to_posture(self.place.arm_pose_with_objs_in_fov)
                 # activate pick pose selector to observe table
                 self.place.activate_pick_pose_selector_srv(True)
-                rospy.sleep(0.5)  # give some time to observe
+                rospy.loginfo('sleeping for 5.0 seconds')
+                rospy.sleep(5.0)  # give some time to observe
                 self.place.activate_pick_pose_selector_srv(False)
                 self.place.add_objs_to_planning_scene()
 
