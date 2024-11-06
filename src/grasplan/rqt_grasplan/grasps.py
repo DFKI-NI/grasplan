@@ -108,9 +108,9 @@ class Grasps:
             self.add_grasp(grasp)
 
     def rotate_grasp(self, grasp, roll=0.0, pitch=0.0, yaw=0.0):
-        return self.transform_grasp(grasp, angular_rpy=[roll, pitch, yaw])
+        return self.transform_grasp(grasp, angular_rpy=[roll, pitch, yaw], rotate_linear=False)
 
-    def transform_grasp(self, grasp, linear=[0.0, 0.0, 0.0], angular_rpy=[0.0, 0.0, 0.0]):
+    def transform_grasp(self, grasp, linear=[0.0, 0.0, 0.0], angular_rpy=[0.0, 0.0, 0.0], rotate_linear=False):
         '''
         input: geometry_msgs/Pose (grasp) and the incremental transform that you want to apply
         output: this function does not modify the input grasp by reference
@@ -132,17 +132,24 @@ class Grasps:
         )
         angular_q = tf.transformations.quaternion_from_euler(angular_rpy[0], angular_rpy[1], angular_rpy[2])
         q_new = tf.transformations.quaternion_multiply(angular_q, q_orig)
-        derived_grasp.position.x += linear[0]
-        derived_grasp.position.y += linear[1]
-        derived_grasp.position.z += linear[2]
+        if rotate_linear:
+            rot_mat = tf.transformations.quaternion_matrix(angular_q)
+            rotated_grasp = np.dot(rot_mat, np.array([derived_grasp.position.x, derived_grasp.position.y, derived_grasp.position.z, 1.0]))        
+            derived_grasp.position.x = rotated_grasp[0] + linear[0]
+            derived_grasp.position.y = rotated_grasp[1] + linear[1]
+            derived_grasp.position.z = rotated_grasp[2] + linear[2]
+        else:
+            derived_grasp.position.x += linear[0]
+            derived_grasp.position.y += linear[1]
+            derived_grasp.position.z += linear[2]
         derived_grasp.orientation.x = q_new[0]
         derived_grasp.orientation.y = q_new[1]
         derived_grasp.orientation.z = q_new[2]
         derived_grasp.orientation.w = q_new[3]
         return derived_grasp
 
-    def rotate_grasps(self, grasps, roll=0.0, pitch=0.0, yaw=0.0, replace=False):
-        self.transform_grasps(grasps, angular_rpy=[roll, pitch, yaw], replace=replace)
+    def rotate_grasps(self, grasps, roll=0.0, pitch=0.0, yaw=0.0, replace=False, rotate_linear=False):
+        self.transform_grasps(grasps, angular_rpy=[roll, pitch, yaw], replace=replace, rotate_linear=rotate_linear)
 
     def find_grasp_index(self, grasp):
         assert isinstance(grasp, Pose)
@@ -157,14 +164,14 @@ class Grasps:
                                         return i
         return -1
 
-    def transform_grasps(self, grasps, linear=[0.0, 0.0, 0.0], angular_rpy=[0.0, 0.0, 0.0], replace=False):
+    def transform_grasps(self, grasps, linear=[0.0, 0.0, 0.0], angular_rpy=[0.0, 0.0, 0.0], replace=False, rotate_linear=False):
         assert isinstance(grasps, list)
         self.pause_history()  # for undo to work on all pattern poses we pause history
         static_grasps = copy.deepcopy(grasps)
         for grasp in static_grasps:
             assert isinstance(grasp, Pose)
             derived_grasp = copy.deepcopy(grasp)
-            derived_grasp = self.transform_grasp(grasp, linear, angular_rpy)
+            derived_grasp = self.transform_grasp(grasp, linear, angular_rpy, rotate_linear=rotate_linear)
             if replace:
                 grasp_index = self.find_grasp_index(grasp)
                 if grasp_index == -1:
@@ -177,10 +184,10 @@ class Grasps:
         self.unpause_history()  # for undo to work on all pattern poses we unpause history
         self.add_state_to_history()
 
-    def rotate_selected_grasps(self, roll=0.0, pitch=0.0, yaw=0.0, replace=False):
-        return self.transform_selected_grasps(angular_rpy=[roll, pitch, yaw], replace=replace)
+    def rotate_selected_grasps(self, roll=0.0, pitch=0.0, yaw=0.0, replace=False, rotate_linear=False):
+        return self.transform_selected_grasps(angular_rpy=[roll, pitch, yaw], replace=replace, rotate_linear=rotate_linear)
 
-    def transform_selected_grasps(self, linear=[0.0, 0.0, 0.0], angular_rpy=[0.0, 0.0, 0.0], replace=False):
+    def transform_selected_grasps(self, linear=[0.0, 0.0, 0.0], angular_rpy=[0.0, 0.0, 0.0], replace=False, rotate_linear=False):
         if self.no_grasp_is_selected():
             return False
         grasps = self.get_selected_grasps()
@@ -188,7 +195,7 @@ class Grasps:
         if grasps == []:
             return False
         else:
-            self.transform_grasps(grasps, linear, angular_rpy, replace)
+            self.transform_grasps(grasps, linear, angular_rpy, replace, rotate_linear)
             return True
 
     def remove_grasp(self, grasp):

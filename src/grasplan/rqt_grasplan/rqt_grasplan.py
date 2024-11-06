@@ -211,8 +211,11 @@ class RqtGrasplan(Plugin):
             translation_str = f'{tab}{tab}{tab}translation: [{linear[0]:.6f}, {linear[1]:.6f}, {linear[2]:.6f}]'
             grasp_stream_list.append(translation_str)
             # rotation
-            rotation_str = f'{tab}{tab}{tab}rotation: [{angular_q[0]:.6f}, {angular_q[1]:.6f}, {angular_q[2]:.6f},'
-            ' {angular_q[3]:.6f}]'
+            rotation_str = (f'{tab}{tab}{tab}rotation: ['
+                            f'{angular_q[0]:.6f}, '
+                            f'{angular_q[1]:.6f}, '
+                            f'{angular_q[2]:.6f}, '
+                            f'{angular_q[3]:.6f}]')
             grasp_stream_list.append(rotation_str)
         rospy.loginfo(f'writing grasps to file: {grasps_yaml_path}')
         f = open(grasps_yaml_path, 'w+')
@@ -444,7 +447,7 @@ class RqtGrasplan(Plugin):
                 pitch = math.pi
             if self._widget.chkEditGAxisZ.isChecked():
                 yaw = math.pi
-            if not self.grasps.rotate_selected_grasps(roll, pitch, yaw, replace=replace):
+            if not self.grasps.rotate_selected_grasps(roll, pitch, yaw, replace=replace, rotate_linear=False):
                 self.log_error('Failed to apply pattern, have you selected a grasp or grasps first?')
         # circular pattern
         elif self._widget.optEditGPatternCircular.isChecked():
@@ -471,7 +474,27 @@ class RqtGrasplan(Plugin):
                     pitch += ang_step
                 if self._widget.chkEditGAxisZ.isChecked():
                     yaw += ang_step
-                self.grasps.rotate_grasps(grasps, roll, pitch, yaw, replace=replace)
+                self.grasps.rotate_grasps(grasps, roll, pitch, yaw, replace=replace, rotate_linear=True)
+        elif self._widget.optEditGPatternLinear.isChecked():
+            # read linear step
+            lin_step = float(self._widget.txtEditGStep.toPlainText())
+            number_of_grasps = int(self._widget.txtEditGNumberOfGrasps.toPlainText())
+            if number_of_grasps < 2:
+                self.log_error('Number of grasps to make pattern must be greater than 1')
+                return
+            x, y, z = 0.0, 0.0, 0.0
+            grasps = self.grasps.get_selected_grasps()
+            if len(grasps) == 0:
+                self.log_error("Can't create pattern, no grasps are selected")
+                return
+            for pattern_grasp in range(number_of_grasps - 1):
+                if self._widget.chkEditGAxisX.isChecked():
+                    x += lin_step
+                if self._widget.chkEditGAxisY.isChecked():
+                    y += lin_step
+                if self._widget.chkEditGAxisZ.isChecked():
+                    z += lin_step
+                self.grasps.transform_grasps(grasps, linear=[x, y, z],replace=replace, rotate_linear=False)
         if self._widget.chkGraspSAllGrasps.isChecked():
             self.grasps.select_all_grasps()
         else:
