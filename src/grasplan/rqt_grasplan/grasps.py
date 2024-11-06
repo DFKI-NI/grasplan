@@ -134,7 +134,9 @@ class Grasps:
         q_new = tf.transformations.quaternion_multiply(angular_q, q_orig)
         if rotate_linear:
             rot_mat = tf.transformations.quaternion_matrix(angular_q)
-            rotated_grasp = np.dot(rot_mat, np.array([derived_grasp.position.x, derived_grasp.position.y, derived_grasp.position.z, 1.0]))        
+            rotated_grasp = np.dot(
+                rot_mat, np.array([derived_grasp.position.x, derived_grasp.position.y, derived_grasp.position.z, 1.0])
+            )
             derived_grasp.position.x = rotated_grasp[0] + linear[0]
             derived_grasp.position.y = rotated_grasp[1] + linear[1]
             derived_grasp.position.z = rotated_grasp[2] + linear[2]
@@ -164,7 +166,9 @@ class Grasps:
                                         return i
         return -1
 
-    def transform_grasps(self, grasps, linear=[0.0, 0.0, 0.0], angular_rpy=[0.0, 0.0, 0.0], replace=False, rotate_linear=False):
+    def transform_grasps(
+        self, grasps, linear=[0.0, 0.0, 0.0], angular_rpy=[0.0, 0.0, 0.0], replace=False, rotate_linear=False
+    ):
         assert isinstance(grasps, list)
         self.pause_history()  # for undo to work on all pattern poses we pause history
         static_grasps = copy.deepcopy(grasps)
@@ -185,9 +189,13 @@ class Grasps:
         self.add_state_to_history()
 
     def rotate_selected_grasps(self, roll=0.0, pitch=0.0, yaw=0.0, replace=False, rotate_linear=False):
-        return self.transform_selected_grasps(angular_rpy=[roll, pitch, yaw], replace=replace, rotate_linear=rotate_linear)
+        return self.transform_selected_grasps(
+            angular_rpy=[roll, pitch, yaw], replace=replace, rotate_linear=rotate_linear
+        )
 
-    def transform_selected_grasps(self, linear=[0.0, 0.0, 0.0], angular_rpy=[0.0, 0.0, 0.0], replace=False, rotate_linear=False):
+    def transform_selected_grasps(
+        self, linear=[0.0, 0.0, 0.0], angular_rpy=[0.0, 0.0, 0.0], replace=False, rotate_linear=False
+    ):
         if self.no_grasp_is_selected():
             return False
         grasps = self.get_selected_grasps()

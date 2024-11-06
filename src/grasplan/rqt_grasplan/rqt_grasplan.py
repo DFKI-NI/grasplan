@@ -211,11 +211,13 @@ class RqtGrasplan(Plugin):
             translation_str = f'{tab}{tab}{tab}translation: [{linear[0]:.6f}, {linear[1]:.6f}, {linear[2]:.6f}]'
             grasp_stream_list.append(translation_str)
             # rotation
-            rotation_str = (f'{tab}{tab}{tab}rotation: ['
-                            f'{angular_q[0]:.6f}, '
-                            f'{angular_q[1]:.6f}, '
-                            f'{angular_q[2]:.6f}, '
-                            f'{angular_q[3]:.6f}]')
+            rotation_str = (
+                f'{tab}{tab}{tab}rotation: ['
+                f'{angular_q[0]:.6f}, '
+                f'{angular_q[1]:.6f}, '
+                f'{angular_q[2]:.6f}, '
+                f'{angular_q[3]:.6f}]'
+            )
             grasp_stream_list.append(rotation_str)
         rospy.loginfo(f'writing grasps to file: {grasps_yaml_path}')
         f = open(grasps_yaml_path, 'w+')
@@ -494,7 +496,7 @@ class RqtGrasplan(Plugin):
                     y += lin_step
                 if self._widget.chkEditGAxisZ.isChecked():
                     z += lin_step
-                self.grasps.transform_grasps(grasps, linear=[x, y, z],replace=replace, rotate_linear=False)
+                self.grasps.transform_grasps(grasps, linear=[x, y, z], replace=replace, rotate_linear=False)
         if self._widget.chkGraspSAllGrasps.isChecked():
             self.grasps.select_all_grasps()
         else:
