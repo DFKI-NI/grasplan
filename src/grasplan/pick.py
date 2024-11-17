@@ -143,12 +143,11 @@ class PickTools:
         self.pick_action_server = actionlib.SimpleActionServer(
             'pick_object', PickObjectAction, self.pick_obj_action_callback, False
         )
-        self.pick_action_server.start()
-
         # prepare fallback option because moveit pickup action server ignores preemption requests
         # create joint controller cancellers for both arm and gripper
         ns = rospy.get_namespace().strip('/')  # programatically get robot namespace
         self.action_client_helper = ActionClientHelper(ns, self.pick_action_server, controller_names=['arm', 'gripper'])
+        self.pick_action_server.start()
 
         rospy.loginfo('pick node ready!')
 
