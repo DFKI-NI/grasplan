@@ -54,11 +54,11 @@ from moveit_msgs.msg import (
     OrientationConstraint,
 )
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
-from visualization_msgs.msg import Marker
 from grasplan.msg import PlaceObjectAction, PlaceObjectResult
 from moveit_msgs.msg import MoveItErrorCodes
 from pose_selector.srv import GetPoses
-from visualization_msgs.msg import MarkerArray
+from grasplan.tools.action_client_helper import ActionClientHelper
+from visualization_msgs.msg import Marker, MarkerArray
 from typing import List
 from std_msgs.msg import Header
 
@@ -67,14 +67,12 @@ class PlaceTools:
     def __init__(self, action_server_required=True):
         self.global_reference_frame = rospy.get_param('~global_reference_frame', 'map')
         self.arm_pose_with_objs_in_fov = rospy.get_param('~arm_pose_with_objs_in_fov', 'observe100cm_right')
-        self.timeout = rospy.get_param('~timeout', 50.0)  # in seconds
         self.min_dist = rospy.get_param('~min_dist', 0.2)
         self.ignore_min_dist_list = rospy.get_param('~ignore_min_dist_list', ['foo_obj'])
         self.group_name = rospy.get_param('~group_name', 'arm')
         self.arm_name = rospy.get_param('~arm_name', 'ur5')
         self.gripper_joint_names = rospy.get_param('~gripper_joint_names')
         self.gripper_joint_efforts = rospy.get_param('~gripper_joint_efforts')
-        self.place_object_server_name = rospy.get_param('~place_object_server_name', 'place')  # /mobipick/place
         self.gripper_release_distance = rospy.get_param('~gripper_release_distance', 0.1)
         self.planning_time = rospy.get_param('~planning_time', 20.0)
         arm_goal_tolerance = rospy.get_param('~arm_goal_tolerance', 0.01)
@@ -100,9 +98,9 @@ class PlaceTools:
             '~pick_pose_selector_get_all_poses_srv_name', '/pose_selector_get_all'
         )
         rospy.loginfo(
-            'waiting for pose selector services: {place_pose_selector_activate_srv_name},'
-            ' {place_pose_selector_clear_srv_name} {pick_pose_selector_activate_srv_name},'
-            ' {pick_pose_selector_get_all_poses_srv_name}'
+            f'waiting for pose selector services: {place_pose_selector_activate_srv_name},'
+            f' {place_pose_selector_clear_srv_name} {pick_pose_selector_activate_srv_name},'
+            f' {pick_pose_selector_get_all_poses_srv_name}'
         )
         rospy.wait_for_service(place_pose_selector_activate_srv_name, 30.0)
         rospy.wait_for_service(place_pose_selector_clear_srv_name, 30.0)
@@ -148,6 +146,12 @@ class PlaceTools:
         if action_server_required:
             self.place_action_server = actionlib.SimpleActionServer(
                 'place_object', PlaceObjectAction, self.place_obj_action_callback, False
+            )
+            # prepare fallback option because moveit pickup action server ignores preemption requests
+            # create joint controller cancellers for both arm and gripper
+            ns = rospy.get_namespace().strip('/')  # programatically get robot namespace
+            self.action_client_helper = ActionClientHelper(
+                ns, self.place_action_server, controller_names=['arm', 'gripper']
             )
             self.place_action_server.start()
 
@@ -203,6 +207,8 @@ class PlaceTools:
         override_disentangle_dont_doit = False
         override_observe_before_place_dont_doit = False
         for i, num_poses in enumerate(num_poses_list):
+            if self.place_action_server.is_preempt_requested():
+                break
             rospy.logwarn(f'place -> try number: {i + 1}')
             # disentangle cable only on first attempt
             if i == 0:
@@ -225,6 +231,9 @@ class PlaceTools:
                 break
         if success:
             self.place_action_server.set_succeeded(PlaceObjectResult(success=True))
+        elif self.place_action_server.is_preempt_requested():
+            rospy.logwarn("Preemption requested during place goal processing.")
+            self.place_action_server.set_preempted()
         else:
             self.place_action_server.set_aborted(PlaceObjectResult(success=False))
 
@@ -278,6 +287,7 @@ class PlaceTools:
         '''
         create action lib client and call moveit place action server
         '''
+        PLACE_OBJECT_SERVER_NAME = 'place'
         assert isinstance(observe_before_place, bool)
         rospy.loginfo(f'received request to place object on {support_object}')
 
@@ -307,8 +317,7 @@ class PlaceTools:
                 self.activate_pick_pose_selector_srv(False)
                 self.add_objs_to_planning_scene()
 
-        action_client = actionlib.SimpleActionClient(self.place_object_server_name, PlaceAction)
-        rospy.loginfo(f'sending place goal to {self.place_object_server_name} action server')
+        action_client = actionlib.SimpleActionClient(PLACE_OBJECT_SERVER_NAME, PlaceAction)
 
         # generate plane from object surface
         plane = obj_to_plane(support_object, self.scene)
@@ -345,7 +354,7 @@ class PlaceTools:
         rospy.ServiceProxy('clear_octomap', Empty)()
 
         if action_client.wait_for_server(timeout=rospy.Duration.from_sec(2.0)):
-            rospy.loginfo(f'found {self.place_object_server_name} action server')
+            rospy.loginfo(f'found {PLACE_OBJECT_SERVER_NAME} action server')
             goal = self.make_place_goal_msg(
                 object_to_be_placed, support_object, global_place_poses, use_path_constraints=self.use_path_constraints
             )
@@ -358,12 +367,17 @@ class PlaceTools:
                         rospy.loginfo(f'going to intermediate arm pose {arm_pose} to disentangle cable')
                         self.move_arm_to_posture(arm_pose)
 
-            rospy.loginfo(f'sending place {object_to_be_placed} goal to {self.place_object_server_name} action server')
-            action_client.send_goal(goal)
-            rospy.loginfo(f'waiting for result from {self.place_object_server_name} action server')
-            if action_client.wait_for_result(rospy.Duration.from_sec(self.timeout)):
+            rospy.loginfo(
+                f'sending place {object_to_be_placed} goal to {PLACE_OBJECT_SERVER_NAME} action server '
+                'and waiting for result'
+            )
+            if self.action_client_helper.send_goal_to_rogue_server_and_wait(goal, action_client, patience_timeout=0.1):
+
+                if self.place_action_server.is_preempt_requested():
+                    return False
+
                 result = action_client.get_result()
-                # rospy.loginfo(f'{self.place_object_server_name} is done with execution, resuĺt was = "{result}"')
+                # rospy.loginfo(f'{PLACE_OBJECT_SERVER_NAME} is done with execution, resuĺt was = "{result}"')
 
                 # # ------ result handling
 
@@ -409,7 +423,7 @@ class PlaceTools:
                     print_moveit_error(result.error_code.val)
                 return False
         else:
-            rospy.logerr(f'action server {self.place_object_server_name} not available')
+            rospy.logerr(f'action server {PLACE_OBJECT_SERVER_NAME} not available')
             return False
         return False
 
