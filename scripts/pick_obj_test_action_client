@@ -1,4 +1,4 @@
-#! /usr/bin/env python3
+#!/usr/bin/env python3
 
 import sys
 import rospy
@@ -8,54 +8,66 @@ from grasplan.msg import PickObjectAction, PickObjectGoal
 
 if __name__ == '__main__':
     rospy.init_node('pick_object_action_client')
+
+    # Check for namespace and arguments
     if len(sys.argv) > 1:
         if sys.argv[1] != '__ns:=mobipick':
-            rospy.logwarn('have you run this node without the mobipick as namespace? if so, it might not work!')
+            rospy.logwarn('Have you run this node without the "mobipick" namespace? It might not work!')
 
         myargv = rospy.myargv()
         if len(myargv) < 3:
             rospy.logfatal(f'Usage: {myargv[0]} object_to_pick support_surface_name')
             sys.exit(1)
+
+        # Parse arguments
         object_to_pick = myargv[1]
         support_surface_name = myargv[2]
     else:
         rospy.logwarn(
-            'you have run this node without arguments, at least the mobipick namespace is expected!'
-            ' ( __ns:=mobipick ) ... exiting'
+            'Node launched without arguments; expected at least the "mobipick" namespace ( __ns:=mobipick ). Exiting.'
         )
         sys.exit(1)
-    timeout = 50.0  # in seconds, default: 50.0
+
+    # Action client setup
+    timeout = 50.0  # Timeout in seconds for waiting for result
     pick_object_server_name = 'pick_object'
     action_client = actionlib.SimpleActionClient(pick_object_server_name, PickObjectAction)
-    rospy.loginfo(f'waiting for {pick_object_server_name} action server')
+
+    # Wait for the action server to be available
+    rospy.loginfo(f'Waiting for {pick_object_server_name} action server...')
     if action_client.wait_for_server(timeout=rospy.Duration.from_sec(30.0)):
-        rospy.loginfo(f'found {pick_object_server_name} action server')
+        rospy.loginfo(f'Connected to {pick_object_server_name} action server')
+
+        # Send goal to action server
         goal = PickObjectGoal()
-        goal.object_name = object_to_pick  # pick "any" multimeter
+        goal.object_name = object_to_pick  # does not necessarily needs to be an achored obj
         goal.support_surface_name = support_surface_name
-        # goal.object_name = 'multimeter_1' # pick a specific multimeter
+
+        # Optional ignore list handling
         goal.ignore_object_list = []
         if len(myargv) > 3:
-            for i in range(len(myargv) - 3):
-                goal.ignore_object_list.append(myargv[i + 3])
-        rospy.loginfo(
-            f'sending -> pick {object_to_pick} from {support_surface_name}'
-            ' <- goal to {pick_object_server_name} action server'
-        )
-        if len(goal.ignore_object_list) > 0:
-            rospy.logwarn(f'the following objects: {goal.ignore_object_list} will not be added to the planning scene')
+            goal.ignore_object_list = myargv[3:]
+
+        rospy.loginfo(f'Sending goal: pick {object_to_pick} from {support_surface_name} to {pick_object_server_name}')
+        if goal.ignore_object_list:
+            rospy.logwarn(f'The following objects will be ignored in planning: {goal.ignore_object_list}')
         else:
-            rospy.loginfo('all objects are taken into account in planning scene')
+            rospy.loginfo('All objects will be considered in the planning scene')
+
         action_client.send_goal(goal)
-        rospy.loginfo(f'waiting for result from {pick_object_server_name} action server')
+
+        # Wait for result with specified timeout
+        rospy.loginfo(f'Waiting for result from {pick_object_server_name} action server...')
         if action_client.wait_for_result(rospy.Duration.from_sec(timeout)):
             result = action_client.get_result()
-            rospy.loginfo(f'{pick_object_server_name} is done with execution, resuĺt was = "{result}"')
+            rospy.loginfo(f'{pick_object_server_name} completed execution with result = "{result}"')
             if result.success:
-                rospy.loginfo(f'Succesfully picked {object_to_pick}')
+                rospy.loginfo(f'Successfully picked {object_to_pick}')
             else:
                 rospy.logerr(f'Failed to pick {object_to_pick}')
         else:
-            rospy.logerr(f'Failed to pick {object_to_pick}, timeout?')
+            # Cancel the goal if timeout occurs
+            action_client.cancel_goal()
+            rospy.logerr(f'Failed to pick {object_to_pick} within the allocated time. Goal cancellation was sent.')
     else:
-        rospy.logerr(f'action server {pick_object_server_name} not available')
+        rospy.logerr(f'Action server {pick_object_server_name} not available within the timeout')

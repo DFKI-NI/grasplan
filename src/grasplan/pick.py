@@ -42,6 +42,7 @@ from grasplan.tools.moveit_errors import print_moveit_error
 from moveit_msgs.msg import MoveItErrorCodes, PickupAction, PickupGoal
 from grasplan.msg import PickObjectAction, PickObjectResult
 from grasplan.tools.common import objectToPick
+from grasplan.tools.action_client_helper import ActionClientHelper
 from visualization_msgs.msg import Marker, MarkerArray
 
 
@@ -143,12 +144,37 @@ class PickTools:
             'pick_object', PickObjectAction, self.pick_obj_action_callback, False
         )
         self.pick_action_server.start()
+
+        # prepare fallback option because moveit pickup action server ignores preemption requests
+        # create joint controller cancellers for both arm and gripper
+        ns = rospy.get_namespace().strip('/')  # programatically get robot namespace
+        self.action_client_helper = ActionClientHelper(ns, self.pick_action_server, controller_names=['arm', 'gripper'])
+
         rospy.loginfo('pick node ready!')
 
     def pick_obj_action_callback(self, goal):
-        if self.pick_object(goal.object_name, goal.support_surface_name, self.grasp_type, goal.ignore_object_list):
+        # Explicitly check for preemption at the start
+        if self.pick_action_server.is_preempt_requested():
+            rospy.logwarn("Preemption requested at the start of the goal. Aborting goal...")
+            self.pick_action_server.set_preempted()
+            return
+
+        # Process the goal
+        success = self.pick_object(
+            goal.object_name, goal.support_surface_name, self.grasp_type, goal.ignore_object_list
+        )
+
+        if self.pick_action_server.is_preempt_requested():
+            rospy.logwarn("Preemption requested during pick goal processing.")
+            self.pick_action_server.set_preempted()
+            return
+
+        # Handle the goal result
+        if success:
+            rospy.loginfo("Pick goal completed successfully.")
             self.pick_action_server.set_succeeded(PickObjectResult(success=True))
         else:
+            rospy.logwarn("Pick goal failed to complete.")
             self.pick_action_server.set_aborted(PickObjectResult(success=False))
 
     def graspTypeCB(self, msg):
@@ -374,6 +400,13 @@ class PickTools:
         if self.pregrasp_posture_required:
             self.move_arm_to_posture(self.pregrasp_posture)
 
+        # check if user cancelled action
+        if self.pick_action_server.is_preempt_requested():
+            rospy.logwarn(
+                f'grasplan {self.pick_action_server.action_server.ns} ' 'action server goal cancel request received'
+            )
+            return False
+
         # ::::::::: pick
         rospy.loginfo('picking object now')
 
@@ -395,6 +428,13 @@ class PickTools:
                 rospy.loginfo(f'going to intermediate arm pose {arm_pose} to disentangle cable')
                 self.move_arm_to_posture(arm_pose)
 
+        # check if user cancelled action
+        if self.pick_action_server.is_preempt_requested():
+            rospy.logwarn(
+                f'grasplan {self.pick_action_server.action_server.ns} ' 'action server goal cancel request received'
+            )
+            return False
+
         # try to pick object with moveit
         # result = self._pick_with_moveit_commander(object_to_pick, grasps, support_surface_name)
         result = self._pick_with_action(object_to_pick, grasps, support_surface_name)
@@ -412,7 +452,8 @@ class PickTools:
             return True
         else:
             rospy.logerr('grasp failed')
-            print_moveit_error(result)
+            if result:  # if result is None it means moveit action server was not found within 2 secs
+                print_moveit_error(result)  # only print moveit error if result is different than None
         return False
 
     def _pick_with_moveit_commander(self, object_to_pick, grasps, support_surface_name):
@@ -426,6 +467,7 @@ class PickTools:
         This is so we can set the support_surface_name without also setting allow_gripper_support_collision to "true",
         otherwise there will be collisions.
         """
+        result = None
         PICK_OBJECT_SERVER_NAME = 'pickup'
 
         action_client = actionlib.SimpleActionClient(PICK_OBJECT_SERVER_NAME, PickupAction)
@@ -445,15 +487,11 @@ class PickTools:
                 f'sending pick {object_to_pick.get_object_class_and_id_as_string()} goal '
                 f'to {rospy.resolve_name(PICK_OBJECT_SERVER_NAME)} action server'
             )
-            action_client.send_goal(goal)
             rospy.loginfo(f'waiting for result from {rospy.resolve_name(PICK_OBJECT_SERVER_NAME)} action server')
-            if action_client.wait_for_result(rospy.Duration.from_sec(60.0)):
-                result = action_client.get_result().error_code.val
-            else:
-                result = MoveItErrorCodes.TIMED_OUT
+            self.action_client_helper.send_goal_to_rogue_server_and_wait(goal, action_client, patience_timeout=0.1)
+            result = action_client.get_result().error_code.val  # get moveit error code
         else:
-            result = MoveItErrorCodes.TIMED_OUT
-
+            rospy.logerr(f'action server {PICK_OBJECT_SERVER_NAME} was not found within allocated time')
         return result
 
     def start_pick_node(self):
