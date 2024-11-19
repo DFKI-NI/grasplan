@@ -72,7 +72,7 @@ class TrajectoryCanceller:
         goal_id = msg.goal_id.id
         if goal_id not in self.goal_set:
             self.goal_set.add(goal_id)
-            rospy.loginfo(f'Captured new goal_id for {self.canceller_type}: {goal_id}')
+            rospy.logdebug(f'Captured new goal_id for {self.canceller_type}: {goal_id}')
 
     def status_callback(self, msg):
         # Iterate over each status in the status_list
@@ -83,7 +83,7 @@ class TrajectoryCanceller:
             if goal_status == GoalStatus.SUCCEEDED:
                 if goal_id in self.goal_set:
                     self.goal_set.remove(goal_id)
-                    rospy.loginfo(f'Goal {goal_id} succeeded and removed from set ({self.canceller_type})')
+                    rospy.logdebug(f'Goal {goal_id} succeeded and removed from set ({self.canceller_type})')
 
     def has_active_goals(self):
         # Check if there are any goals in the set
