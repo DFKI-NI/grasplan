@@ -79,6 +79,7 @@ class PlaceTools:
         self.use_path_constraints = rospy.get_param('~use_path_constraints', False)
         self.disentangle_required = rospy.get_param('~disentangle_required', False)
         self.poses_to_go_before_place = rospy.get_param('~poses_to_go_before_place', [])
+        self.max_batch_size = rospy.get_param('~max_batch_size', 20)
 
         self.plane_vis_pub = rospy.Publisher('~support_plane_as_marker', Marker, queue_size=1, latch=True)
         self.place_poses_pub = rospy.Publisher('~place_poses', ObjectList, queue_size=50)
@@ -224,11 +225,16 @@ class PlaceTools:
                 goal.support_surface_name,
                 observe_before_place=goal.observe_before_place,
                 number_of_poses=num_poses,
+                max_batch_size=self.max_batch_size,
                 override_disentangle_dont_doit=override_disentangle_dont_doit,
                 override_observe_before_place_dont_doit=override_observe_before_place_dont_doit,
             ):
                 success = True
                 break
+            else:
+                if self.place_action_server.is_preempt_requested():
+                    success = False
+                    break
         if success:
             self.place_action_server.set_succeeded(PlaceObjectResult(success=True))
         elif self.place_action_server.is_preempt_requested():
@@ -276,23 +282,35 @@ class PlaceTools:
             )
             self.tf_buffer.set_transform_static(tf, "grasplan")
 
+    def extract_batch(self, global_place_poses, start_index, max_batch_size):
+        # Create a new ObjectList for the batch
+        batch_poses = ObjectList()
+        # Copy the header from the original object
+        batch_poses.header = global_place_poses.header
+        # Extract the subset of poses while preserving datatype
+        batch_poses.objects = global_place_poses.objects[start_index : start_index + max_batch_size]
+        return batch_poses
+
     def place_object(
         self,
         support_object,
         observe_before_place=False,
         number_of_poses=5,
+        max_batch_size=20,
         override_disentangle_dont_doit=False,
         override_observe_before_place_dont_doit=False,
     ):
         '''
-        create action lib client and call moveit place action server
+        Create action lib client and call MoveIt place action server in batches of max_batch_size poses.
+        param: max_batch_size: split moveit place poses into small batches to give time in between to check
+                               for preemption this is necessary because moveit ignores preemption requests.
         '''
         PLACE_OBJECT_SERVER_NAME = 'place'
         assert isinstance(observe_before_place, bool)
-        rospy.loginfo(f'received request to place object on {support_object}')
+        rospy.loginfo(f'Received request to place object on {support_object}')
 
         if len(self.scene.get_attached_objects().keys()) == 0:
-            rospy.logerr("the robot is not currently holding any object, can't place")
+            rospy.logerr("The robot is not currently holding any object, can't place")
             return False
 
         # deduce object_to_be_placed by querying which object the gripper currently has attached to its gripper
@@ -307,15 +325,14 @@ class PlaceTools:
         # clear pose selector before starting to place in case some data is left over from previous runs
         self.place_pose_selector_clear_srv()
 
-        if not override_observe_before_place_dont_doit:
-            if observe_before_place:
-                # optionally find free space in table: look at table, update planning scene
-                self.move_arm_to_posture(self.arm_pose_with_objs_in_fov)
-                # activate pick pose selector to observe table
-                self.activate_pick_pose_selector_srv(True)
-                rospy.sleep(0.5)  # give some time to observe
-                self.activate_pick_pose_selector_srv(False)
-                self.add_objs_to_planning_scene()
+        if not override_observe_before_place_dont_doit and observe_before_place:
+            # optionally find free space in table: look at table, update planning scene
+            self.move_arm_to_posture(self.arm_pose_with_objs_in_fov)
+            # activate pick pose selector to observe table
+            self.activate_pick_pose_selector_srv(True)
+            rospy.sleep(0.5)  # give some time to observe
+            self.activate_pick_pose_selector_srv(False)
+            self.add_objs_to_planning_scene()
 
         action_client = actionlib.SimpleActionClient(PLACE_OBJECT_SERVER_NAME, PlaceAction)
 
@@ -332,9 +349,10 @@ class PlaceTools:
             )
         )
 
-        # generate random places within the plane
+        # generate random place poses within the plane
         object_class_tbp = separate_object_class_from_id(object_to_be_placed)[0]
         local_place_poses = gen_place_poses_from_plane(
+            self.place_action_server,
             object_class_tbp,
             support_object,
             plane,
@@ -345,18 +363,29 @@ class PlaceTools:
             ignore_min_dist_list=self.ignore_min_dist_list,
         )
 
-        global_place_poses = self.transform_obj_list(local_place_poses, self.global_reference_frame)
+        if self.place_action_server.is_preempt_requested():
+            rospy.logwarn('Preemption requested. Cancelling goal.')
+            action_client.cancel_goal()
+            return False
 
+        global_place_poses = self.transform_obj_list(local_place_poses, self.global_reference_frame)
         self.place_poses_pub.publish(global_place_poses)
 
         # clear octomap before placing, this is experimental and not sure is needed
-        rospy.logwarn('clearing octomap')
+        rospy.logwarn('Clearing octomap')
         rospy.ServiceProxy('clear_octomap', Empty)()
 
-        if action_client.wait_for_server(timeout=rospy.Duration.from_sec(2.0)):
-            rospy.loginfo(f'found {PLACE_OBJECT_SERVER_NAME} action server')
+        if not action_client.wait_for_server(timeout=rospy.Duration.from_sec(2.0)):
+            rospy.logerr(f'Action server {PLACE_OBJECT_SERVER_NAME} not available')
+            return False
+
+        rospy.loginfo(f'Found {PLACE_OBJECT_SERVER_NAME} action server')
+
+        for i in range(0, len(global_place_poses.objects), max_batch_size):
+            # for 25 objs and max_batch_size of 10, "i" would be 0 in the first loop, 10 in the 2nd and 20 in the last
+            batch_poses = self.extract_batch(global_place_poses, i, max_batch_size)
             goal = self.make_place_goal_msg(
-                object_to_be_placed, support_object, global_place_poses, use_path_constraints=self.use_path_constraints
+                object_to_be_placed, support_object, batch_poses, use_path_constraints=self.use_path_constraints
             )
 
             # allow disentangle to happen only on first place attempt, no need to do it every time
@@ -364,67 +393,73 @@ class PlaceTools:
                 # go to intermediate arm poses if needed to disentangle arm cable
                 if self.disentangle_required:
                     for arm_pose in self.poses_to_go_before_place:
-                        rospy.loginfo(f'going to intermediate arm pose {arm_pose} to disentangle cable')
+                        rospy.loginfo(f'Going to intermediate arm pose {arm_pose} to disentangle cable')
                         self.move_arm_to_posture(arm_pose)
 
             rospy.loginfo(
-                f'sending place {object_to_be_placed} goal to {PLACE_OBJECT_SERVER_NAME} action server '
-                'and waiting for result'
+                f'Sending goal with batch of {len(batch_poses.objects)} poses to place, '
+                f'total poses = {len(global_place_poses.objects)}, '
+                f'batch {i // max_batch_size + 1}/'
+                f'{(len(global_place_poses.objects) + max_batch_size - 1) // max_batch_size}, '
+                f'{(i + len(batch_poses.objects)) * 100 // len(global_place_poses.objects)}% completed'
             )
-            if self.action_client_helper.send_goal_to_rogue_server_and_wait(goal, action_client, patience_timeout=0.1):
-
-                if self.place_action_server.is_preempt_requested():
-                    return False
-
-                result = action_client.get_result()
-                # rospy.loginfo(f'{PLACE_OBJECT_SERVER_NAME} is done with execution, resuĺt was = "{result}"')
-
-                # # ------ result handling
-
-                # # The result of the place attempt
-                # MoveItErrorCodes error_code
-
-                # # The full starting state of the robot at the start of the trajectory
-                # RobotState trajectory_start
-
-                # # The trajectory that moved group produced for execution
-                # RobotTrajectory[] trajectory_stages
-
-                # string[] trajectory_descriptions
-
-                # # The successful place location, if any
-                # PlaceLocation place_location
-
-                # # The amount of time in seconds it took to complete the plan
-                # float64 planning_time
-
-                # ---
-
-                # how to know if place was successful from result?
-                # if result.success:
-                # rospy.loginfo(f'Succesfully placed {object_to_be_placed}')
-                # else:
-                # rospy.logerr(f'Failed to place {object_to_be_placed}')
-
-                # ---
-
-                # handle moveit pick result
-                if result.error_code.val == MoveItErrorCodes.SUCCESS:
-                    rospy.loginfo('Successfully placed object')
-                    self.place_pose_selector_clear_srv()
-                    # clear possible place poses markers in rviz
-                    self.clear_place_poses_markers()
-                    return True
-                else:
-                    rospy.logerr('place object failed')
-                    self.place_pose_selector_clear_srv()
-                    # clear possible place poses markers in rviz
-                    self.clear_place_poses_markers()
-                    print_moveit_error(result.error_code.val)
+            if not self.action_client_helper.send_goal_to_rogue_server_and_wait(
+                goal, action_client, patience_timeout=0.1
+            ):
+                rospy.logerr('Failed to send goal to action server')
                 return False
-        else:
-            rospy.logerr(f'action server {PLACE_OBJECT_SERVER_NAME} not available')
-            return False
+
+            if self.place_action_server.is_preempt_requested():
+                rospy.logwarn('Preemption requested. Cancelling goal.')
+                action_client.cancel_goal()
+                return False
+
+            result = action_client.get_result()
+            # rospy.loginfo(f'{PLACE_OBJECT_SERVER_NAME} is done with execution, resuĺt was = "{result}"')
+
+            # # ------ result handling
+
+            # # The result of the place attempt
+            # MoveItErrorCodes error_code
+
+            # # The full starting state of the robot at the start of the trajectory
+            # RobotState trajectory_start
+
+            # # The trajectory that moved group produced for execution
+            # RobotTrajectory[] trajectory_stages
+
+            # string[] trajectory_descriptions
+
+            # # The successful place location, if any
+            # PlaceLocation place_location
+
+            # # The amount of time in seconds it took to complete the plan
+            # float64 planning_time
+
+            # ---
+
+            # how to know if place was successful from result?
+            # if result.success:
+            # rospy.loginfo(f'Succesfully placed {object_to_be_placed}')
+            # else:
+            # rospy.logerr(f'Failed to place {object_to_be_placed}')
+
+            # ---
+
+            # handle moveit pick result
+
+            if result.error_code.val == MoveItErrorCodes.SUCCESS:
+                rospy.loginfo('Successfully placed object')
+                self.place_pose_selector_clear_srv()
+                self.clear_place_poses_markers()
+                return True
+            else:
+                rospy.logerr('Place object failed')
+                self.place_pose_selector_clear_srv()
+                self.clear_place_poses_markers()
+                print_moveit_error(result.error_code.val)
+
+        rospy.logerr('All batches processed, but no successful placement')
         return False
 
     def make_constraints_msg(self):  # TODO: not yet tested on mobipick
