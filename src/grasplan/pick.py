@@ -90,8 +90,8 @@ class PickTools:
         pose_selector_delete_srv_name = rospy.get_param('~pose_selector_delete_srv_name', '/pose_selector_delete')
         rospy.loginfo(
             f'waiting for pose selector services: {pose_selector_activate_srv_name},'
-            ' {pose_selector_class_query_srv_name}, {pose_selector_get_all_poses_srv_name},'
-            ' {pose_selector_delete_srv_name}'
+            f' {pose_selector_class_query_srv_name}, {pose_selector_get_all_poses_srv_name},'
+            f' {pose_selector_delete_srv_name}'
         )
         # if wait_for_service fails, it will throw a
         # rospy.exceptions.ROSException, and the node will exit (as long as
@@ -248,7 +248,7 @@ class PickTools:
         if not object_found:
             rospy.logerr(
                 'the specific object you want to pick was not found:'
-                ' {object_to_pick.get_object_class_and_id_as_string()}'
+                f' {object_to_pick.get_object_class_and_id_as_string()}'
             )
             return None, None, None
         return (

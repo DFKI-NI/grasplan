@@ -135,7 +135,7 @@ class InsertTools:
                 return pose  # of type object_pose_msgs/ObjectPose.msg
         rospy.logerr(
             f'At least one object of the class {support_object.obj_class} was perceived but is not the one you want,'
-            ' with id: {support_object.id}'
+            f' with id: {support_object.id}'
         )
         return None
 
