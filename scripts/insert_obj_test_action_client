@@ -9,8 +9,8 @@ from grasplan.msg import InsertObjectAction, InsertObjectGoal
 if __name__ == '__main__':
     rospy.init_node('insert_object_action_client')
     if len(sys.argv) > 1:
-        if sys.argv[1] != '__ns:=mobipick':
-            rospy.logwarn('have you run this node without the mobipick as namespace? if so, it might not work!')
+        # if sys.argv[1] != '__ns:=mobipick':
+        #     rospy.logwarn('have you run this node without the mobipick as namespace? if so, it might not work!')
 
         myargv = rospy.myargv()
         if len(myargv) != 3:

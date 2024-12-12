@@ -67,7 +67,10 @@ class GripperFindTransforms:
                     f.write(f'{tab}{tab}mesh_translation: {visual.origin.position}\n')
                     f.write(f'{tab}{tab}mesh_rotation: {visual.origin.rotation}\n')
                     f.write(f"{tab}{tab}mesh_path: '{visual.geometry.filename}'\n")
-                    f.write(f'{tab}{tab}mesh_scale: {visual.geometry.scale}\n')
+                    if visual.geometry.scale is None:
+                        f.write(f'{tab}{tab}mesh_scale: [1.0, 1.0, 1.0]\n')
+                    else:
+                        f.write(f'{tab}{tab}mesh_scale: {visual.geometry.scale}\n')
                     f.write('\n\n')
         f.close()
 

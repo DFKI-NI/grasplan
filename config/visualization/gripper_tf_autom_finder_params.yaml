@@ -2,10 +2,10 @@
 robot_description: robot_description
 
 # the list of links that you wish to visualize in rviz, make sure that a mesh visual is associated with each link in URDF
-required_links: ['MCP1','MCP4','MCP5','index_finger_sensor','middle_finger_sensor','wrist']
+required_links: ['gripper_link', 'gripper_left_finger_link', 'gripper_right_finger_link']
 
 # the gripper end effector link
-ee_link: 'hand_ee_link'
+ee_link: 'gripper_grasping_frame_Z'
 
 # the amount of times to lookup for transform between gripper links and end effector
 tf_attempts: 3

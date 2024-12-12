@@ -9,8 +9,8 @@ from grasplan.msg import PickObjectAction, PickObjectGoal
 if __name__ == '__main__':
     rospy.init_node('pick_object_action_client')
     if len(sys.argv) > 1:
-        if sys.argv[1] != '__ns:=mobipick':
-            rospy.logwarn('have you run this node without the mobipick as namespace? if so, it might not work!')
+        # if sys.argv[1] != '__ns:=mobipick':
+            # rospy.logwarn('have you run this node without the mobipick as namespace? if so, it might not work!')
 
         myargv = rospy.myargv()
         if len(myargv) < 3:
@@ -19,7 +19,7 @@ if __name__ == '__main__':
         object_to_pick = myargv[1]
         support_surface_name = myargv[2]
     else:
-        rospy.logwarn('you have run this node without arguments, at least the mobipick namespace is expected! ( __ns:=mobipick ) ... exiting')
+        rospy.logwarn('you have run this node without arguments') #, at least the mobipick namespace is expected! ( __ns:=mobipick ) ... exiting')
         sys.exit(1)
     timeout = 50.0 # in seconds, default: 50.0
     pick_object_server_name = 'pick_object'

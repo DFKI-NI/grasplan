@@ -306,7 +306,7 @@ def obj_to_plane(support_obj: str, planning_scene: PlanningScene, offset: float 
              center_point[1] + dx * math.sin(rotation_angle[2]) + dy * math.cos(rotation_angle[2]),
              center_point[2] + offset) for dx, dy in corner_offsets]
 
-def attached_obj_height(attached_obj: str, planning_scene: PlanningScene, offset: float = 0.001) -> float:
+def attached_obj_height(attached_obj: str, planning_scene: PlanningScene, offset: float = 0.01) -> float: # TODO: offset should be a parameter
     """
     Get the height of an object attached to the gripper
 

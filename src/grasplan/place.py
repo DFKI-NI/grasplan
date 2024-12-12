@@ -28,6 +28,7 @@ from visualization_msgs.msg import Marker, MarkerArray
 
 class PlaceTools():
     def __init__(self, action_server_required=True):
+        self.namespace = '/' # TODO: find a better way to get the namespace
         self.global_reference_frame = rospy.get_param('~global_reference_frame', 'map')
         self.arm_pose_with_objs_in_fov = rospy.get_param('~arm_pose_with_objs_in_fov', 'observe100cm_right')
         self.timeout = rospy.get_param('~timeout', 50.0) # in seconds
@@ -37,8 +38,8 @@ class PlaceTools():
         self.arm_name = rospy.get_param('~arm_name', 'ur5')
         self.gripper_joint_names = rospy.get_param('~gripper_joint_names')
         self.gripper_joint_efforts = rospy.get_param('~gripper_joint_efforts')
-        self.place_object_server_name = rospy.get_param('~place_object_server_name', 'place') # /mobipick/place
-        self.gripper_release_distance = rospy.get_param('~gripper_release_distance', 0.1)
+        self.place_object_server_name = rospy.get_param('~place_object_server_name', 'place')
+        self.gripper_release_values = rospy.get_param('~gripper_release_values', [0.1])
         self.planning_time = rospy.get_param('~planning_time', 20.0)
         arm_goal_tolerance = rospy.get_param('~arm_goal_tolerance', 0.01)
         self.use_path_constraints = rospy.get_param('~use_path_constraints', False)
@@ -71,9 +72,9 @@ class PlaceTools():
             rospy.signal_shutdown('fatal error')
 
         # activate place pose selector to be ready to store the place poses
-        resp = self.activate_place_pose_selector_srv(True)
+        self.activate_place_pose_selector_srv(True)
 
-        # wait for moveit to become available, TODO: find a cleaner way to wait for moveit
+        # wait for moveit to become available, is there a cleaner way to wait for moveit?
         rospy.wait_for_service('move_group/planning_scene_monitor/set_parameters', 30.0)
         rospy.sleep(2.0)
 
@@ -288,7 +289,7 @@ class PlaceTools():
             return False
         return False
 
-    def make_constraints_msg(self): # TODO: not yet tested on mobipick
+    def make_constraints_msg(self): # TODO: not yet tested on mobipick or tiago, tested on mia hand with UR10 only
         constraints_msg = Constraints()
         constraints_msg.name = 'keep_object_upright'
 
@@ -331,7 +332,7 @@ class PlaceTools():
         # NOTE: multiple place locations are possible to be defined, we just define 1 for now
         # ---
         place_locations = []
-        frame_id = place_poses_as_object_list_msg.header.frame_id # 'mobipick/base_link'
+        frame_id = place_poses_as_object_list_msg.header.frame_id # f'{self.namespace}base_link'
         object_class = separate_object_class_from_id(object_to_be_placed)[0]
         # for obj in self.gen_place_poses(object_class, frame_id=frame_id).objects:
         for obj in place_poses_as_object_list_msg.objects:
@@ -461,8 +462,7 @@ class PlaceTools():
         # The internal posture of the hand for the grasp
         # positions and efforts are used
         # trajectory_msgs/JointTrajectory post_place_posture
-        place_msg.post_place_posture = self.make_gripper_trajectory_msg(self.gripper_release_distance)
-        # NOTE in simple pick n place demo this value is 0.1 m
+        place_msg.post_place_posture = self.make_gripper_trajectory_msg(self.gripper_release_values)
 
         # The position of the end-effector for the grasp relative to a reference frame
         # (that is always specified elsewhere, not in this message)
@@ -475,13 +475,21 @@ class PlaceTools():
         place_msg.quality = 1.0
 
         # The approach motion
+        # linear motion downwards along the negative z axis wrt base link 10 cm, or at least 5 cm
         # GripperTranslation pre_place_approach
         # TODO after tables demo: make robot place from the left as well by parameterizing this value
-        place_msg.pre_place_approach = self.make_gripper_translation_msg('mobipick/base_link', 0.2, vector_z=-1.0)
+        place_msg.pre_place_approach = self.make_gripper_translation_msg(f'base_link', # (odom also works)
+                                                                         desired_distance=0.1, # must be greate than min_distance
+                                                                         vector_z=-1.0,
+                                                                         min_distance=0.05)
 
         # The retreat motion
+        # linear motion upwards along the negative z axis wrt gripper link 12 cm, or at least 10 cm
         # GripperTranslation post_place_retreat
-        place_msg.post_place_retreat = self.make_gripper_translation_msg('mobipick/gripper_tcp', 0.25, vector_x=-1.0)
+        place_msg.post_place_retreat = self.make_gripper_translation_msg(self.robot.arm.get_end_effector_link(),
+                                                                         desired_distance=0.12, # must be greater than min_distance
+                                                                         vector_z=-1.0,
+                                                                         min_distance=0.1)
 
         # an optional list of obstacles that we have semantic information about
         # and that can be touched/pushed/moved in the course of grasping
@@ -490,7 +498,7 @@ class PlaceTools():
 
         return copy.deepcopy(place_msg)
 
-    def make_gripper_trajectory_msg(self, gripper_actuation_distance):
+    def make_gripper_trajectory_msg(self, gripper_actuation_values):
         '''
         Set and return the gripper posture as a trajectory_msgs/JointTrajectory
         only one point is set which is the final gripper target
@@ -500,16 +508,18 @@ class PlaceTools():
         in radian, if MoveIt is configured with a control_msgs/GripperCommand
         controller (e.g., on Mobipick).
         '''
+        # HERE IS THE PROBLEM!!! mobipick has only one gripper joint
+        # where tiago has 2... fix here and also in pick.py -> make_gripper_trajectory_msg
         trajectory = JointTrajectory()
         trajectory.joint_names = self.gripper_joint_names
         trajectory_point = JointTrajectoryPoint()
-        trajectory_point.positions = [gripper_actuation_distance]
+        trajectory_point.positions = gripper_actuation_values
         trajectory_point.effort = self.gripper_joint_efforts
         trajectory_point.time_from_start = rospy.Duration(1.0)  # NOTE in simple pick n place demo this value is 5 s
         trajectory.points.append(trajectory_point)
         return trajectory
 
-    def make_gripper_translation_msg(self, frame_id, distance, vector_x=0.0, vector_y=0.0, vector_z=0.0, min_distance=0.1):
+    def make_gripper_translation_msg(self, frame_id, desired_distance, vector_x=0.0, vector_y=0.0, vector_z=0.0, min_distance=0.1):
         '''
         see: https://github.com/ros-planning/moveit_msgs/blob/master/msg/GripperTranslation.msg
         '''
@@ -529,7 +539,7 @@ class PlaceTools():
 
         # the desired translation distance
         # float32 desired_distance
-        gripper_translation_msg.desired_distance = distance
+        gripper_translation_msg.desired_distance = desired_distance
 
         # the min distance that must be considered feasible before the
         # grasp is even attempted

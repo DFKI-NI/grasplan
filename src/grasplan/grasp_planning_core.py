@@ -24,8 +24,8 @@ class GraspPlanningCore:
         self.grasp_quality = rospy.get_param('~grasp_quality', 1.0)
         self.object_padding = rospy.get_param('~object_padding', 0.04)
         self.max_contact_force = rospy.get_param('~max_contact_force', 1.0)
-        self.distance_gripper_close_per_obj = rospy.get_param('~distance_gripper_close_per_obj', None)
-        self.distance_gripper_open_per_obj = rospy.get_param('~distance_gripper_open_per_obj', None)
+        self.gripper_close_per_obj_values = rospy.get_param('~gripper_close_per_obj_values', None)
+        self.gripper_open_per_obj_values = rospy.get_param('~gripper_open_per_obj_values', None)
         # pregrasp parameters
         self.pre_grasp_approach_min_dist = rospy.get_param('~pre_grasp_approach/min_dist')
         self.pre_grasp_approach_desired = rospy.get_param('~pre_grasp_approach/desired')
@@ -47,7 +47,7 @@ class GraspPlanningCore:
         '''
         if object_class is None or dictionary is None or object_class not in dictionary:
             return joint_angles
-        return [dictionary[object_class]]
+        return dictionary[object_class]
 
     def make_gripper_trajectory(self, joint_angles, dictionary, object_class=None):
         '''
@@ -56,11 +56,13 @@ class GraspPlanningCore:
         '''
         trajectory = JointTrajectory()
         trajectory.joint_names = self.gripper_joint_names
+
         trajectory_point = JointTrajectoryPoint()
         trajectory_point.positions = self.get_joint_value_from_dic(joint_angles, dictionary, object_class=object_class)
         trajectory_point.effort = self.gripper_joint_efforts
         trajectory_point.time_from_start = rospy.Duration(1.0)
-        trajectory.points.append(trajectory_point)
+
+        trajectory.points.append(trajectory_point) # only one point in the trajectory
         return trajectory
 
     def get_object_padding(self):
@@ -82,7 +84,7 @@ class GraspPlanningCore:
         # The internal posture of the hand for the pre-grasp
         # only positions are used
         object_class = separate_object_class_from_id(object_name)[0]
-        g.pre_grasp_posture = self.make_gripper_trajectory(self.gripper_open_distance, self.distance_gripper_open_per_obj, object_class=object_class)
+        g.pre_grasp_posture = self.make_gripper_trajectory(self.gripper_open_distance, self.gripper_open_per_obj_values, object_class=object_class)
 
         # The approach direction to take before picking an object
         g.pre_grasp_approach = self.make_gripper_translation_msg(end_effector_frame,
@@ -96,7 +98,7 @@ class GraspPlanningCore:
 
         # The internal posture of the hand for the grasp
         # positions and efforts are used
-        g.grasp_posture = self.make_gripper_trajectory(self.gripper_close_distance, self.distance_gripper_close_per_obj, object_class=object_class)
+        g.grasp_posture = self.make_gripper_trajectory(self.gripper_close_distance, self.gripper_close_per_obj_values, object_class=object_class)
 
         # The retreat direction to take after a grasp has been completed (object is attached)
         g.post_grasp_retreat = self.make_gripper_translation_msg(self.post_grasp_retreat_frame_id,

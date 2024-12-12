@@ -3,7 +3,7 @@
 
   <!-- visualize and edit teached grasps dumped into yaml file with rviz -->
 
-  <arg name="object_name" default="multimeter"/>
+  <arg name="object_name" default="relay"/>
   <arg name="grasps_yaml_path" default="$(find mobipick_pick_n_place)/config/grasplan/object_grasps"/>
   <arg name="obj_pkg_name" default="pbr_objects" />
 
@@ -33,11 +33,16 @@
   </node>
 
   <!-- visualize gripper in rviz as marker -->
-  <node pkg="grasplan" type="rviz_gripper_visualizer.py" name="rviz_gripper_visualizer" output="screen">
-    <param name="global_reference_frame" value="object" />
-    <rosparam file="$(find mobipick_pick_n_place)/config/grasplan/gripper_open_transformations.yaml" command="load" ns="gripper_transformations"/>
-    <remap from="pose_array" to="/grasp_editor/grasp_poses"/>
-  </node>
+  <arg name="gripper_transforms_config_file"
+       default="$(find mobipick_pick_n_place)/config/gripper_open_transformations.yaml" />
+  <arg name="pose_array_topic" default="/grasp_editor/grasp_poses" />
+  <arg name="global_reference_frame" default="object"/>
+  <include file="$(find grasplan)/launch/visualization/rviz_gripper_visualizer.launch">
+    <arg name="gripper_transforms_config_file"
+         value="$(arg gripper_transforms_config_file)"/>
+    <arg name="pose_array_topic" value="$(arg pose_array_topic)"/>
+    <arg name="global_reference_frame" value="$(arg global_reference_frame)"/>
+  </include>
 
   <node pkg="rviz" type="rviz" name="rviz" args="-d $(find grasplan)/config/rviz/grasp_editor.rviz" required="true" />
 
