@@ -37,6 +37,7 @@ from std_srvs.srv import Empty
 from pose_selector.srv import ClassQuery
 from grasplan.tools.common import objectToPick  # name is misleading, in this case we want to insert an object in it
 from grasplan.msg import InsertObjectAction, InsertObjectResult
+from grasplan.tools.action_client_helper import ActionClientHelper
 
 
 class InsertTools:
@@ -63,6 +64,12 @@ class InsertTools:
         self.insert_action_server = actionlib.SimpleActionServer(
             'insert_object', InsertObjectAction, self.insert_obj_action_callback, False
         )
+        # prepare fallback option because moveit pickup action server ignores preemption requests
+        # create joint controller cancellers for both arm and gripper
+        ns = rospy.get_namespace().strip('/')  # programatically get robot namespace
+        self.action_client_helper = ActionClientHelper(
+            ns, self.insert_action_server, controller_names=['arm', 'gripper']
+        )
         self.insert_action_server.start()
 
         # give some time for publishers and Subscribers to register
@@ -71,6 +78,8 @@ class InsertTools:
     def insert_obj_action_callback(self, goal):
         success = False
         for i in range(2):  # 0, 1 = 2 attemps
+            if self.insert_action_server.is_preempt_requested():
+                break
             rospy.loginfo(f'Insert object: attempt number {i + 1}')
             if i == 0:  # first try, optimistic, keep same orientation as support object
                 # disentangle cable only on first attempt
@@ -98,6 +107,9 @@ class InsertTools:
                 break
         if success:
             self.insert_action_server.set_succeeded(InsertObjectResult(success=True))
+        elif self.insert_action_server.is_preempt_requested():
+            rospy.logwarn("Preemption requested during insert goal processing.")
+            self.insert_action_server.set_preempted()
         else:
             self.insert_action_server.set_aborted(InsertObjectResult(success=False))
 
@@ -123,7 +135,7 @@ class InsertTools:
                 return pose  # of type object_pose_msgs/ObjectPose.msg
         rospy.logerr(
             f'At least one object of the class {support_object.obj_class} was perceived but is not the one you want,'
-            ' with id: {support_object.id}'
+            f' with id: {support_object.id}'
         )
         return None
 
@@ -141,6 +153,8 @@ class InsertTools:
         '''
         assert isinstance(observe_before_insert, bool)
         assert isinstance(support_object_name_as_string, str)
+
+        INSERT_OBJECT_SERVER_NAME = 'place'  # we use the same action server as in place object
 
         support_object = objectToPick(support_object_name_as_string)
 
@@ -179,8 +193,8 @@ class InsertTools:
                     rospy.loginfo(f'going to intermediate arm pose {arm_pose} to disentangle cable')
                     self.place.move_arm_to_posture(arm_pose)
 
-        action_client = actionlib.SimpleActionClient(self.place.place_object_server_name, PlaceAction)
-        rospy.loginfo(f'sending insert command as a place goal to {self.place.place_object_server_name} action server')
+        action_client = actionlib.SimpleActionClient(INSERT_OBJECT_SERVER_NAME, PlaceAction)
+        rospy.loginfo(f'sending insert command as a place goal to {INSERT_OBJECT_SERVER_NAME} action server')
 
         # get object position [x, y] -> without orientation for now
         support_object_pose = self.get_support_object_pose(support_object)
@@ -201,8 +215,11 @@ class InsertTools:
         rospy.loginfo('clearing octomap')
         rospy.ServiceProxy('clear_octomap', Empty)()
 
+        if self.insert_action_server.is_preempt_requested():
+            return False
+
         if action_client.wait_for_server(timeout=rospy.Duration.from_sec(2.0)):
-            rospy.loginfo(f'found {self.place.place_object_server_name} action server')
+            rospy.loginfo(f'found {INSERT_OBJECT_SERVER_NAME} action server')
             goal = self.place.make_place_goal_msg(
                 object_to_be_inserted,
                 support_object.get_object_class_and_id_as_string(),
@@ -210,12 +227,12 @@ class InsertTools:
                 use_path_constraints=False,
             )
 
-            rospy.loginfo(
-                f'sending place {object_to_be_inserted} goal to {self.place.place_object_server_name} action server'
-            )
-            action_client.send_goal(goal)
-            rospy.loginfo(f'waiting for result from {self.place.place_object_server_name} action server')
-            if action_client.wait_for_result(rospy.Duration.from_sec(self.place.timeout)):
+            rospy.loginfo(f'sending place {object_to_be_inserted} goal to {INSERT_OBJECT_SERVER_NAME} action server')
+            rospy.loginfo(f'waiting for result from {INSERT_OBJECT_SERVER_NAME} action server')
+            if self.action_client_helper.send_goal_to_rogue_server_and_wait(goal, action_client, patience_timeout=0.1):
+                if self.insert_action_server.is_preempt_requested():
+                    return False
+
                 result = action_client.get_result()
 
                 # handle moveit pick result
@@ -233,7 +250,7 @@ class InsertTools:
                     print_moveit_error(result.error_code.val)
                 return False
         else:
-            rospy.logerr(f'action server {self.place.place_object_server_name} not available (we use it for insertion)')
+            rospy.logerr(f'action server {INSERT_OBJECT_SERVER_NAME} not available (we use it for insertion)')
             return False
         return False
 

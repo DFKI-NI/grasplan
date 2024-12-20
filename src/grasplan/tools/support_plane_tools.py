@@ -153,6 +153,7 @@ def well_separated(x_y_list, candidate_x, candidate_y, min_dist=0.2):
 
 
 def gen_place_poses_from_plane(
+    place_action_server,
     object_class: str,
     support_object: str,
     plane: List[str],
@@ -179,6 +180,9 @@ def gen_place_poses_from_plane(
         object_pose_msg.class_id = object_class
         count = 0
         while 1:
+            if place_action_server.is_preempt_requested():
+                rospy.logwarn('Preemption requested. Abort place poses generation.')
+                return object_list_msg
             candidate_x = round(random.uniform(plane[0].x, plane[1].x), 4)
             candidate_y = round(random.uniform(plane[0].y, plane[3].y), 4)
             if support_object in ignore_min_dist_list:
