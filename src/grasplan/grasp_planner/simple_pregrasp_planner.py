@@ -1,9 +1,28 @@
-#!/usr/bin/env python3
+# Copyright (c) 2024 DFKI GmbH
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
 
 import rospy
 from grasplan.grasp_planning_core import GraspPlanningCore
 from grasplan.pose_generator import PoseGenerator
 from geometry_msgs.msg import PoseStamped
+
 
 class SimpleGraspPlanner(GraspPlanningCore):
     '''
@@ -13,6 +32,7 @@ class SimpleGraspPlanner(GraspPlanningCore):
     2) replace it with a prerecorded "example" orientation
     3) sample around it in roll, pitch, yaw angles
     '''
+
     def __init__(self):
         super().__init__()
         self.pose_generator = PoseGenerator()
@@ -25,12 +45,14 @@ class SimpleGraspPlanner(GraspPlanningCore):
 
         # setup publishers for visualization purposes
         self.grasp_pose_pub = rospy.Publisher('~visualization/grasp_pose', PoseStamped, queue_size=1)
-        rospy.sleep(0.5) # give some time for publisher to register
+        rospy.sleep(0.5)  # give some time for publisher to register
         rospy.loginfo('simple pregrasp planner object was created')
 
     def generate_grasp_pose(self, object_pose, grasp_type):
         grasp_pose = PoseStamped()
-        grasp_pose.header.frame_id = object_pose.header.frame_id # object pose must be expressed w.r.t : self.robot.get_planning_frame()
+        grasp_pose.header.frame_id = (
+            object_pose.header.frame_id
+        )  # object pose must be expressed w.r.t : self.robot.get_planning_frame()
 
         # take position from perceived object
         translation = [object_pose.pose.position.x, object_pose.pose.position.y, object_pose.pose.position.z]

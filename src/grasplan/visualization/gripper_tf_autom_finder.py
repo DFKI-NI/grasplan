@@ -1,26 +1,53 @@
 #!/usr/bin/env python3
 
+# Copyright (c) 2024 DFKI GmbH
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
 import rospy
 import tf
 from urdf_parser_py.urdf import URDF
+
 
 class GripperFindTransforms:
     '''
     provides information to reconstruct a gripper in rviz using markers
     '''
+
     def __init__(self):
         # parameters
         robot_description = rospy.get_param('~robot_description', 'mobipick/robot_description')
-        self.required_links = rospy.get_param('~required_links', ['mobipick/gripper_right_inner_knuckle',
-            'mobipick/gripper_right_outer_knuckle',
-            'mobipick/gripper_left_inner_knuckle',
-            'mobipick/gripper_left_outer_knuckle',
-            'mobipick/gripper_left_outer_finger',
-            'mobipick/gripper_right_outer_finger',
-            'mobipick/gripper_right_inner_finger',
-            'mobipick/gripper_left_inner_finger',
-            'mobipick/gripper_left_robotiq_fingertip_65mm',
-            'mobipick/gripper_right_robotiq_fingertip_65mm'])
+        self.required_links = rospy.get_param(
+            '~required_links',
+            [
+                'mobipick/gripper_right_inner_knuckle',
+                'mobipick/gripper_right_outer_knuckle',
+                'mobipick/gripper_left_inner_knuckle',
+                'mobipick/gripper_left_outer_knuckle',
+                'mobipick/gripper_left_outer_finger',
+                'mobipick/gripper_right_outer_finger',
+                'mobipick/gripper_right_inner_finger',
+                'mobipick/gripper_left_inner_finger',
+                'mobipick/gripper_left_robotiq_fingertip_65mm',
+                'mobipick/gripper_right_robotiq_fingertip_65mm',
+            ],
+        )
         self.end_effector_link = rospy.get_param('~ee_link', 'mobipick/gripper_tcp')
         self.tf_attempts = rospy.get_param('~tf_attempts', 3)
         # the path where to save the configuration in yaml format
@@ -30,8 +57,10 @@ class GripperFindTransforms:
         rospy.loginfo('-- parsing urdf --')
         try:
             self.robot = URDF.from_parameter_server(robot_description)
-        except:
-            rospy.logerr(f'could not get URDF from param server, make sure that the parameter {robot_description} is set')
+        except KeyError:
+            rospy.logerr(
+                f'could not get URDF from param server, make sure that the parameter {robot_description} is set'
+            )
             raise ValueError('could not get URDF from param server')
         rospy.loginfo('-- end of urdf info--\n')
         self.listener = tf.TransformListener()
@@ -49,8 +78,8 @@ class GripperFindTransforms:
                 rospy.sleep(0.5)
 
     def generate_config_file(self):
-        f = open(self.yaml_path,'w+')
-        f.write(f'# This file was automatically generated, manual editing is not recommended\n\n')
+        f = open(self.yaml_path, 'w+')
+        f.write('# This file was automatically generated, manual editing is not recommended\n\n')
         for link in self.robot.links:
             if link.name in self.required_links:
                 for i, visual in enumerate(link.visuals):
@@ -82,7 +111,8 @@ class GripperFindTransforms:
         rospy.loginfo(f'file generated: {self.yaml_path}')
         rospy.loginfo('bye bye!')
 
-if __name__=='__main__':
+
+if __name__ == '__main__':
     rospy.init_node('gripper_tf_autom_finder_node', anonymous=False)
     gft = GripperFindTransforms()
     gft.start_gripper_find_transform()

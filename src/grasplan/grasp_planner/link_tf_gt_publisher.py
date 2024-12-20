@@ -1,21 +1,42 @@
 #!/usr/bin/python3
 
+# Copyright (c) 2024 DFKI GmbH
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
 import rospy
 import tf
 
 from gazebo_msgs.msg import LinkStates
 
-'''
-subscribe to /gazebo/link_states
-take from parameter server a desired link to track
-publish link pose as tf
-'''
 
 class LinkTFgtPublisher:
+    '''
+    subscribe to /gazebo/link_states
+    take from parameter server a desired link to track
+    publish link pose as tf
+    '''
+
     def __init__(self):
         # parameters
-        self.prefix = rospy.get_param('~prefix', 'gazebo_ros_vel/mia_hand::') # robot_name::
-        self.link_name = rospy.get_param('~link_name', 'wrist') # the name of the link you want to publish tf
+        self.prefix = rospy.get_param('~prefix', 'gazebo_ros_vel/mia_hand::')  # robot_name::
+        self.link_name = rospy.get_param('~link_name', 'wrist')  # the name of the link you want to publish tf
         # subscribe to gazebo model states (gives poses of all existing objects in the simulation
         rospy.Subscriber('/gazebo/link_states', LinkStates, self.LinkStatesCB)
         self.rate = rospy.Rate(30)
@@ -41,9 +62,13 @@ class LinkTFgtPublisher:
         # get link pose
         link_pose = self.link_state_msg.pose[index]
         # broadcast object tf
-        self.tf_broadcaster.sendTransform((link_pose.position.x, link_pose.position.y, link_pose.position.z),\
-        (link_pose.orientation.x, link_pose.orientation.y, link_pose.orientation.z, link_pose.orientation.w),\
-        rospy.Time.now(), self.link_name, 'world')
+        self.tf_broadcaster.sendTransform(
+            (link_pose.position.x, link_pose.position.y, link_pose.position.z),
+            (link_pose.orientation.x, link_pose.orientation.y, link_pose.orientation.z, link_pose.orientation.w),
+            rospy.Time.now(),
+            self.link_name,
+            'world',
+        )
 
     def start_link_tf_ft_pub(self):
         while not rospy.is_shutdown():
@@ -52,6 +77,7 @@ class LinkTFgtPublisher:
                 self.link_state_msg_received = False
                 self.publishTF()
             self.rate.sleep()
+
 
 if __name__ == '__main__':
     rospy.init_node('link_tf_gt_pub', anonymous=False)
