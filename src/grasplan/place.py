@@ -74,7 +74,7 @@ class PlaceTools:
         self.arm_name = rospy.get_param('~arm_name', 'ur5')
         self.gripper_joint_names = rospy.get_param('~gripper_joint_names')
         self.gripper_joint_efforts = rospy.get_param('~gripper_joint_efforts')
-        self.gripper_release_distance = rospy.get_param('~gripper_release_distance', 0.1)
+        self.gripper_release_values = rospy.get_param('~gripper_release_values', [0.1])
         self.planning_time = rospy.get_param('~planning_time', 20.0)
         arm_goal_tolerance = rospy.get_param('~arm_goal_tolerance', 0.01)
         self.use_path_constraints = rospy.get_param('~use_path_constraints', False)
@@ -655,7 +655,7 @@ class PlaceTools:
         # GripperTranslation pre_place_approach
         # TODO after tables demo: make robot place from the left as well by parameterizing this value
         place_msg.pre_place_approach = self.make_gripper_translation_msg(f'base_link', # (odom also works)
-                                                                         desired_distance=0.1, # must be greate than min_distance
+                                                                         0.1, # distance param: must be greater than min_distance
                                                                          vector_z=-1.0,
                                                                          min_distance=0.05)
 
@@ -663,7 +663,7 @@ class PlaceTools:
         # linear motion upwards along the negative z axis wrt gripper link 12 cm, or at least 10 cm
         # GripperTranslation post_place_retreat
         place_msg.post_place_retreat = self.make_gripper_translation_msg(self.robot.arm.get_end_effector_link(),
-                                                                         desired_distance=0.12, # must be greater than min_distance
+                                                                         0.12, # distance param: must be greater than min_distance
                                                                          vector_z=-1.0,
                                                                          min_distance=0.1)
 
@@ -717,7 +717,7 @@ class PlaceTools:
 
         # the desired translation distance
         # float32 desired_distance
-        gripper_translation_msg.desired_distance = desired_distance
+        gripper_translation_msg.desired_distance = distance
 
         # the min distance that must be considered feasible before the
         # grasp is even attempted

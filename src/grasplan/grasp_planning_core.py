@@ -105,7 +105,7 @@ class GraspPlanningCore:
         # only positions are used
         object_class = separate_object_class_from_id(object_name)[0]
         g.pre_grasp_posture = self.make_gripper_trajectory(
-            self.gripper_open_distance, self.distance_gripper_open_per_obj, object_class=object_class
+            self.gripper_open_distance, self.gripper_open_per_obj_values, object_class=object_class
         )
 
         # The approach direction to take before picking an object
@@ -125,7 +125,7 @@ class GraspPlanningCore:
         # The internal posture of the hand for the grasp
         # positions and efforts are used
         g.grasp_posture = self.make_gripper_trajectory(
-            self.gripper_close_distance, self.distance_gripper_close_per_obj, object_class=object_class
+            self.gripper_close_distance, self.gripper_close_per_obj_values, object_class=object_class
         )
 
         # The retreat direction to take after a grasp has been completed (object is attached)

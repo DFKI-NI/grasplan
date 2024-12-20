@@ -129,9 +129,13 @@ class ActionClientHelper:
                 - /robot_namespace/gripper_controller/follow_joint_trajectory/cancel
         """
         self.canceller_list = []
+        if ns == '':
+            topic_start = '/'
+        else:
+            topic_start = f'/{ns}/'
         for controller_name in controller_names:
             self.canceller_list.append(
-                TrajectoryCanceller(f'/{ns}/{controller_name}_controller/follow_joint_trajectory/')
+                TrajectoryCanceller(f'{topic_start}{controller_name}_controller/follow_joint_trajectory/')
             )
 
         self.action_server = action_server
