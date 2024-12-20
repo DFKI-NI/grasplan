@@ -1,4 +1,4 @@
-#! /usr/bin/env python3
+#!/usr/bin/env python3
 
 import sys
 import rospy
@@ -8,44 +8,53 @@ from grasplan.msg import PlaceObjectAction, PlaceObjectGoal
 
 if __name__ == '__main__':
     rospy.init_node('place_object_action_client')
+
+    # Check for namespace and arguments
     if len(sys.argv) > 1:
         if sys.argv[1] != '__ns:=mobipick':
-            rospy.logwarn('have you run this node without the mobipick as namespace? if so, it might not work!')
+            rospy.logwarn('Have you run this node without the "mobipick" namespace? It might not work!')
 
         myargv = rospy.myargv()
         if len(myargv) != 3:
             rospy.logfatal(f'Usage: {myargv[0]} support_surface_name observe_before_placing')
             sys.exit(1)
+
+        # Parse arguments
         support_surface_name = myargv[1]
-        if myargv[2] == 'true' or myargv[2] == 'True':
-            observe_before_place = True
-        elif myargv[2] == 'false' or myargv[2] == 'False':
-            observe_before_place = False
+        observe_before_place = myargv[2].lower() == 'true'
     else:
-        rospy.logwarn(
-            'you have run this node without arguments, at least the mobiplace namespace is expected!'
-            ' ( __ns:=mobiplace )'
-        )
-    timeout = 50.0  # in seconds, default: 50.0
+        rospy.logwarn('Node launched without arguments; expected at least the "mobipick" namespace ( __ns:=mobipick ).')
+        sys.exit(1)
+
+    # Action client setup
+    timeout = 50.0  # Timeout in seconds for waiting for result
     place_object_server_name = 'place_object'
     action_client = actionlib.SimpleActionClient(place_object_server_name, PlaceObjectAction)
-    rospy.loginfo(f'waiting for {place_object_server_name} action server')
+
+    # Wait for the action server to be available
+    rospy.loginfo(f'Waiting for {place_object_server_name} action server...')
     if action_client.wait_for_server(timeout=rospy.Duration.from_sec(10.0)):
-        rospy.loginfo(f'found {place_object_server_name} action server')
+        rospy.loginfo(f'Connected to {place_object_server_name} action server')
+
+        # Send goal to action server
         goal = PlaceObjectGoal()
         goal.support_surface_name = support_surface_name
         goal.observe_before_place = observe_before_place
-        rospy.loginfo(f'sending place goal to {place_object_server_name} action server')
+        rospy.loginfo(f'Sending place goal to {place_object_server_name} action server')
         action_client.send_goal(goal)
-        rospy.loginfo(f'waiting for result from {place_object_server_name} action server')
+
+        # Wait for result with specified timeout
+        rospy.loginfo(f'Waiting for result from {place_object_server_name} action server...')
         if action_client.wait_for_result(rospy.Duration.from_sec(timeout)):
             result = action_client.get_result()
-            rospy.loginfo(f'{place_object_server_name} is done with execution, resuĺt was = "{result}"')
+            rospy.loginfo(f'{place_object_server_name} completed execution with result = "{result}"')
             if result.success:
-                rospy.loginfo('Succesfully placed object')
+                rospy.loginfo('Successfully placed object')
             else:
                 rospy.logerr('Failed to place object')
         else:
-            rospy.logerr('Failed to place object, timeout?')
+            # Cancel the goal if timeout occurs
+            action_client.cancel_goal()
+            rospy.logerr('Failed to place object within the allocated time. Goal cancellation was sent.')
     else:
-        rospy.logerr(f'action server {place_object_server_name} not available')
+        rospy.logerr(f'Action server {place_object_server_name} not available within the timeout')
