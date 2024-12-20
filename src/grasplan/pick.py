@@ -124,6 +124,8 @@ class PickTools:
             )
             rospy.signal_shutdown('fatal error')
 
+        self.add_custom_boxes_to_ps(self.planning_scene_boxes)
+
         # to publish object pose for debugging purposes
         self.obj_pose_pub = rospy.Publisher('~obj_pose', PoseStamped, queue_size=1)
 
@@ -314,6 +316,24 @@ class PickTools:
         marker_array_msg.markers.append(marker)
         publisher.publish(marker_array_msg)
 
+    def add_custom_boxes_to_ps(self, planning_scene_boxes):
+        # add a list of custom boxes defined by the user to the planning scene
+        for planning_scene_box in planning_scene_boxes:
+            # add a box to the planning scene
+            table_pose = PoseStamped()
+            table_pose.header.frame_id = planning_scene_box['frame_id']
+            box_x = planning_scene_box['box_x_dimension']
+            box_y = planning_scene_box['box_y_dimension']
+            box_z = planning_scene_box['box_z_dimension']
+            table_pose.pose.position.x = planning_scene_box['box_position_x']
+            table_pose.pose.position.y = planning_scene_box['box_position_y']
+            table_pose.pose.position.z = planning_scene_box['box_position_z']
+            table_pose.pose.orientation.x = planning_scene_box['box_orientation_x']
+            table_pose.pose.orientation.y = planning_scene_box['box_orientation_y']
+            table_pose.pose.orientation.z = planning_scene_box['box_orientation_z']
+            table_pose.pose.orientation.w = planning_scene_box['box_orientation_w']
+            self.scene.add_box(planning_scene_box['scene_name'], table_pose, (box_x, box_y, box_z))
+
     def pick_object(self, object_name_as_string, support_surface_name, grasp_type, ignore_object_list=[]):
         '''
         1) move arm to a position where the attached camera can see the scene (octomap will be populated)
@@ -361,21 +381,7 @@ class PickTools:
             self.clean_scene()
 
         # add a list of custom boxes defined by the user to the planning scene
-        for planning_scene_box in self.planning_scene_boxes:
-            # add a box to the planning scene
-            table_pose = PoseStamped()
-            table_pose.header.frame_id = planning_scene_box['frame_id']
-            box_x = planning_scene_box['box_x_dimension']
-            box_y = planning_scene_box['box_y_dimension']
-            box_z = planning_scene_box['box_z_dimension']
-            table_pose.pose.position.x = planning_scene_box['box_position_x']
-            table_pose.pose.position.y = planning_scene_box['box_position_y']
-            table_pose.pose.position.z = planning_scene_box['box_position_z']
-            table_pose.pose.orientation.x = planning_scene_box['box_orientation_x']
-            table_pose.pose.orientation.y = planning_scene_box['box_orientation_y']
-            table_pose.pose.orientation.z = planning_scene_box['box_orientation_z']
-            table_pose.pose.orientation.w = planning_scene_box['box_orientation_w']
-            self.scene.add_box(planning_scene_box['scene_name'], table_pose, (box_x, box_y, box_z))
+        self.add_custom_boxes_to_ps(self.planning_scene_boxes)
 
         # add all perceived objects of interest to planning scene and return the pose, bb, and id of the
         # object to be picked
