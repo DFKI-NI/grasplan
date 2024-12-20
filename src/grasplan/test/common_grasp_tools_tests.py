@@ -21,7 +21,7 @@
 # SOFTWARE.
 
 import unittest
-from grasplan.common_grasp_tools import separate_object_class_from_id
+from grasplan.tools.common import separate_object_class_from_id
 
 
 class TestCommonGraspTools(unittest.TestCase):
@@ -77,4 +77,4 @@ class TestCommonGraspTools(unittest.TestCase):
 if __name__ == '__main__':
     import rostest
 
-    rostest.rosrun('grasplan', 'test_cgt', TestCommonGraspTools)
+    rostest.rosrun('grasplan', 'common_grasp_tools_tests.py', TestCommonGraspTools)

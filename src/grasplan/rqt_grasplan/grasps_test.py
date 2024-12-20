@@ -29,10 +29,6 @@ import numpy as np
 from grasplan.rqt_grasplan.grasps import Grasps
 from geometry_msgs.msg import Pose
 
-import logging
-
-PKG = 'test_roslaunch'
-
 
 class TestGrasps(unittest.TestCase):
     def get_identity_grasp_msg(self):
@@ -142,8 +138,6 @@ class TestGrasps(unittest.TestCase):
         self.assertEquals(grasp_index, 0)
 
     def test_replace_grasp_by_index(self):
-        log = logging.getLogger("TestGrasps.test_replace_grasp_by_index")
-        log.info('hola')
         g = self.get_grasps_object()
         identity_grasp = self.get_identity_grasp_msg()
         grasp_index = g.grasps_as_pose_array.poses.index(identity_grasp)
@@ -202,4 +196,4 @@ class TestGrasps(unittest.TestCase):
 if __name__ == '__main__':
     import rostest
 
-    rostest.rosrun(PKG, 'test_g', TestGrasps)
+    rostest.rosrun('grasplan', 'grasps_test.py', TestGrasps)
