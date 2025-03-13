@@ -71,6 +71,10 @@ def compute_object_height_for_insertion(object_class_tbi, support_obj_class, gap
         'multimeter': 0.04206399992108345,
         'relay': 0.10436400026082993,
         'screwdriver': 0.034412000328302383,
+        'bleach': 0.25,
+        'mustard': 0.2,
+        'soup': 0.1,
+        'meat': 0.1,
     }
     return (ohd[support_obj_class] / 2.0) + (ohd[object_class_tbi] / 2.0) + gap_between_objects
 
@@ -96,7 +100,7 @@ def gen_insert_poses_from_obj(
     pitch = 0.0
     yaw = 0.0
     # HACK: object specific rotations
-    if object_class == 'power_drill_with_grip':
+    if object_class in ['power_drill_with_grip', 'bleach', 'mustard', 'soup', 'meat']:
         roll = -math.pi / 2.0
 
     if not same_orientation_as_support_obj:
@@ -203,7 +207,7 @@ def gen_place_poses_from_plane(
         pitch = 0.0
         yaw = round(random.uniform(0.0, math.pi), 4)
         # HACK: object specific rotations
-        if object_class == 'power_drill_with_grip':
+        if object_class in ['power_drill_with_grip', 'bleach', 'mustard', 'soup', 'meat']:
             roll = -math.pi / 2.0
         if number_of_poses > 20:
             rospy.loginfo('covering 360 angle for each pose')
@@ -370,7 +374,11 @@ def attached_obj_height(attached_obj: str, planning_scene: PlanningScene, offset
     """
     collision_object = get_obj_from_planning_scene(attached_obj, planning_scene)
     dimension_index = 2
-    if any('power_drill_with_grip' in key for key in planning_scene.get_attached_objects()):
+    if any(
+        object_class in key
+        for object_class in ['power_drill_with_grip', 'bleach', 'mustard', 'soup', 'meat']
+        for key in planning_scene.get_attached_objects()
+    ):
         dimension_index = 1
     half_height_att_obj = (
         list(planning_scene.get_attached_objects().values())[0].object.primitives[0].dimensions[dimension_index] / 2
