@@ -67,6 +67,7 @@ def compute_object_height_for_insertion(object_class_tbi, support_obj_class, gap
     # ohd : objects height dictionary, object_class_tbi : object class to be inserted
     ohd = {
         'power_drill_with_grip': 0.2205359935760498,
+        'hot_glue_gun': 0.2,
         'klt': 0.14699999809265138,
         'multimeter': 0.04206399992108345,
         'relay': 0.10436400026082993,
@@ -100,7 +101,7 @@ def gen_insert_poses_from_obj(
     pitch = 0.0
     yaw = 0.0
     # HACK: object specific rotations
-    if object_class in ['power_drill_with_grip', 'bleach', 'mustard', 'soup', 'meat']:
+    if object_class in ['power_drill_with_grip', 'hot_glue_gun', 'bleach', 'mustard', 'soup', 'meat']:
         roll = -math.pi / 2.0
 
     if not same_orientation_as_support_obj:
@@ -207,7 +208,7 @@ def gen_place_poses_from_plane(
         pitch = 0.0
         yaw = round(random.uniform(0.0, math.pi), 4)
         # HACK: object specific rotations
-        if object_class in ['power_drill_with_grip', 'bleach', 'mustard', 'soup', 'meat']:
+        if object_class in ['power_drill_with_grip', 'hot_glue_gun', 'bleach', 'mustard', 'soup', 'meat']:
             roll = -math.pi / 2.0
         if number_of_poses > 20:
             rospy.loginfo('covering 360 angle for each pose')
@@ -376,7 +377,7 @@ def attached_obj_height(attached_obj: str, planning_scene: PlanningScene, offset
     dimension_index = 2
     if any(
         object_class in key
-        for object_class in ['power_drill_with_grip', 'bleach', 'mustard', 'soup', 'meat']
+        for object_class in ['power_drill_with_grip', 'hot_glue_gun', 'bleach', 'mustard', 'soup', 'meat']
         for key in planning_scene.get_attached_objects()
     ):
         dimension_index = 1
