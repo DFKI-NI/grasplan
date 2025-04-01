@@ -355,14 +355,16 @@ def obj_to_plane(support_obj: str, planning_scene: PlanningScene, offset: float 
     return [Point(dx, dy, half_height + offset) for dx, dy in corners]
 
 
-def attached_obj_height(attached_obj: str, planning_scene: PlanningScene, offset: float = 0.001) -> float:
+def attached_obj_height(support_object: str, planning_scene: PlanningScene, offset: float = 0.001) -> float:
     """
-    Get the height of an object attached to the gripper
+    Get the height where an object attached to the gripper needs to have in order to
+    be placed correctly on the support object.
 
     Parameters
     ----------
-    attached_obj : str
-        The name of the attached object.
+    support_object : str
+        The name of the surface where the attached object needs to be placed on.
+        The name must match one in the planning scene.
     planning_scene : PlanningScene
         The planning scene object.
     offset : float, optional
@@ -371,20 +373,26 @@ def attached_obj_height(attached_obj: str, planning_scene: PlanningScene, offset
     Returns
     -------
     float
-        The height of the attached object.
+        The height of the attached object in the global reference frame.
     """
-    collision_object = get_obj_from_planning_scene(attached_obj, planning_scene)
+
+    support_object_collision_obj = get_obj_from_planning_scene(support_object, planning_scene)
     dimension_index = 2
+
+    # HACK: for this objects the dimension index needs to be 1, TODO: find a better solution
     if any(
         object_class in key
         for object_class in ['power_drill_with_grip', 'hot_glue_gun', 'bleach', 'mustard', 'soup', 'meat']
         for key in planning_scene.get_attached_objects()
     ):
         dimension_index = 1
+
     half_height_att_obj = (
         list(planning_scene.get_attached_objects().values())[0].object.primitives[0].dimensions[dimension_index] / 2
     )
-    return half_height_att_obj + collision_object.primitives[0].dimensions[2] / 2 + offset
+
+    # object pose is expressed wrt the table, that's why we need to add only half of the table height
+    return half_height_att_obj + support_object_collision_obj.primitives[0].dimensions[2] / 2 + offset
 
 
 # Example usage
