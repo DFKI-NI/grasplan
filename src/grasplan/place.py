@@ -43,7 +43,7 @@ from grasplan.tools.moveit_errors import print_moveit_error
 from std_srvs.srv import Empty, SetBool, Trigger
 from object_pose_msgs.msg import ObjectList
 import tf2_geometry_msgs
-from geometry_msgs.msg import Vector3Stamped, PoseStamped, TransformStamped, PointStamped, Point, Transform
+from geometry_msgs.msg import Vector3Stamped, PoseStamped, TransformStamped, PointStamped, Point, Transform, Vector3
 from moveit_msgs.msg import (
     PlaceAction,
     PlaceGoal,
@@ -278,7 +278,10 @@ class PlaceTools:
             tf = TransformStamped(
                 header=Header(frame_id="map"),
                 child_frame_id=obj_name,
-                transform=Transform(translation=obj.pose.position, rotation=obj.pose.orientation),
+                transform=Transform(
+                    translation=Vector3(x=obj.pose.position.x, y=obj.pose.position.y, z=obj.pose.position.z),
+                    rotation=obj.pose.orientation,
+                ),
             )
             self.tf_buffer.set_transform_static(tf, "grasplan")
 
