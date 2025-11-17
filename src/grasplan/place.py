@@ -335,7 +335,9 @@ class PlaceTools:
             self.activate_pick_pose_selector_srv(True)
             rospy.sleep(0.5)  # give some time to observe
             self.activate_pick_pose_selector_srv(False)
-            self.add_objs_to_planning_scene()
+
+        # in any case, add all known objects to planning scene before placing
+        self.add_objs_to_planning_scene()
 
         action_client = actionlib.SimpleActionClient(PLACE_OBJECT_SERVER_NAME, PlaceAction)
 
