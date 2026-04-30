@@ -105,7 +105,7 @@ def gen_insert_poses_from_obj(
         roll = -math.pi / 2.0
 
     if not same_orientation_as_support_obj:
-        for i in range(7):
+        for i in range(8):
             angular_q = tf.transformations.quaternion_from_euler(roll, pitch, yaw)
             object_pose_msg.pose.orientation.x = angular_q[0]
             object_pose_msg.pose.orientation.y = angular_q[1]
@@ -116,13 +116,6 @@ def gen_insert_poses_from_obj(
             insert_poses_id += 1
             yaw += 0.5  # ~ 30 degree
     else:
-        object_pose_msg.pose.orientation.x = support_object_pose.pose.orientation.x
-        object_pose_msg.pose.orientation.y = support_object_pose.pose.orientation.y
-        object_pose_msg.pose.orientation.z = support_object_pose.pose.orientation.z
-        object_pose_msg.pose.orientation.w = support_object_pose.pose.orientation.w
-        object_pose_msg.instance_id = insert_poses_id
-        object_list_msg.objects.append(copy.deepcopy(object_pose_msg))
-        insert_poses_id += 1
         q = [
             support_object_pose.pose.orientation.x,
             support_object_pose.pose.orientation.y,
@@ -130,9 +123,29 @@ def gen_insert_poses_from_obj(
             support_object_pose.pose.orientation.w,
         ]
         euler_rot = tf.transformations.euler_from_quaternion(q)
-        q_new = tf.transformations.quaternion_from_euler(
-            euler_rot[0], euler_rot[1], euler_rot[2] + 3.14159
-        )  # yaw + 180 degree
+        if object_class in ['power_drill_with_grip', 'hot_glue_gun', 'bleach', 'mustard', 'soup', 'meat']:
+            q_new = tf.transformations.quaternion_from_euler(
+                euler_rot[0] + roll, euler_rot[1], euler_rot[2]
+            )  # yaw + 180 degree
+        else:
+            q_new = tf.transformations.quaternion_from_euler(
+                euler_rot[0], euler_rot[1], euler_rot[2]
+            )
+        object_pose_msg.pose.orientation.x = q_new[0]
+        object_pose_msg.pose.orientation.y = q_new[1]
+        object_pose_msg.pose.orientation.z = q_new[2]
+        object_pose_msg.pose.orientation.w = q_new[3]
+        object_pose_msg.instance_id = insert_poses_id
+        object_list_msg.objects.append(copy.deepcopy(object_pose_msg))
+        insert_poses_id += 1
+        if object_class in ['power_drill_with_grip', 'hot_glue_gun', 'bleach', 'mustard', 'soup', 'meat']:
+            q_new = tf.transformations.quaternion_from_euler(
+                euler_rot[0] + roll, euler_rot[1], euler_rot[2] + 3.14159
+            )  # yaw + 180 degree
+        else:
+            q_new = tf.transformations.quaternion_from_euler(
+                euler_rot[0], euler_rot[1], euler_rot[2] + 3.14159
+            )
         object_pose_msg.pose.orientation.x = q_new[0]
         object_pose_msg.pose.orientation.y = q_new[1]
         object_pose_msg.pose.orientation.z = q_new[2]

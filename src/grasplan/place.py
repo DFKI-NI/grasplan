@@ -333,7 +333,7 @@ class PlaceTools:
             self.move_arm_to_posture(self.arm_pose_with_objs_in_fov)
             # activate pick pose selector to observe table
             self.activate_pick_pose_selector_srv(True)
-            rospy.sleep(0.5)  # give some time to observe
+            rospy.sleep(5.0)  # give some time to observe
             self.activate_pick_pose_selector_srv(False)
 
         # in any case, add all known objects to planning scene before placing
