@@ -21,6 +21,7 @@
 import rospy
 from grasplan.grasp_planning_core import GraspPlanningCore
 from grasplan.pose_generator import PoseGenerator
+from grasplan.tools.common import separate_object_class_from_id
 from geometry_msgs.msg import PoseStamped
 
 
@@ -75,7 +76,8 @@ class SimpleGraspPlanner(GraspPlanningCore):
         '''
         receive object pose, generate multiple poses around it
         '''
-        offset_vector = self.object_offset_params[object_name][grasp_type]
+        object_class = separate_object_class_from_id(object_name)[0]
+        offset_vector = self.object_offset_params[object_class][grasp_type]
         # take object position and replace its orientation with a prerecorded "example" orientation
         grasp_pose = self.generate_grasp_pose(object_pose, grasp_type)
         pose_array_msg = self.pose_generator.spherical_sampling(grasp_type, grasp_pose, offset_vector)
