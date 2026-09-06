@@ -49,6 +49,10 @@ class HandcodedGraspPlanner(GraspPlanningCore):
         rospy.sleep(0.5)  # give some time for publisher to register
         rospy.loginfo('handcoded grasp planner object was created')
 
+    def supports_object(self, object_name):
+        object_class = separate_object_class_from_id(object_name)[0]
+        return object_class in self.grasp_poses
+
     def gen_end_effector_grasp_poses(self, object_name, object_pose, grasp_type):
         '''
         receive object pose, generate multiple poses around it

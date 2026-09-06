@@ -27,12 +27,14 @@ example on how to pick an object using grasplan and moveit
 import sys
 import copy
 import importlib
+import time
 import traceback
 
 import rospy
 import actionlib
 import moveit_commander
 
+from actionlib_msgs.msg import GoalStatus
 from tf import TransformListener
 from std_msgs.msg import String
 from std_srvs.srv import Empty, SetBool
@@ -40,10 +42,17 @@ from pose_selector.srv import ClassQuery, PoseDelete, GetPoses
 from geometry_msgs.msg import PoseStamped
 from grasplan.tools.moveit_errors import print_moveit_error
 from moveit_msgs.msg import MoveItErrorCodes, PickupAction, PickupGoal
-from grasplan.msg import PickObjectAction, PickObjectResult
+from grasplan.msg import PickObjectAction, PickObjectGoal, PickObjectResult
 from grasplan.tools.common import objectToPick
 from grasplan.tools.action_client_helper import ActionClientHelper
 from visualization_msgs.msg import Marker, MarkerArray
+
+
+ACTION_STATES = {
+    value: name
+    for name, value in vars(GoalStatus).items()
+    if name.isupper() and isinstance(value, int)
+}
 
 
 class PickTools:
@@ -71,13 +80,20 @@ class PickTools:
         # configure the desired grasp planner to use
         import_file = rospy.get_param('~import_file', 'grasp_planner.simple_pregrasp_planner')
         import_class = rospy.get_param('~import_class', 'SimpleGraspPlanner')
+        self.anygrasp_action_name = rospy.get_param('~anygrasp_action_name', '/mobipick/grasp_object')
+        self.anygrasp_server_timeout = rospy.get_param('~anygrasp_server_timeout', 2.0)
+        self.anygrasp_result_timeout = rospy.get_param('~anygrasp_result_timeout', 300.0)
         # TODO: include octomap
+
+        if self.anygrasp_server_timeout < 0 or self.anygrasp_result_timeout < 0:
+            raise ValueError('AnyGrasp timeouts must be zero or positive')
 
         # to be able to transform PoseStamped later in the code
         self.tf_listener = TransformListener()
 
         # import grasp planner and make object out of it
         self.grasp_planner = getattr(importlib.import_module(import_file), import_class)()
+        self.anygrasp_action_client = actionlib.SimpleActionClient(self.anygrasp_action_name, PickObjectAction)
 
         # service clients
         pose_selector_activate_srv_name = rospy.get_param('~pose_selector_activate_srv_name', '/pose_selector_activate')
@@ -160,10 +176,21 @@ class PickTools:
             self.pick_action_server.set_preempted()
             return
 
-        # Process the goal
-        success = self.pick_object(
-            goal.object_name, goal.support_surface_name, self.grasp_type, goal.ignore_object_list
-        )
+        # Unknown objects are sent directly to the open-set pipeline. A known
+        # object's result is final, including a failed Grasplan attempt.
+        if self.grasp_planner.supports_object(goal.object_name):
+            success = self.pick_object(
+                goal.object_name, goal.support_surface_name, self.grasp_type, goal.ignore_object_list
+            )
+            status_text = 'Grasplan pick succeeded' if success else 'Grasplan pick failed'
+            preempted = False
+        else:
+            success, status_text, preempted = self.pick_unknown_object_with_anygrasp(goal)
+
+        if preempted:
+            rospy.logwarn(status_text)
+            self.pick_action_server.set_preempted(PickObjectResult(success=False), status_text)
+            return
 
         if self.pick_action_server.is_preempt_requested():
             rospy.logwarn("Preemption requested during pick goal processing.")
@@ -173,10 +200,76 @@ class PickTools:
         # Handle the goal result
         if success:
             rospy.loginfo("Pick goal completed successfully.")
-            self.pick_action_server.set_succeeded(PickObjectResult(success=True))
+            self.pick_action_server.set_succeeded(PickObjectResult(success=True), status_text)
         else:
-            rospy.logwarn("Pick goal failed to complete.")
-            self.pick_action_server.set_aborted(PickObjectResult(success=False))
+            rospy.logwarn("Pick goal failed to complete: %s", status_text)
+            self.pick_action_server.set_aborted(PickObjectResult(success=False), status_text)
+
+    def pick_unknown_object_with_anygrasp(self, goal):
+        object_name = goal.object_name
+        rospy.loginfo(
+            'object %r is not known by %s; trying AnyGrasp action server %s',
+            object_name,
+            type(self.grasp_planner).__name__,
+            rospy.resolve_name(self.anygrasp_action_name),
+        )
+
+        grasplan_action_name = rospy.resolve_name('pick_object')
+        anygrasp_action_name = rospy.resolve_name(self.anygrasp_action_name)
+        if anygrasp_action_name == grasplan_action_name:
+            message = f'AnyGrasp fallback action {anygrasp_action_name} resolves to the Grasplan action itself'
+            rospy.logerr(message)
+            return False, message, False
+
+        if not self.anygrasp_action_client.wait_for_server(rospy.Duration(self.anygrasp_server_timeout)):
+            message = (
+                f'object {object_name!r} is not known by Grasplan and AnyGrasp action server '
+                f'{anygrasp_action_name} is unavailable'
+            )
+            rospy.logerr(message)
+            return False, message, False
+
+        anygrasp_goal = PickObjectGoal()
+        anygrasp_goal.object_name = object_name
+        anygrasp_goal.support_surface_name = goal.support_surface_name
+        anygrasp_goal.ignore_object_list = list(goal.ignore_object_list)
+        self.anygrasp_action_client.send_goal(anygrasp_goal)
+
+        deadline = None
+        if self.anygrasp_result_timeout > 0:
+            deadline = time.monotonic() + self.anygrasp_result_timeout
+
+        while not rospy.is_shutdown():
+            if self.pick_action_server.is_preempt_requested():
+                self.anygrasp_action_client.cancel_goal()
+                return False, 'AnyGrasp fallback was cancelled', True
+            if self.anygrasp_action_client.wait_for_result(rospy.Duration(0.1)):
+                break
+            if deadline is not None and time.monotonic() >= deadline:
+                self.anygrasp_action_client.cancel_goal()
+                message = f'timed out waiting for AnyGrasp after {self.anygrasp_result_timeout:.1f} seconds'
+                rospy.logerr(message)
+                return False, message, False
+        else:
+            self.anygrasp_action_client.cancel_goal()
+            return False, 'ROS shutdown while waiting for AnyGrasp', True
+
+        state = self.anygrasp_action_client.get_state()
+        result = self.anygrasp_action_client.get_result()
+        server_text = self.anygrasp_action_client.get_goal_status_text() or 'no status text'
+        success = state == GoalStatus.SUCCEEDED and result is not None and result.success
+        if success:
+            message = f'AnyGrasp succeeded: {server_text}'
+            rospy.loginfo(message)
+            return True, message, False
+
+        message = (
+            f'AnyGrasp failed with action state {ACTION_STATES.get(state, str(state))}, '
+            f'result.success={getattr(result, "success", None)}: '
+            f'{server_text}'
+        )
+        rospy.logerr(message)
+        return False, message, False
 
     def graspTypeCB(self, msg):
         self.grasp_type = msg.data

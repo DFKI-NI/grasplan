@@ -69,6 +69,16 @@ class GraspPlanningCore:
             return joint_angles
         return [dictionary[object_class]]
 
+    def supports_object(self, object_name):
+        '''
+        Return whether this planner knows how to generate grasps for an object.
+
+        Planners backed by a finite object catalog should override this method.
+        The permissive default preserves compatibility with external planners
+        that predate the open-set fallback.
+        '''
+        return True
+
     def make_gripper_trajectory(self, joint_angles, dictionary, object_class=None):
         '''
         Set and return the gripper posture as a trajectory_msgs/JointTrajectory

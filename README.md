@@ -2,6 +2,26 @@
 
 Documentation can be found under: https://grasplan-documentation.readthedocs.io/en/latest/
 
+Open-set grasp fallback
+-----------------------
+
+The pick action uses the configured Grasplan planner for objects present in
+that planner's object catalog. If the object class is not in the catalog, the
+goal is forwarded to an AnyGrasp server using the same `PickObjectAction`
+interface. A failed Grasplan attempt for a known object is final and does not
+trigger the fallback.
+
+For the handcoded planner, known classes are the keys below the
+`handcoded_grasp_planner_transforms` parameter. Numeric instance suffixes are
+ignored, so (for example) `relay_3` is checked as class `relay`. The fallback
+forwards the original object text unchanged.
+
+The fallback is configured by these private parameters on `pick_object_node`:
+
+- `anygrasp_action_name` (default `/mobipick/grasp_object`)
+- `anygrasp_server_timeout` (default `2.0` seconds)
+- `anygrasp_result_timeout` (default `300.0` seconds; `0` waits indefinitely)
+
 
 pre-commit Formatting Checks
 ----------------------------

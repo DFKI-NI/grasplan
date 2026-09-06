@@ -1,10 +1,17 @@
 <?xml version="1.0"?>
 <launch>
 
-  <!-- april analytical pick object script using simple_pregrasp_planner -->
+  <arg name="anygrasp_action_name" default="/mobipick/grasp_object" />
+  <arg name="anygrasp_server_timeout" default="2.0" />
+  <arg name="anygrasp_result_timeout" default="300.0" />
+
+  <!-- analytical pick object script using simple_pregrasp_planner -->
   <node pkg="grasplan" type="pick.py" name="pick_object_node" output="screen" >
     <param name="import_file" type="string" value="grasp_planner.simple_pregrasp_planner" />
     <param name="import_class" type="string" value="SimpleGraspPlanner" />
+    <param name="anygrasp_action_name" type="string" value="$(arg anygrasp_action_name)" />
+    <param name="anygrasp_server_timeout" type="double" value="$(arg anygrasp_server_timeout)" />
+    <param name="anygrasp_result_timeout" type="double" value="$(arg anygrasp_result_timeout)" />
     <rosparam file="$(find mobipick_pick_n_place)/config/grasplan/pick_params.yaml" command="load" />
     <rosparam file="$(find mobipick_pick_n_place)/config/grasplan/grasp_planning_core_params.yaml" command="load" />
     <!-- pregrasp planner parameters -->
