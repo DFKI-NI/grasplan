@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+"""Send an open-set object description through the Grasplan pick action."""
+
+import argparse
+import sys
+
+import actionlib
+import rospy
+from actionlib_msgs.msg import GoalStatus
+from grasplan.msg import PickObjectAction, PickObjectGoal
+
+
+ACTION_STATES = {
+    value: name
+    for name, value in vars(GoalStatus).items()
+    if name.isupper() and isinstance(value, int)
+}
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description=(
+            'Exercise the Grasplan open-set fallback once. The object description '
+            'must not be present in the active Grasplan planner catalog.'
+        ),
+    )
+    parser.add_argument('object_description', help='text description forwarded to the open-set grasp pipeline')
+    parser.add_argument(
+        '--action-name',
+        default='/mobipick/pick_object',
+        help='Grasplan PickObject action name (default: %(default)s)',
+    )
+    parser.add_argument(
+        '--support-surface-name',
+        default='',
+        help='optional support surface forwarded in the PickObject goal',
+    )
+    parser.add_argument(
+        '--ignore-object',
+        action='append',
+        default=[],
+        help='planning-scene object to ignore; may be supplied more than once',
+    )
+    parser.add_argument(
+        '--server-timeout',
+        type=float,
+        default=30.0,
+        help='seconds to wait for the Grasplan action server (default: %(default)s)',
+    )
+    parser.add_argument(
+        '--result-timeout',
+        type=float,
+        default=330.0,
+        help='seconds to wait for grasping to finish; 0 waits forever (default: %(default)s)',
+    )
+    return parser.parse_args(rospy.myargv(argv=sys.argv)[1:])
+
+
+def main():
+    rospy.init_node('open_set_pick_object_action_client', anonymous=True)
+    args = parse_args()
+
+    if args.server_timeout < 0 or args.result_timeout < 0:
+        rospy.logerr('Timeouts must be zero or positive')
+        return 2
+
+    client = actionlib.SimpleActionClient(args.action_name, PickObjectAction)
+    rospy.loginfo('Waiting up to %.1f s for %s', args.server_timeout, args.action_name)
+    if not client.wait_for_server(rospy.Duration(args.server_timeout)):
+        rospy.logerr('Grasplan action server %s is unavailable', args.action_name)
+        return 1
+
+    goal = PickObjectGoal()
+    goal.object_name = args.object_description
+    goal.support_surface_name = args.support_surface_name
+    goal.ignore_object_list = args.ignore_object
+
+    rospy.loginfo('Requesting open-set grasp for %r through %s', args.object_description, args.action_name)
+    client.send_goal(goal)
+
+    try:
+        if args.result_timeout == 0:
+            finished = client.wait_for_result()
+        else:
+            finished = client.wait_for_result(rospy.Duration(args.result_timeout))
+    except rospy.ROSInterruptException:
+        client.cancel_goal()
+        return 130
+
+    if not finished:
+        client.cancel_goal()
+        rospy.logerr('Timed out waiting for a result; the goal was cancelled')
+        return 1
+
+    state = client.get_state()
+    result = client.get_result()
+    status_text = client.get_goal_status_text() or 'no status text'
+    success = state == GoalStatus.SUCCEEDED and result is not None and result.success
+    if success:
+        rospy.loginfo('PASS: %s', status_text)
+        return 0
+
+    rospy.logerr(
+        'FAIL: action state=%s, result.success=%s: %s',
+        ACTION_STATES.get(state, str(state)),
+        getattr(result, 'success', None),
+        status_text,
+    )
+    return 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())

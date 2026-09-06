@@ -22,6 +22,14 @@ The fallback is configured by these private parameters on `pick_object_node`:
 - `anygrasp_server_timeout` (default `2.0` seconds)
 - `anygrasp_result_timeout` (default `300.0` seconds; `0` waits indefinitely)
 
+With the Grasplan pick server and AnyGrasp server running, exercise the
+fallback with an object description that is absent from the active planner's
+catalog:
+
+```bash
+rosrun grasplan open_set_pick_obj_test_action_client "red mug"
+```
+
 
 pre-commit Formatting Checks
 ----------------------------

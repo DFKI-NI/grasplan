@@ -57,6 +57,7 @@ catkin_package(
 catkin_install_python(PROGRAMS
   scripts/insert_obj_test_action_client
   scripts/object_recognition_mockup.py
+  scripts/open_set_pick_obj_test_action_client
   scripts/pick_obj_test_action_client
   scripts/place_obj_test_action_client
   scripts/publish_tf_world_to_robot
