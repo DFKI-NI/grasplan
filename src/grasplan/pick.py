@@ -35,6 +35,7 @@ import actionlib
 import moveit_commander
 
 from actionlib_msgs.msg import GoalStatus
+from control_msgs.msg import GripperCommandAction, GripperCommandGoal
 from tf import TransformListener
 from std_msgs.msg import String
 from std_srvs.srv import Empty, SetBool
@@ -83,10 +84,13 @@ class PickTools:
         self.anygrasp_action_name = rospy.get_param('~anygrasp_action_name', '/mobipick/grasp_object')
         self.anygrasp_server_timeout = rospy.get_param('~anygrasp_server_timeout', 2.0)
         self.anygrasp_result_timeout = rospy.get_param('~anygrasp_result_timeout', 300.0)
+        self.anygrasp_arm_pose = rospy.get_param('~anygrasp_arm_pose', 'anygrasp')
+        self.gripper_action_name = rospy.get_param('~gripper_action_name', '/mobipick/gripper_hw')
+        self.gripper_action_timeout = rospy.get_param('~gripper_action_timeout', 2.0)
         # TODO: include octomap
 
-        if self.anygrasp_server_timeout < 0 or self.anygrasp_result_timeout < 0:
-            raise ValueError('AnyGrasp timeouts must be zero or positive')
+        if self.anygrasp_server_timeout < 0 or self.anygrasp_result_timeout < 0 or self.gripper_action_timeout < 0:
+            raise ValueError('Action timeouts must be zero or positive')
 
         # to be able to transform PoseStamped later in the code
         self.tf_listener = TransformListener()
@@ -94,6 +98,7 @@ class PickTools:
         # import grasp planner and make object out of it
         self.grasp_planner = getattr(importlib.import_module(import_file), import_class)()
         self.anygrasp_action_client = actionlib.SimpleActionClient(self.anygrasp_action_name, PickObjectAction)
+        self.gripper_action_client = actionlib.SimpleActionClient(self.gripper_action_name, GripperCommandAction)
 
         # service clients
         pose_selector_activate_srv_name = rospy.get_param('~pose_selector_activate_srv_name', '/pose_selector_activate')
@@ -229,6 +234,11 @@ class PickTools:
             rospy.logerr(message)
             return False, message, False
 
+        if not self.move_arm_to_posture(self.anygrasp_arm_pose):
+            message = f'failed to move arm to {self.anygrasp_arm_pose!r} before calling AnyGrasp'
+            rospy.logerr(message)
+            return False, message, False
+
         anygrasp_goal = PickObjectGoal()
         anygrasp_goal.object_name = object_name
         anygrasp_goal.support_surface_name = goal.support_surface_name
@@ -249,6 +259,7 @@ class PickTools:
                 self.anygrasp_action_client.cancel_goal()
                 message = f'timed out waiting for AnyGrasp after {self.anygrasp_result_timeout:.1f} seconds'
                 rospy.logerr(message)
+                self.open_gripper()
                 return False, message, False
         else:
             self.anygrasp_action_client.cancel_goal()
@@ -269,6 +280,7 @@ class PickTools:
             f'{server_text}'
         )
         rospy.logerr(message)
+        self.open_gripper()
         return False, message, False
 
     def graspTypeCB(self, msg):
@@ -374,10 +386,29 @@ class PickTools:
         rospy.loginfo(f'moving arm to {arm_posture_name}')
         self.robot.arm.set_named_target(arm_posture_name)
         # attempt to move it 2 times, (sometimes fails with only 1 time)
-        if not self.robot.arm.go():
+        if self.robot.arm.go():
+            return True
+        else:
             rospy.logwarn(f'failed to move arm to posture: {arm_posture_name}, will retry one more time in 1 sec')
             rospy.sleep(1.0)
-            self.robot.arm.go()
+            return self.robot.arm.go()
+
+    def open_gripper(self):
+        '''Open the gripper through its GripperCommand action server.'''
+        if not self.gripper_action_client.wait_for_server(rospy.Duration(self.gripper_action_timeout)):
+            rospy.logerr('cannot open gripper: action server %s is unavailable', self.gripper_action_name)
+            return False
+
+        open_positions = self.grasp_planner.gripper_open_distance
+        open_position = open_positions[0] if isinstance(open_positions, (list, tuple)) else open_positions
+        goal = GripperCommandGoal()
+        goal.command.position = open_position
+        self.gripper_action_client.send_goal(goal)
+        if not self.gripper_action_client.wait_for_result(rospy.Duration(self.gripper_action_timeout)):
+            self.gripper_action_client.cancel_goal()
+            rospy.logerr('timed out while opening gripper through %s', self.gripper_action_name)
+            return False
+        return self.gripper_action_client.get_state() == GoalStatus.SUCCEEDED
 
     def move_gripper_to_posture(self, gripper_posture_name):
         '''
