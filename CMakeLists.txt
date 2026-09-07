@@ -21,9 +21,17 @@ catkin_python_setup()
 ## Generate actions in the 'action' folder
 add_action_files(
   FILES
+    GenerateGrasps.action
     InsertObject.action
     PickObject.action
     PlaceObject.action
+)
+
+add_message_files(
+  FILES
+    DetectedObject.msg
+    GraspCandidate.msg
+    GraspDetection.msg
 )
 
 ## Generate added messages and services with any dependencies listed here

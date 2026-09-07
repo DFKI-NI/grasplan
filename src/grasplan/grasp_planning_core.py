@@ -96,11 +96,8 @@ class GraspPlanningCore:
     def get_object_padding(self):
         return self.object_padding
 
-    def make_grasps_msgs(self, object_name, object_pose, end_effector_frame, grasp_type):
-        '''
-        generate grasp configurations for moveit
-        '''
-
+    def make_grasp_template(self, object_name, end_effector_frame):
+        '''Create the MoveIt fields shared by analytical and external grasps.'''
         # make empty msg of type moveit_msgs/Grasp
         # see http://docs.ros.org/en/api/moveit_msgs/html/msg/Grasp.html
         g = Grasp()
@@ -154,6 +151,15 @@ class GraspPlanningCore:
         # A name for this grasp
         # g.id = 'top_grasp' # will be filled later
 
+        return g
+
+    def make_grasps_msgs(self, object_name, object_pose, end_effector_frame, grasp_type):
+        '''
+        generate grasp configurations for moveit
+        '''
+
+        g = self.make_grasp_template(object_name, end_effector_frame)
+
         # NOTE : one could change the orientation and generate more grasps, currently the list has only 1 grasp
 
         # call grasp planner
@@ -172,6 +178,26 @@ class GraspPlanningCore:
             g.id = 'grasp_' + str(i)
             grasps.append(copy.deepcopy(g))
 
+        return grasps
+
+    def make_grasps_msgs_from_candidates(self, object_name, candidates, reference_frame, end_effector_frame):
+        '''Convert externally generated candidates into MoveIt grasp messages.'''
+        g = self.make_grasp_template(object_name, end_effector_frame)
+        pose_array_msg = PoseArray()
+        pose_array_msg.header.frame_id = reference_frame
+        pose_array_msg.header.stamp = rospy.Time.now()
+        pose_array_msg.poses = [candidate.pose for candidate in candidates]
+        self.pose_array_pub.publish(pose_array_msg)
+
+        grasps = []
+        for i, candidate in enumerate(candidates):
+            grasp = copy.deepcopy(g)
+            grasp.id = 'anygrasp_' + str(i)
+            grasp.grasp_quality = candidate.quality
+            grasp.grasp_pose = PoseStamped()
+            grasp.grasp_pose.header = pose_array_msg.header
+            grasp.grasp_pose.pose = candidate.pose
+            grasps.append(grasp)
         return grasps
 
     def gen_end_effector_grasp_poses(self, object_name, object_pose):

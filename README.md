@@ -19,6 +19,8 @@ forwards the original object text unchanged.
 The fallback is configured by these private parameters on `pick_object_node`:
 
 - `anygrasp_action_name` (default `/mobipick/grasp_object`)
+- `anygrasp_generate_action_name` (default `/mobipick/generate_grasps`)
+- `anygrasp_handles_execution` (default `false`): when `false`, AnyGrasp only generates candidates and Grasplan executes them through MoveIt; set it to `true` to retain AnyGrasp-owned execution
 - `anygrasp_server_timeout` (default `2.0` seconds)
 - `anygrasp_result_timeout` (default `300.0` seconds; `0` waits indefinitely)
 

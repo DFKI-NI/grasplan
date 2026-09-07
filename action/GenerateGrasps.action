@@ -1,0 +1,9 @@
+# Free-form open-set description used for segmentation.
+string object_name
+---
+bool success
+string message
+# Contains the selected object instance and all associated grasp candidates.
+grasplan/GraspDetection detection
+---
+string stage

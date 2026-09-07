@@ -2,6 +2,8 @@
 <launch>
 
   <arg name="anygrasp_action_name" default="/mobipick/grasp_object" />
+  <arg name="anygrasp_generate_action_name" default="/mobipick/generate_grasps" />
+  <arg name="anygrasp_handles_execution" default="false" />
   <arg name="anygrasp_server_timeout" default="2.0" />
   <arg name="anygrasp_result_timeout" default="300.0" />
 
@@ -10,6 +12,8 @@
     <param name="import_file" type="string" value="grasp_planner.handcoded_grasp_planner" />
     <param name="import_class" type="string" value="HandcodedGraspPlanner" />
     <param name="anygrasp_action_name" type="string" value="$(arg anygrasp_action_name)" />
+    <param name="anygrasp_generate_action_name" type="string" value="$(arg anygrasp_generate_action_name)" />
+    <param name="anygrasp_handles_execution" type="bool" value="$(arg anygrasp_handles_execution)" />
     <param name="anygrasp_server_timeout" type="double" value="$(arg anygrasp_server_timeout)" />
     <param name="anygrasp_result_timeout" type="double" value="$(arg anygrasp_result_timeout)" />
     <rosparam file="$(find mobipick_pick_n_place)/config/grasplan/pick_params.yaml" command="load" />

@@ -43,17 +43,18 @@ from pose_selector.srv import ClassQuery, PoseDelete, GetPoses
 from geometry_msgs.msg import PoseStamped
 from grasplan.tools.moveit_errors import print_moveit_error
 from moveit_msgs.msg import MoveItErrorCodes, PickupAction, PickupGoal
-from grasplan.msg import PickObjectAction, PickObjectGoal, PickObjectResult
+from grasplan.msg import (
+    GenerateGraspsAction,
+    GenerateGraspsGoal,
+    PickObjectAction,
+    PickObjectGoal,
+    PickObjectResult,
+)
 from grasplan.tools.common import objectToPick
 from grasplan.tools.action_client_helper import ActionClientHelper
 from visualization_msgs.msg import Marker, MarkerArray
 
-
-ACTION_STATES = {
-    value: name
-    for name, value in vars(GoalStatus).items()
-    if name.isupper() and isinstance(value, int)
-}
+ACTION_STATES = {value: name for name, value in vars(GoalStatus).items() if name.isupper() and isinstance(value, int)}
 
 
 class PickTools:
@@ -82,6 +83,10 @@ class PickTools:
         import_file = rospy.get_param('~import_file', 'grasp_planner.simple_pregrasp_planner')
         import_class = rospy.get_param('~import_class', 'SimpleGraspPlanner')
         self.anygrasp_action_name = rospy.get_param('~anygrasp_action_name', '/mobipick/grasp_object')
+        self.anygrasp_generate_action_name = rospy.get_param(
+            '~anygrasp_generate_action_name', '/mobipick/generate_grasps'
+        )
+        self.anygrasp_handles_execution = rospy.get_param('~anygrasp_handles_execution', False)
         self.anygrasp_server_timeout = rospy.get_param('~anygrasp_server_timeout', 2.0)
         self.anygrasp_result_timeout = rospy.get_param('~anygrasp_result_timeout', 300.0)
         self.anygrasp_arm_pose = rospy.get_param('~anygrasp_arm_pose', 'anygrasp')
@@ -98,6 +103,9 @@ class PickTools:
         # import grasp planner and make object out of it
         self.grasp_planner = getattr(importlib.import_module(import_file), import_class)()
         self.anygrasp_action_client = actionlib.SimpleActionClient(self.anygrasp_action_name, PickObjectAction)
+        self.anygrasp_generate_action_client = actionlib.SimpleActionClient(
+            self.anygrasp_generate_action_name, GenerateGraspsAction
+        )
         self.gripper_action_client = actionlib.SimpleActionClient(self.gripper_action_name, GripperCommandAction)
 
         # service clients
@@ -190,7 +198,10 @@ class PickTools:
             status_text = 'Grasplan pick succeeded' if success else 'Grasplan pick failed'
             preempted = False
         else:
-            success, status_text, preempted = self.pick_unknown_object_with_anygrasp(goal)
+            if self.anygrasp_handles_execution:
+                success, status_text, preempted = self.pick_unknown_object_with_anygrasp(goal)
+            else:
+                success, status_text, preempted = self.pick_unknown_object_with_grasplan(goal)
 
         if preempted:
             rospy.logwarn(status_text)
@@ -282,6 +293,79 @@ class PickTools:
         rospy.logerr(message)
         self.open_gripper()
         return False, message, False
+
+    def pick_unknown_object_with_grasplan(self, goal):
+        object_name = goal.object_name
+        action_name = rospy.resolve_name(self.anygrasp_generate_action_name)
+        rospy.loginfo(
+            'object %r is not known by %s; requesting candidates from %s for Grasplan execution',
+            object_name,
+            type(self.grasp_planner).__name__,
+            action_name,
+        )
+        if not self.anygrasp_generate_action_client.wait_for_server(rospy.Duration(self.anygrasp_server_timeout)):
+            message = f'AnyGrasp generate action server {action_name} is unavailable'
+            rospy.logerr(message)
+            return False, message, False
+
+        if not self.move_arm_to_posture(self.anygrasp_arm_pose):
+            message = f'failed to move arm to {self.anygrasp_arm_pose!r} before calling AnyGrasp'
+            rospy.logerr(message)
+            return False, message, False
+
+        generate_goal = GenerateGraspsGoal(object_name=object_name)
+        self.anygrasp_generate_action_client.send_goal(generate_goal)
+        deadline = None
+        if self.anygrasp_result_timeout > 0:
+            deadline = time.monotonic() + self.anygrasp_result_timeout
+
+        while not rospy.is_shutdown():
+            if self.pick_action_server.is_preempt_requested():
+                self.anygrasp_generate_action_client.cancel_goal()
+                return False, 'AnyGrasp generation was cancelled', True
+            if self.anygrasp_generate_action_client.wait_for_result(rospy.Duration(0.1)):
+                break
+            if deadline is not None and time.monotonic() >= deadline:
+                self.anygrasp_generate_action_client.cancel_goal()
+                message = f'timed out waiting for AnyGrasp after {self.anygrasp_result_timeout:.1f} seconds'
+                rospy.logerr(message)
+                return False, message, False
+        else:
+            self.anygrasp_generate_action_client.cancel_goal()
+            return False, 'ROS shutdown while waiting for AnyGrasp', True
+
+        state = self.anygrasp_generate_action_client.get_state()
+        result = self.anygrasp_generate_action_client.get_result()
+        server_text = self.anygrasp_generate_action_client.get_goal_status_text() or 'no status text'
+        if state != GoalStatus.SUCCEEDED or result is None or not result.success:
+            message = (
+                f'AnyGrasp generation failed with action state {ACTION_STATES.get(state, str(state))}, '
+                f'result.success={getattr(result, "success", None)}: {server_text}'
+            )
+            rospy.logerr(message)
+            return False, message, False
+
+        detection = result.detection
+        if not detection.object.class_id or not detection.grasps:
+            message = 'AnyGrasp returned an incomplete detection'
+            rospy.logerr(message)
+            return False, message, False
+        anchored_object_name = f'{detection.object.class_id}_{detection.object.instance_id}'
+        success = self.pick_object(
+            anchored_object_name,
+            goal.support_surface_name,
+            self.grasp_type,
+            goal.ignore_object_list,
+            external_grasp_candidates=detection.grasps,
+            external_reference_frame=detection.object.header.frame_id,
+            perceive_object=False,
+        )
+        message = (
+            f'Grasplan picked open-set object {anchored_object_name}'
+            if success
+            else f'Grasplan failed to pick open-set object {anchored_object_name}'
+        )
+        return success, message, False
 
     def graspTypeCB(self, msg):
         self.grasp_type = msg.data
@@ -458,7 +542,16 @@ class PickTools:
             table_pose.pose.orientation.w = planning_scene_box['box_orientation_w']
             self.scene.add_box(planning_scene_box['scene_name'], table_pose, (box_x, box_y, box_z))
 
-    def pick_object(self, object_name_as_string, support_surface_name, grasp_type, ignore_object_list=[]):
+    def pick_object(
+        self,
+        object_name_as_string,
+        support_surface_name,
+        grasp_type,
+        ignore_object_list=[],
+        external_grasp_candidates=None,
+        external_reference_frame=None,
+        perceive_object=None,
+    ):
         '''
         1) move arm to a position where the attached camera can see the scene (octomap will be populated)
         2) clear octomap
@@ -486,7 +579,9 @@ class PickTools:
 
         # ::::::::: perceive object to be picked (optional, read from parameter server if this is required)
 
-        if self.perceive_object:
+        if perceive_object is None:
+            perceive_object = self.perceive_object
+        if perceive_object:
             # send arm to a pose where objects are inside fov
             self.move_arm_to_posture(self.arm_pose_with_objs_in_fov)
             # populate pose selector with pose information
@@ -540,12 +635,20 @@ class PickTools:
         rospy.loginfo('picking object now')
 
         # generate a list of moveit grasp messages, poses are also published for visualization purposes
-        grasps = self.grasp_planner.make_grasps_msgs(
-            object_to_pick.get_object_class_and_id_as_string(),
-            object_pose,
-            self.robot.arm.get_end_effector_link(),
-            grasp_type,
-        )
+        if external_grasp_candidates is None:
+            grasps = self.grasp_planner.make_grasps_msgs(
+                object_to_pick.get_object_class_and_id_as_string(),
+                object_pose,
+                self.robot.arm.get_end_effector_link(),
+                grasp_type,
+            )
+        else:
+            grasps = self.grasp_planner.make_grasps_msgs_from_candidates(
+                object_to_pick.get_object_class_and_id_as_string(),
+                external_grasp_candidates,
+                external_reference_frame,
+                self.robot.arm.get_end_effector_link(),
+            )
 
         # clear octomap from the planning scene if needed
         if self.clear_octomap_flag:
