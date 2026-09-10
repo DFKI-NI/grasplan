@@ -19,6 +19,7 @@
 # SOFTWARE.
 
 import copy
+import math
 import rospy
 
 from geometry_msgs.msg import PoseArray, PoseStamped
@@ -46,6 +47,10 @@ class GraspPlanningCore:
         self.max_contact_force = rospy.get_param('~max_contact_force', 1.0)
         self.distance_gripper_close_per_obj = rospy.get_param('~distance_gripper_close_per_obj', None)
         self.distance_gripper_open_per_obj = rospy.get_param('~distance_gripper_open_per_obj', None)
+        # AnyGrasp reports the required jaw opening in metres. A negative
+        # offset closes slightly farther to compensate for perception or
+        # fingertip calibration error.
+        self.anygrasp_gripper_width_offset = rospy.get_param('~anygrasp_gripper_width_offset', 0.0)
         # pregrasp parameters
         self.pre_grasp_approach_min_dist = rospy.get_param('~pre_grasp_approach/min_dist')
         self.pre_grasp_approach_desired = rospy.get_param('~pre_grasp_approach/desired')
@@ -92,6 +97,41 @@ class GraspPlanningCore:
         trajectory_point.time_from_start = rospy.Duration(1.0)
         trajectory.points.append(trajectory_point)
         return trajectory
+
+    @staticmethod
+    def _single_gripper_position(position, parameter_name):
+        '''Return the scalar opening used by a single-command gripper.'''
+        if isinstance(position, (list, tuple)):
+            if len(position) != 1:
+                raise ValueError(f'{parameter_name} must contain exactly one gripper position')
+            position = position[0]
+        return float(position)
+
+    def make_anygrasp_gripper_trajectory(self, width):
+        '''Convert an AnyGrasp jaw width in metres to a bounded grasp posture.'''
+        width = float(width)
+        if not math.isfinite(width) or width < 0.0:
+            raise ValueError(f'AnyGrasp candidate width must be finite and non-negative, got {width!r}')
+
+        closed = self._single_gripper_position(self.gripper_close_distance, '~gripper_close')
+        opened = self._single_gripper_position(self.gripper_open_distance, '~gripper_open')
+        lower, upper = sorted((closed, opened))
+        offset = float(self.anygrasp_gripper_width_offset)
+        if not math.isfinite(offset):
+            raise ValueError(f'~anygrasp_gripper_width_offset must be finite, got {offset!r}')
+        requested = width + offset
+        bounded = min(max(requested, lower), upper)
+        if bounded != requested:
+            rospy.logwarn(
+                'AnyGrasp gripper width %.4f m (candidate %.4f m, offset %.4f m) '
+                'was clamped to configured range [%.4f, %.4f] m',
+                requested,
+                width,
+                offset,
+                lower,
+                upper,
+            )
+        return self.make_gripper_trajectory([bounded], None)
 
     def get_object_padding(self):
         return self.object_padding
@@ -194,6 +234,7 @@ class GraspPlanningCore:
             grasp = copy.deepcopy(g)
             grasp.id = 'anygrasp_' + str(i)
             grasp.grasp_quality = candidate.quality
+            grasp.grasp_posture = self.make_anygrasp_gripper_trajectory(candidate.width)
             grasp.grasp_pose = PoseStamped()
             grasp.grasp_pose.header = pose_array_msg.header
             grasp.grasp_pose.pose = candidate.pose

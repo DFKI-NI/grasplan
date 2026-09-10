@@ -23,6 +23,10 @@ The fallback is configured by these private parameters on `pick_object_node`:
 - `anygrasp_handles_execution` (default `false`): when `false`, AnyGrasp only generates candidates and Grasplan executes them through MoveIt; set it to `true` to retain AnyGrasp-owned execution
 - `anygrasp_server_timeout` (default `2.0` seconds)
 - `anygrasp_result_timeout` (default `300.0` seconds; `0` waits indefinitely)
+- `anygrasp_gripper_width_offset` (default `0.0` metres): added to each
+  AnyGrasp candidate's predicted jaw width before using it as the MoveIt grasp
+  posture; use a small negative value to close farther. The result is clamped
+  between the configured `gripper_close` and `gripper_open` positions.
 
 With the Grasplan pick server and AnyGrasp server running, exercise the
 fallback with an object description that is absent from the active planner's
