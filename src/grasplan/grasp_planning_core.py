@@ -47,10 +47,13 @@ class GraspPlanningCore:
         self.max_contact_force = rospy.get_param('~max_contact_force', 1.0)
         self.distance_gripper_close_per_obj = rospy.get_param('~distance_gripper_close_per_obj', None)
         self.distance_gripper_open_per_obj = rospy.get_param('~distance_gripper_open_per_obj', None)
-        # AnyGrasp reports the required jaw opening in metres. A negative
-        # offset closes slightly farther to compensate for perception or
-        # fingertip calibration error.
+        # Candidate-specific gripper settings for external AnyGrasp grasps.
+        # Width control is opt-in because the predicted opening is not robust
+        # enough for every object; the default retains the fully closed grasp
+        # posture configured above.
+        self.anygrasp_use_gripper_width = rospy.get_param('~anygrasp_use_gripper_width', False)
         self.anygrasp_gripper_width_offset = rospy.get_param('~anygrasp_gripper_width_offset', 0.0)
+        self.anygrasp_gripper_max_effort = rospy.get_param('~anygrasp_gripper_max_effort', -1.0)
         # pregrasp parameters
         self.pre_grasp_approach_min_dist = rospy.get_param('~pre_grasp_approach/min_dist')
         self.pre_grasp_approach_desired = rospy.get_param('~pre_grasp_approach/desired')
@@ -132,6 +135,17 @@ class GraspPlanningCore:
                 upper,
             )
         return self.make_gripper_trajectory([bounded], None)
+
+    def configure_anygrasp_gripper(self, grasp, width):
+        '''Apply enabled AnyGrasp-specific position and effort settings.'''
+        if self.anygrasp_use_gripper_width:
+            grasp.grasp_posture = self.make_anygrasp_gripper_trajectory(width)
+
+        max_effort = float(self.anygrasp_gripper_max_effort)
+        if not math.isfinite(max_effort):
+            raise ValueError(f'~anygrasp_gripper_max_effort must be finite, got {max_effort!r}')
+        if max_effort >= 0.0:
+            grasp.grasp_posture.points[0].effort = [max_effort] * len(grasp.grasp_posture.joint_names)
 
     def get_object_padding(self):
         return self.object_padding
@@ -234,7 +248,7 @@ class GraspPlanningCore:
             grasp = copy.deepcopy(g)
             grasp.id = 'anygrasp_' + str(i)
             grasp.grasp_quality = candidate.quality
-            grasp.grasp_posture = self.make_anygrasp_gripper_trajectory(candidate.width)
+            self.configure_anygrasp_gripper(grasp, candidate.width)
             grasp.grasp_pose = PoseStamped()
             grasp.grasp_pose.header = pose_array_msg.header
             grasp.grasp_pose.pose = candidate.pose

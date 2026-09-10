@@ -6,7 +6,9 @@
   <arg name="anygrasp_handles_execution" default="false" />
   <arg name="anygrasp_server_timeout" default="2.0" />
   <arg name="anygrasp_result_timeout" default="300.0" />
+  <arg name="anygrasp_use_gripper_width" default="false" />
   <arg name="anygrasp_gripper_width_offset" default="0.0" />
+  <arg name="anygrasp_gripper_max_effort" default="-1.0" />
 
   <!-- analytical pick object script using simple_pregrasp_planner -->
   <node pkg="grasplan" type="pick.py" name="pick_object_node" output="screen" >
@@ -17,7 +19,9 @@
     <param name="anygrasp_handles_execution" type="bool" value="$(arg anygrasp_handles_execution)" />
     <param name="anygrasp_server_timeout" type="double" value="$(arg anygrasp_server_timeout)" />
     <param name="anygrasp_result_timeout" type="double" value="$(arg anygrasp_result_timeout)" />
+    <param name="anygrasp_use_gripper_width" type="bool" value="$(arg anygrasp_use_gripper_width)" />
     <param name="anygrasp_gripper_width_offset" type="double" value="$(arg anygrasp_gripper_width_offset)" />
+    <param name="anygrasp_gripper_max_effort" type="double" value="$(arg anygrasp_gripper_max_effort)" />
     <rosparam file="$(find mobipick_pick_n_place)/config/grasplan/pick_params.yaml" command="load" />
     <rosparam file="$(find mobipick_pick_n_place)/config/grasplan/grasp_planning_core_params.yaml" command="load" />
     <!-- pregrasp planner parameters -->
