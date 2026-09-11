@@ -8,7 +8,8 @@
   <arg name="anygrasp_result_timeout" default="300.0" />
   <arg name="anygrasp_use_gripper_width" default="false" />
   <arg name="anygrasp_gripper_width_offset" default="0.0" />
-  <arg name="anygrasp_gripper_max_effort" default="-1.0" />
+  <!-- GripperCommand.max_effort for AnyGrasp grasps; the Robotiq action server accepts 30..100 -->
+  <arg name="anygrasp_gripper_max_effort" default="50.0" />
 
   <!-- analytical pick object script using handcoded_grasp_planner -->
   <node pkg="grasplan" type="pick.py" name="pick_object_node" output="screen" >
