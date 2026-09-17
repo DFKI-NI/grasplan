@@ -25,7 +25,9 @@ import rospy
 from geometry_msgs.msg import PoseArray, PoseStamped
 from moveit_msgs.msg import Grasp, GripperTranslation
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+from visualization_msgs.msg import MarkerArray
 
+from grasplan.grasp_markers import scored_grasp_markers
 from grasplan.tools.common import separate_object_class_from_id
 
 
@@ -66,6 +68,9 @@ class GraspPlanningCore:
 
         # publish grasp poses as pose array
         self.pose_array_pub = rospy.Publisher('~grasp_poses', PoseArray, queue_size=50)
+        # scored external candidates (e.g. AnyGrasp) as colour-mapped arrows, one
+        # namespace per score name; latched so RViz can be opened afterwards
+        self.grasp_markers_pub = rospy.Publisher('~grasp_markers', MarkerArray, queue_size=1, latch=True)
 
     def get_joint_value_from_dic(self, joint_angles, dictionary, object_class=None):
         '''
@@ -242,6 +247,7 @@ class GraspPlanningCore:
         pose_array_msg.header.stamp = rospy.Time.now()
         pose_array_msg.poses = [candidate.pose for candidate in candidates]
         self.pose_array_pub.publish(pose_array_msg)
+        self.grasp_markers_pub.publish(scored_grasp_markers(candidates, pose_array_msg.header))
 
         grasps = []
         for i, candidate in enumerate(candidates):

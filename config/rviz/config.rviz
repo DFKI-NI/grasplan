@@ -429,6 +429,14 @@ Visualization Manager:
           Value: true
         - Class: rviz/MarkerArray
           Enabled: true
+          Marker Topic: /pick_object_node/grasp_markers
+          Name: grasp candidate heat map
+          Namespaces:
+            {}
+          Queue Size: 100
+          Value: true
+        - Class: rviz/MarkerArray
+          Enabled: true
           Marker Topic: /gripper
           Name: gripper_visualization
           Namespaces:

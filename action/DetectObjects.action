@@ -1,0 +1,13 @@
+# Open-set detection without grasp generation: Grounding DINO + SAM2 on one
+# RGB-D frame, back-projected to oriented 3-D boxes and pushed to the pose
+# selector when the confidence passes the configured threshold.
+string object_name            # free-form open-set description, e.g. "coke can"
+bool use_vlm_verifier         # ask the VLM verifier service to confirm each crop
+---
+bool success
+string message
+grasplan/Detection2D[] detections   # every detector hit, accepted or not
+grasplan/OrientedBox[] boxes        # map-frame box per detection (same order)
+grasplan/DetectedObject[] objects   # accepted objects as sent to the pose selector
+---
+string stage

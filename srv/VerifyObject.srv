@@ -1,0 +1,9 @@
+# Ask a verifier (typically a VLM) whether an image crop shows the object a
+# detector claims it does.
+sensor_msgs/Image crop
+string object_name
+---
+bool matches
+float32 confidence            # [0, 1]
+string label                  # what the verifier thinks the crop shows
+string rationale
