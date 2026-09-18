@@ -358,6 +358,7 @@ class PickTools:
             goal.ignore_object_list,
             external_grasp_candidates=detection.grasps,
             external_reference_frame=detection.object.header.frame_id,
+            external_object=detection.object,
             perceive_object=False,
         )
         message = (
@@ -377,20 +378,30 @@ class PickTools:
         self.tf_listener.getLatestCommonTime(target_reference_frame, pose.header.frame_id)
         return self.tf_listener.transformPose(target_reference_frame, pose)
 
-    def make_object_pose_and_add_objs_to_planning_scene(self, object_to_pick, ignore_object_list=[]):
+    def make_object_pose_and_add_objs_to_planning_scene(
+        self, object_to_pick, ignore_object_list=[], external_object=None
+    ):
         '''
         ignore_object_list: if an object is inside another one, you can add it to the ignore_object_list and it will
                             not be added to the planning scene, but it will rather be removed from the planning scene
+        external_object: grasplan/DetectedObject of the target as perceived by the open-set pipeline that produced
+                         the grasp candidates. Its box is added to the planning scene as-is (same perception, same
+                         frame, orientation kept) instead of the pose selector copy, so the pick does not depend on
+                         the pose selector round trip; every other pose selector object is still added as obstacle.
         '''
         assert isinstance(object_to_pick, objectToPick)
-        # query pose selector
-        resp = self.pose_selector_class_query_srv(object_to_pick.obj_class)
-        if len(resp.poses) == 0:
-            rospy.logerr(
-                f'Object of class {object_to_pick.obj_class} was not perceived, therefore its pose is not available and'
-                ' cannot be picked'
-            )
-            return None, None, None
+        external_object_name = None
+        if external_object is not None:
+            external_object_name = f'{external_object.class_id}_{external_object.instance_id}'
+        else:
+            # query pose selector
+            resp = self.pose_selector_class_query_srv(object_to_pick.obj_class)
+            if len(resp.poses) == 0:
+                rospy.logerr(
+                    f'Object of class {object_to_pick.obj_class} was not perceived, therefore its pose is not available'
+                    ' and cannot be picked'
+                )
+                return None, None, None
         # at least one object of the same class as the object we want to pick was perceived, continue
         object_to_pick_id = object_to_pick.id
         object_to_pick_pose = None
@@ -432,10 +443,25 @@ class PickTools:
                     # check if object is already in the planning scene, if so, remove it
                     if object_name in self.scene.get_known_object_names():
                         self.scene.remove_world_object(object_name)
+                elif object_name == external_object_name:
+                    rospy.loginfo(f'{object_name} is added from the external detection, skipping pose selector copy')
                 else:
                     rospy.loginfo(f'adding object {object_name} to planning scene')
                     # add all perceived objects to planning scene (one at at time)
                     self.scene.add_box(object_name, pose_stamped_msg, object_bounding_box)
+        if external_object is not None:
+            object_to_pick_pose = PoseStamped()
+            object_to_pick_pose.header.frame_id = external_object.header.frame_id or self.global_reference_frame
+            object_to_pick_pose.pose = copy.deepcopy(external_object.pose)
+            object_to_pick_bounding_box = [external_object.size.x, external_object.size.y, external_object.size.z]
+            object_to_pick_id = external_object.instance_id
+            object_found = True
+            rospy.loginfo(
+                f'adding object {external_object_name} to planning scene from the external detection '
+                f'(frame {object_to_pick_pose.header.frame_id}, '
+                f'size {[round(v, 3) for v in object_to_pick_bounding_box]})'
+            )
+            self.scene.add_box(external_object_name, object_to_pick_pose, object_to_pick_bounding_box)
         if not object_found:
             rospy.logerr(
                 'the specific object you want to pick was not found:'
@@ -550,6 +576,7 @@ class PickTools:
         ignore_object_list=[],
         external_grasp_candidates=None,
         external_reference_frame=None,
+        external_object=None,
         perceive_object=None,
     ):
         '''
@@ -605,7 +632,7 @@ class PickTools:
         # add all perceived objects of interest to planning scene and return the pose, bb, and id of the
         # object to be picked
         object_pose, bounding_box, id = self.make_object_pose_and_add_objs_to_planning_scene(
-            object_to_pick, ignore_object_list=ignore_object_list
+            object_to_pick, ignore_object_list=ignore_object_list, external_object=external_object
         )
 
         if object_pose is None:
