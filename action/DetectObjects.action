@@ -3,6 +3,10 @@
 # selector when the confidence passes the configured threshold.
 string object_name            # free-form open-set description, e.g. "coke can"
 bool use_vlm_verifier         # ask the VLM verifier service to confirm each crop
+# Per-goal threshold overrides; 0 keeps the node's dynamic_reconfigure default.
+float32 box_threshold         # Grounding DINO box confidence
+float32 text_threshold        # Grounding DINO text-token threshold
+float32 accept_threshold      # minimum score to reach the pose selector
 ---
 bool success
 string message
