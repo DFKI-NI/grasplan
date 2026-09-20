@@ -28,7 +28,11 @@ import rospy
 import actionlib
 from grasplan.place import PlaceTools
 from grasplan.tools.common import separate_object_class_from_id
-from grasplan.tools.support_plane_tools import gen_insert_poses_from_obj, compute_object_height_for_insertion
+from grasplan.tools.support_plane_tools import (
+    gen_insert_poses_from_obj,
+    compute_object_height_for_insertion,
+    OBJECT_HEIGHTS,
+)
 from grasplan.tools.moveit_errors import print_moveit_error
 from object_pose_msgs.msg import ObjectList
 from moveit_msgs.msg import PlaceAction
@@ -139,6 +143,44 @@ class InsertTools:
         )
         return None
 
+    def get_object_heights_for_insertion(
+        self, object_to_be_inserted, object_class_tbi, support_object, support_object_pose
+    ):
+        '''
+        heights of the object to insert and of the support object for objects that are not in the insertion height
+        table (open-set objects picked through AnyGrasp): the attached collision box was added to the planning scene
+        map-axis-aligned in the object's resting pose, so its z dimension is the resting height; the support object
+        height comes from the pose selector box. Returns (ok, object height, support height); a height is None for
+        objects in the table so compute_object_height_for_insertion keeps using it.
+        '''
+        object_tbi_height = None
+        support_obj_height = None
+        if object_class_tbi not in OBJECT_HEIGHTS:
+            attached_object = self.place.scene.get_attached_objects([object_to_be_inserted]).get(object_to_be_inserted)
+            if attached_object is None or len(attached_object.object.primitives) == 0:
+                rospy.logerr(
+                    f'{object_to_be_inserted} is not in the insertion height table and has no collision primitive'
+                    ' attached to the gripper, cannot compute its height'
+                )
+                return False, None, None
+            object_tbi_height = attached_object.object.primitives[0].dimensions[2]
+            rospy.loginfo(
+                f'{object_to_be_inserted} height taken from its attached collision box: {object_tbi_height:.3f} m'
+            )
+        if support_object.obj_class not in OBJECT_HEIGHTS:
+            support_obj_height = support_object_pose.size.z
+            if support_obj_height <= 0.0:
+                rospy.logerr(
+                    f'{support_object.get_object_class_and_id_as_string()} is not in the insertion height table and'
+                    ' the pose selector reports no size for it, cannot compute its height'
+                )
+                return False, None, None
+            rospy.loginfo(
+                f'{support_object.get_object_class_and_id_as_string()} height taken from the pose selector:'
+                f' {support_obj_height:.3f} m'
+            )
+        return True, object_tbi_height, support_obj_height
+
     def insert_object(
         self,
         support_object_name_as_string,
@@ -201,10 +243,21 @@ class InsertTools:
         if support_object_pose is None:
             return False
 
+        heights_ok, object_tbi_height, support_obj_height = self.get_object_heights_for_insertion(
+            object_to_be_inserted, object_class_tbi, support_object, support_object_pose
+        )
+        if not heights_ok:
+            return False
+
         place_poses_as_object_list_msg = gen_insert_poses_from_obj(
             object_class_tbi,
             support_object_pose,
-            compute_object_height_for_insertion(object_class_tbi, support_object.obj_class),
+            compute_object_height_for_insertion(
+                object_class_tbi,
+                support_object.obj_class,
+                object_tbi_height=object_tbi_height,
+                support_obj_height=support_obj_height,
+            ),
             frame_id=self.place.global_reference_frame,
             same_orientation_as_support_obj=same_orientation_as_support_obj,
         )

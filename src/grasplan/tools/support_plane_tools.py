@@ -63,21 +63,41 @@ def make_plane_marker_msg(ref_frame, plane):
     return marker_msg
 
 
-def compute_object_height_for_insertion(object_class_tbi, support_obj_class, gap_between_objects=0.02):
-    # ohd : objects height dictionary, object_class_tbi : object class to be inserted
-    ohd = {
-        'power_drill_with_grip': 0.2205359935760498,
-        'hot_glue_gun': 0.2,
-        'klt': 0.14699999809265138,
-        'multimeter': 0.04206399992108345,
-        'relay': 0.10436400026082993,
-        'screwdriver': 0.034412000328302383,
-        'bleach': 0.25,
-        'mustard': 0.2,
-        'soup': 0.1,
-        'meat': 0.1,
-    }
-    return (ohd[support_obj_class] / 2.0) + (ohd[object_class_tbi] / 2.0) + gap_between_objects
+# resting height (vertical extent in the object's stable pose) of the objects grasplan knows, used by insertion;
+# ohd : objects height dictionary
+OBJECT_HEIGHTS = {
+    'power_drill_with_grip': 0.2205359935760498,
+    'hot_glue_gun': 0.2,
+    'klt': 0.14699999809265138,
+    'multimeter': 0.04206399992108345,
+    'relay': 0.10436400026082993,
+    'screwdriver': 0.034412000328302383,
+    'bleach': 0.25,
+    'mustard': 0.2,
+    'soup': 0.1,
+    'meat': 0.1,
+}
+
+
+def compute_object_height_for_insertion(
+    object_class_tbi, support_obj_class, gap_between_objects=0.02, object_tbi_height=None, support_obj_height=None
+):
+    '''
+    height of the insert pose above the support object centre: half of each object plus a gap
+    object_class_tbi : object class to be inserted
+    object_tbi_height, support_obj_height : measured heights (e.g. from the planning scene or pose selector) for
+        objects that are not in OBJECT_HEIGHTS, such as open-set objects picked through AnyGrasp; when given they
+        take precedence over the table
+    '''
+    if object_tbi_height is None:
+        if object_class_tbi not in OBJECT_HEIGHTS:
+            raise ValueError(f'unknown height of object to insert: {object_class_tbi}, pass object_tbi_height')
+        object_tbi_height = OBJECT_HEIGHTS[object_class_tbi]
+    if support_obj_height is None:
+        if support_obj_class not in OBJECT_HEIGHTS:
+            raise ValueError(f'unknown height of support object: {support_obj_class}, pass support_obj_height')
+        support_obj_height = OBJECT_HEIGHTS[support_obj_class]
+    return (support_obj_height / 2.0) + (object_tbi_height / 2.0) + gap_between_objects
 
 
 def gen_insert_poses_from_obj(
