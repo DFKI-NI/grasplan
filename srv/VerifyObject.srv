@@ -7,3 +7,5 @@ bool matches
 float32 confidence            # [0, 1]
 string label                  # what the verifier thinks the crop shows
 string rationale
+uint8 status                  # grasplan/Verdict status constant (MATCH, NO_MATCH or a failure); 0 from old servers
+string error                  # failure detail when status >= TIMEOUT

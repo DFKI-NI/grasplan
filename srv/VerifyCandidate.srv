@@ -1,0 +1,10 @@
+# Ask a verifier (typically a VLM) whether the evidence collected for one
+# candidate object shows the claimed object. All images travel in one request
+# (e.g. per view a full frame with the candidate outlined plus a crop) so the
+# model answers once over the combined evidence.
+string object_name
+string[] query_variants       # alternative phrasings of object_name, optional
+sensor_msgs/Image[] images
+string[] captions             # one per image, e.g. "view 2: full frame, candidate outlined in red"
+---
+grasplan/Verdict verdict

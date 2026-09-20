@@ -1,0 +1,18 @@
+# Second stage of open-set perception: verify candidate objects proposed by
+# one or more DetectObjects(proposals_only) views with a single multi-image
+# VLM request per candidate, and optionally push the accepted ones to the
+# pose selector using the SAM2 box of their best view.
+string object_name
+string[] query_variants          # alternative phrasings shown to the verifier (optional)
+grasplan/CandidateGroup[] candidates
+bool include_full_frames         # also send each view's full frame with the candidate outlined
+bool commit                      # push accepted candidates to the pose selector
+---
+bool success                     # at least one candidate got a semantic verdict (MATCH or NO_MATCH)
+string message
+grasplan/Verdict[] verdicts       # one per candidate, same order as the goal
+grasplan/OrientedBox[] boxes      # one per candidate: SAM2 box of its best view (num_points 0 when unavailable)
+grasplan/DetectedObject[] objects # accepted candidates as sent to the pose selector
+float32 verify_s
+---
+string stage

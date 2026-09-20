@@ -1,17 +1,34 @@
 # Open-set detection without grasp generation: Grounding DINO + SAM2 on one
 # RGB-D frame, back-projected to oriented 3-D boxes and pushed to the pose
 # selector when the confidence passes the configured threshold.
+#
+# With proposals_only the goal is the first half of the two-stage pipeline:
+# the frame is captured and cached under view_id, the best max_proposals
+# detections are returned with their detection_ids and coarse 3-D positions,
+# and nothing is accepted or pushed; VerifyObjects decides later.
 string object_name            # free-form open-set description, e.g. "coke can"
-bool use_vlm_verifier         # ask the VLM verifier service to confirm each crop
+string[] query_variants       # optional alternative phrasings; one detector pass over all of them, label tells which matched
+bool use_vlm_verifier         # in-line mode: ask the VLM verifier service to confirm each crop
 # Per-goal threshold overrides; 0 keeps the node's dynamic_reconfigure default.
 float32 box_threshold         # Grounding DINO box confidence
 float32 text_threshold        # Grounding DINO text-token threshold
 float32 accept_threshold      # minimum score to reach the pose selector
+int32 max_proposals           # keep only the best N detections (0 = all)
+bool proposals_only           # cache the view and return proposals; no acceptance, no verifier, no pose selector
+bool return_frame             # copy the captured RGB, depth and camera info into the result
 ---
 bool success
 string message
-grasplan/Detection2D[] detections   # every detector hit, accepted or not
+uint32 view_id                      # cache id of the captured frame
+geometry_msgs/PoseStamped camera_pose   # optical frame of the captured image in the map frame
+grasplan/Detection2D[] detections   # every detector hit, accepted or not, best score first
 grasplan/OrientedBox[] boxes        # map-frame box per detection (same order)
 grasplan/DetectedObject[] objects   # accepted objects as sent to the pose selector
+sensor_msgs/Image image             # captured frame (rgb8) when return_frame
+sensor_msgs/Image depth             # captured depth (32FC1, metres) when return_frame
+sensor_msgs/CameraInfo camera_info  # when return_frame
+float32 detect_s                    # Grounding DINO time
+float32 segment_s                   # SAM2 time (image encoding + masks of the kept proposals)
+float32 geometry_s                  # back-projection and 3-D boxes
 ---
 string stage

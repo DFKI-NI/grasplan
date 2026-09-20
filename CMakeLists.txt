@@ -23,6 +23,7 @@ catkin_python_setup()
 add_action_files(
   FILES
     DetectObjects.action
+    VerifyObjects.action
     GenerateGrasps.action
     InsertObject.action
     PickObject.action
@@ -31,16 +32,19 @@ add_action_files(
 
 add_message_files(
   FILES
+    CandidateGroup.msg
     DetectedObject.msg
     Detection2D.msg
     GraspCandidate.msg
     GraspDetection.msg
     GraspScore.msg
     OrientedBox.msg
+    Verdict.msg
 )
 
 add_service_files(
   FILES
+    VerifyCandidate.srv
     VerifyObject.srv
 )
 
