@@ -70,6 +70,10 @@ class PickTools:
         self.pregrasp_posture_required = rospy.get_param('~pregrasp_posture_required', False)
         self.pregrasp_posture = rospy.get_param('~pregrasp_posture', 'home')
         self.planning_scene_boxes = rospy.get_param('~planning_scene_boxes', [])
+        # MoveIt's pickup plans the grasps it is given in parallel and executes the first one that
+        # planned, not the best scored one; external (AnyGrasp) candidates arrive best first, so they
+        # are offered in batches of this size to keep the score order (0 = all at once)
+        self.external_grasp_batch_size = int(rospy.get_param('~external_grasp_batch_size', 3))
         self.clear_planning_scene = rospy.get_param('~clear_planning_scene', True)
         self.clear_octomap_flag = rospy.get_param('~clear_octomap', False)
         self.poses_to_go_before_pick = rospy.get_param('~poses_to_go_before_pick', [])
@@ -537,6 +541,38 @@ class PickTools:
         self.robot.gripper.set_named_target(gripper_posture_name)
         self.robot.gripper.go()
 
+    def ensure_attached(self, object_name):
+        '''
+        After a successful pick the object must hang on the gripper in the planning scene (shown purple in
+        RViz): MoveIt's pickup attaches it, but when it does not (seen with open-set objects), attach the
+        world box explicitly so placing, inserting and every later arm motion plan with it.
+        '''
+        attached = self.scene.get_attached_objects([object_name])
+        if attached:
+            rospy.loginfo(f'{object_name} is attached to {attached[object_name].link_name}')
+            return True
+        objects = self.scene.get_objects([object_name])
+        if object_name not in objects:
+            rospy.logwarn(f'{object_name} is neither attached nor in the planning scene after the pick')
+            return False
+        collision_object = objects[object_name]
+        if not collision_object.primitives:
+            rospy.logwarn(f'{object_name} has no primitive to attach')
+            return False
+        eef_link = self.robot.arm.get_end_effector_link()
+        touch_links = self.robot.get_link_names(group=self.gripper.get_name())
+        pose = PoseStamped()
+        pose.header.frame_id = collision_object.header.frame_id
+        pose.pose = collision_object.pose if any(
+            (collision_object.pose.orientation.x, collision_object.pose.orientation.y,
+             collision_object.pose.orientation.z, collision_object.pose.orientation.w)
+        ) else collision_object.primitive_poses[0]
+        size = list(collision_object.primitives[0].dimensions)
+        self.scene.remove_world_object(object_name)
+        self.scene.attach_box(eef_link, object_name, pose, size, touch_links=touch_links)
+        rospy.logwarn(f'moveit did not attach {object_name}; attached its box to {eef_link} explicitly')
+        return True
+
     def detach_all_objects(self):
         for attached_object in self.scene.get_attached_objects().keys():
             self.gripper.detach_object(name=attached_object)
@@ -696,9 +732,25 @@ class PickTools:
 
         # try to pick object with moveit
         # result = self._pick_with_moveit_commander(object_to_pick, grasps, support_surface_name)
-        result = self._pick_with_action(object_to_pick, grasps, support_surface_name)
+        batch = self.external_grasp_batch_size if external_grasp_candidates is not None else 0
+        if batch > 0 and len(grasps) > batch:
+            result = None
+            for start in range(0, len(grasps), batch):
+                chunk = grasps[start:start + batch]
+                rospy.loginfo(
+                    f'trying grasps {start + 1}-{start + len(chunk)} of {len(grasps)} (best first, qualities '
+                    f'{", ".join(f"{g.grasp_quality:.3f}" for g in chunk)})'
+                )
+                result = self._pick_with_action(object_to_pick, chunk, support_surface_name)
+                if result == MoveItErrorCodes.SUCCESS or result is None:
+                    break
+                if self.pick_action_server.is_preempt_requested():
+                    return False
+        else:
+            result = self._pick_with_action(object_to_pick, grasps, support_surface_name)
         # handle moveit pick result
         if result == MoveItErrorCodes.SUCCESS:
+            self.ensure_attached(object_to_pick.get_object_class_and_id_as_string())
             # remove picked object pose from pose selector
             rospy.loginfo(
                 'removing picked object from pose selector due to succesfull execution (as reported by moveit)'
@@ -748,7 +800,14 @@ class PickTools:
             )
             rospy.loginfo(f'waiting for result from {rospy.resolve_name(PICK_OBJECT_SERVER_NAME)} action server')
             self.action_client_helper.send_goal_to_rogue_server_and_wait(goal, action_client, patience_timeout=0.1)
-            result = action_client.get_result().error_code.val  # get moveit error code
+            pickup_result = action_client.get_result()
+            result = pickup_result.error_code.val  # get moveit error code
+            if result == MoveItErrorCodes.SUCCESS:
+                executed = pickup_result.grasp
+                rospy.loginfo(
+                    f'moveit executed grasp {executed.id!r} (quality {executed.grasp_quality:.3f}) out of '
+                    f'{len(grasps)} offered'
+                )
         else:
             rospy.logerr(f'action server {PICK_OBJECT_SERVER_NAME} was not found within allocated time')
         return result
