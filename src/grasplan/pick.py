@@ -42,7 +42,15 @@ from std_srvs.srv import Empty, SetBool
 from pose_selector.srv import ClassQuery, PoseDelete, GetPoses
 from geometry_msgs.msg import PoseStamped
 from grasplan.tools.moveit_errors import print_moveit_error
-from moveit_msgs.msg import MoveItErrorCodes, PickupAction, PickupGoal
+from moveit_msgs.msg import (
+    AllowedCollisionEntry,
+    MoveItErrorCodes,
+    PickupAction,
+    PickupGoal,
+    PlanningScene,
+    PlanningSceneComponents,
+)
+from moveit_msgs.srv import GetPlanningScene, GetPlanningSceneRequest
 from grasplan.msg import (
     GenerateGraspsAction,
     GenerateGraspsGoal,
@@ -56,6 +64,9 @@ from visualization_msgs.msg import Marker, MarkerArray
 
 ACTION_STATES = {value: name for name, value in vars(GoalStatus).items() if name.isupper() and isinstance(value, int)}
 
+# the name MoveIt gives the octomap inside the planning scene (planning_scene::PlanningScene::OCTOMAP_NS)
+OCTOMAP_COLLISION_NAME = '<octomap>'
+
 
 class PickTools:
     def __init__(self):
@@ -65,6 +76,7 @@ class PickTools:
         self.detach_all_objects_flag = rospy.get_param('~detach_all_objects', False)
         self.arm_group_name = rospy.get_param('~arm_group_name', 'arm')
         gripper_group_name = rospy.get_param('~gripper_group_name', 'gripper')
+        self.gripper_group_name = gripper_group_name
         arm_goal_tolerance = rospy.get_param('~arm_goal_tolerance', 0.01)
         self.planning_time = rospy.get_param('~planning_time', 20.0)
         self.pregrasp_posture_required = rospy.get_param('~pregrasp_posture_required', False)
@@ -76,6 +88,12 @@ class PickTools:
         self.external_grasp_batch_size = int(rospy.get_param('~external_grasp_batch_size', 3))
         self.clear_planning_scene = rospy.get_param('~clear_planning_scene', True)
         self.clear_octomap_flag = rospy.get_param('~clear_octomap', False)
+        # MoveIt's pick pipeline lets the gripper touch the target object and the support
+        # surface, but never the octomap, so the voxels measured on the target itself make
+        # every grasp fail at the 'approach & translate' stage. These two parameters allow
+        # those contacts for the duration of a single pick.
+        self.allow_octomap_contact = rospy.get_param('~allow_octomap_contact_during_pick', True)
+        self.octomap_touch_links = rospy.get_param('~octomap_touch_links', [])
         self.poses_to_go_before_pick = rospy.get_param('~poses_to_go_before_pick', [])
         self.list_of_disentangle_objects = rospy.get_param('~list_of_disentangle_objects', [])
         # if true the arm is moved to a pose where objects are inside fov and pose selector is triggered
@@ -147,6 +165,7 @@ class PickTools:
             self.robot.arm.set_planning_time(self.planning_time)
             self.robot.arm.set_goal_tolerance(arm_goal_tolerance)
             self.scene = moveit_commander.PlanningSceneInterface()
+            self.get_planning_scene_srv = rospy.ServiceProxy('get_planning_scene', GetPlanningScene)
             rospy.loginfo('found move_group action server')
         except RuntimeError:
             # moveit_commander.roscpp_initialize overwrites the signal handler,
@@ -164,6 +183,7 @@ class PickTools:
 
         # publishers
         self.event_out_pub = rospy.Publisher('~event_out', String, queue_size=1)
+        self.planning_scene_pub = rospy.Publisher('planning_scene', PlanningScene, queue_size=1)
         self.trigger_perception_pub = rospy.Publisher('/object_recognition/event_in', String, queue_size=1)
         self.pick_grasps_marker_array_pub = rospy.Publisher('/gripper', MarkerArray, queue_size=1)
         self.pose_selector_objects_marker_array_pub = rospy.Publisher(
@@ -492,6 +512,64 @@ class PickTools:
         rospy.logwarn('Clearing octomap')
         rospy.ServiceProxy(octomap_srv_name, Empty)()
 
+    def read_allowed_collision_matrix(self):
+        '''
+        return the allowed collision matrix of the planning scene that move_group
+        maintains, or None when it cannot be read
+        '''
+        try:
+            request = GetPlanningSceneRequest()
+            request.components.components = PlanningSceneComponents.ALLOWED_COLLISION_MATRIX
+            acm = self.get_planning_scene_srv(request).scene.allowed_collision_matrix
+        except rospy.ServiceException as e:
+            rospy.logwarn(f'could not read the allowed collision matrix: {e}')
+            return None
+        if not acm.entry_names:
+            rospy.logwarn('the allowed collision matrix is empty')
+            return None
+        return acm
+
+    def publish_allowed_collision_matrix(self, acm):
+        '''
+        replace the allowed collision matrix of the planning scene that move_group maintains
+        '''
+        planning_scene = PlanningScene()
+        planning_scene.is_diff = True
+        planning_scene.allowed_collision_matrix = acm
+        self.planning_scene_pub.publish(planning_scene)
+
+    def acm_allowing_octomap_contact(self, acm, object_name):
+        '''
+        extend the allowed collision matrix acm so that the octomap may touch the gripper
+        and the object being picked. The octomap remains an obstacle for the rest of the
+        robot, and the original matrix is restored once the pick is over.
+        '''
+        touch_links = self.octomap_touch_links or self.robot.get_link_names(group=self.gripper_group_name)
+        rospy.loginfo(f'allowing {OCTOMAP_COLLISION_NAME} to touch {object_name} and the gripper during this pick')
+        return self.allow_collisions_with(acm, OCTOMAP_COLLISION_NAME, list(touch_links) + [object_name])
+
+    def allow_collisions_with(self, acm, name, other_names):
+        '''
+        mark the collisions between name and every entry of other_names as allowed in the
+        AllowedCollisionMatrix message acm, adding the names that it does not contain yet
+        '''
+        names = list(acm.entry_names)
+        rows = [list(entry.enabled) for entry in acm.entry_values]
+        for missing in [name] + list(other_names):
+            if missing not in names:
+                names.append(missing)
+                for row in rows:
+                    row.append(False)
+                rows.append([False] * len(names))
+        index = names.index(name)
+        for other in other_names:
+            other_index = names.index(other)
+            rows[index][other_index] = True
+            rows[other_index][index] = True
+        acm.entry_names = names
+        acm.entry_values = [AllowedCollisionEntry(enabled=row) for row in rows]
+        return acm
+
     def move_arm_to_posture(self, arm_posture_name):
         '''
         use moveit commander to send the arm to a predefined arm configuration
@@ -794,20 +872,33 @@ class PickTools:
             goal.planning_options.planning_scene_diff.robot_state.is_diff = True
             goal.planning_options.replan_delay = 2.0
 
-            rospy.loginfo(
-                f'sending pick {object_to_pick.get_object_class_and_id_as_string()} goal '
-                f'to {rospy.resolve_name(PICK_OBJECT_SERVER_NAME)} action server'
-            )
-            rospy.loginfo(f'waiting for result from {rospy.resolve_name(PICK_OBJECT_SERVER_NAME)} action server')
-            self.action_client_helper.send_goal_to_rogue_server_and_wait(goal, action_client, patience_timeout=0.1)
-            pickup_result = action_client.get_result()
-            result = pickup_result.error_code.val  # get moveit error code
-            if result == MoveItErrorCodes.SUCCESS:
-                executed = pickup_result.grasp
-                rospy.loginfo(
-                    f'moveit executed grasp {executed.id!r} (quality {executed.grasp_quality:.3f}) out of '
-                    f'{len(grasps)} offered'
+            # move_group validates the grasp trajectories against the planning scene it
+            # maintains, while planning the pick and again on every scene update during
+            # execution, so the octomap exception has to live there and not only in this goal
+            original_acm = self.read_allowed_collision_matrix() if self.allow_octomap_contact else None
+            if original_acm is not None:
+                self.publish_allowed_collision_matrix(
+                    self.acm_allowing_octomap_contact(copy.deepcopy(original_acm), goal.target_name)
                 )
+            try:
+                rospy.loginfo(
+                    f'sending pick {object_to_pick.get_object_class_and_id_as_string()} goal '
+                    f'to {rospy.resolve_name(PICK_OBJECT_SERVER_NAME)} action server'
+                )
+                rospy.loginfo(f'waiting for result from {rospy.resolve_name(PICK_OBJECT_SERVER_NAME)} action server')
+                self.action_client_helper.send_goal_to_rogue_server_and_wait(goal, action_client, patience_timeout=0.1)
+                pickup_result = action_client.get_result()
+                result = pickup_result.error_code.val  # get moveit error code
+                if result == MoveItErrorCodes.SUCCESS:
+                    executed = pickup_result.grasp
+                    rospy.loginfo(
+                        f'moveit executed grasp {executed.id!r} (quality {executed.grasp_quality:.3f}) out of '
+                        f'{len(grasps)} offered'
+                    )
+            finally:
+                if original_acm is not None:
+                    rospy.loginfo(f'restoring the allowed collision matrix, {OCTOMAP_COLLISION_NAME} blocks again')
+                    self.publish_allowed_collision_matrix(original_acm)
         else:
             rospy.logerr(f'action server {PICK_OBJECT_SERVER_NAME} was not found within allocated time')
         return result
