@@ -37,7 +37,6 @@ from grasplan.tools.moveit_errors import print_moveit_error
 from object_pose_msgs.msg import ObjectList
 from moveit_msgs.msg import PlaceAction
 from moveit_msgs.msg import MoveItErrorCodes
-from std_srvs.srv import Empty
 from pose_selector.srv import ClassQuery
 from grasplan.tools.common import objectToPick  # name is misleading, in this case we want to insert an object in it
 from grasplan.msg import InsertObjectAction, InsertObjectResult
@@ -264,9 +263,10 @@ class InsertTools:
         # send places poses to place pose selector for visualization purposes
         self.insert_poses_pub.publish(place_poses_as_object_list_msg)
 
-        # clear octomap before placing, this is experimental and not sure is needed
-        rospy.loginfo('clearing octomap')
-        rospy.ServiceProxy('clear_octomap', Empty)()
+        # Insertion shares PlaceTools' opt-in switch.  By default the octomap
+        # stays intact so obstacles outside the current camera view are kept.
+        if self.place.clear_octomap_flag:
+            self.place.clear_octomap()
 
         if self.insert_action_server.is_preempt_requested():
             return False

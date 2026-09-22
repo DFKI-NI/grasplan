@@ -80,6 +80,7 @@ class PlaceTools:
         self.disentangle_required = rospy.get_param('~disentangle_required', False)
         self.poses_to_go_before_place = rospy.get_param('~poses_to_go_before_place', [])
         self.max_batch_size = rospy.get_param('~max_batch_size', 20)
+        self.clear_octomap_flag = rospy.get_param('~clear_octomap', False)
 
         self.plane_vis_pub = rospy.Publisher('~support_plane_as_marker', Marker, queue_size=1, latch=True)
         self.place_poses_pub = rospy.Publisher('~place_poses', ObjectList, queue_size=50)
@@ -376,9 +377,12 @@ class PlaceTools:
         global_place_poses = self.transform_obj_list(local_place_poses, self.global_reference_frame)
         self.place_poses_pub.publish(global_place_poses)
 
-        # clear octomap before placing, this is experimental and not sure is needed
-        rospy.logwarn('Clearing octomap')
-        rospy.ServiceProxy('clear_octomap', Empty)()
+        # Keep the observed occupancy map by default so unknown objects remain
+        # collision obstacles during placement.  Clearing is retained as an
+        # opt-in diagnostic/workaround for deployments that explicitly need it.
+        if self.clear_octomap_flag:
+            rospy.logwarn('Clearing octomap before placing')
+            rospy.ServiceProxy('clear_octomap', Empty)()
 
         if not action_client.wait_for_server(timeout=rospy.Duration.from_sec(2.0)):
             rospy.logerr(f'Action server {PLACE_OBJECT_SERVER_NAME} not available')
