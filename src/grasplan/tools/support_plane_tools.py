@@ -225,6 +225,8 @@ def gen_place_poses_from_plane(
     # min_dist check instead of each spending the whole attempt budget in vain (25 or 50 poses
     # on a table with room for a handful took minutes, beyond the callers' place timeout).
     separation_exhausted = False
+    # The same for every pose; each planning scene query takes seconds over Wi-Fi to the real robot
+    place_z = attached_obj_height(support_object, planning_scene, offset=height_offset)
     for _ in range(1, number_of_poses + 1):
         object_pose_msg = ObjectPose()
         object_pose_msg.class_id = object_class
@@ -258,7 +260,7 @@ def gen_place_poses_from_plane(
         object_pose_msg.pose.position.x = candidate_x
         object_pose_msg.pose.position.y = candidate_y
 
-        object_pose_msg.pose.position.z = attached_obj_height(support_object, planning_scene, offset=height_offset)
+        object_pose_msg.pose.position.z = place_z
 
         roll = 0.0
         pitch = 0.0

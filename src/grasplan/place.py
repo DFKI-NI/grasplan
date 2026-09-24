@@ -323,8 +323,8 @@ class PlaceTools:
 
     def add_planning_scene_objects(self, planning_scene) -> None:
         """Adds all objects in the planning scene to the local tf buffer as static transforms."""
-        for obj_name in planning_scene.get_known_object_names():
-            obj = planning_scene.get_objects([obj_name])[obj_name]
+        # One query for all objects: a query per object took about 1 s each over Wi-Fi to the real robot
+        for obj_name, obj in planning_scene.get_objects().items():
             tf = TransformStamped(
                 header=Header(frame_id="map"),
                 child_frame_id=obj_name,
