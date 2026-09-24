@@ -38,7 +38,7 @@ from grasplan.tools.support_plane_tools import (
     gen_place_poses_from_plane,
     make_plane_marker_msg,
 )
-from grasplan.tools.common import separate_object_class_from_id
+from grasplan.tools.common import separate_object_class_from_id, connect_move_groups
 from grasplan.tools.moveit_errors import print_moveit_error
 from std_srvs.srv import Empty, SetBool, Trigger
 from object_pose_msgs.msg import ObjectList
@@ -139,6 +139,7 @@ class PlaceTools:
             rospy.loginfo('waiting for move_group action server')
             moveit_commander.roscpp_initialize(sys.argv)
             self.robot = moveit_commander.RobotCommander()
+            connect_move_groups(self.robot, {'arm', self.group_name}, self.moveit_action_startup_timeout)
             self.robot.arm.set_planning_time(self.planning_time)
             self.robot.arm.set_goal_tolerance(arm_goal_tolerance)
             self.scene = moveit_commander.PlanningSceneInterface()
@@ -148,6 +149,7 @@ class PlaceTools:
                 'grasplan place server could not connect to Moveit in time, exiting! \n' + traceback.format_exc()
             )
             rospy.signal_shutdown('fatal error')
+            sys.exit(1)
 
         self.place_action_client = actionlib.SimpleActionClient('place', PlaceAction)
         rospy.loginfo(f'waiting for {rospy.resolve_name("place")} action server')

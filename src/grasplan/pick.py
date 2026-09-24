@@ -58,7 +58,7 @@ from grasplan.msg import (
     PickObjectGoal,
     PickObjectResult,
 )
-from grasplan.tools.common import objectToPick
+from grasplan.tools.common import objectToPick, connect_move_groups
 from grasplan.tools.action_client_helper import ActionClientHelper
 from visualization_msgs.msg import Marker, MarkerArray
 
@@ -166,6 +166,9 @@ class PickTools:
             rospy.loginfo('waiting for move_group action server')
             moveit_commander.roscpp_initialize(sys.argv)
             self.robot = moveit_commander.RobotCommander()
+            connect_move_groups(
+                self.robot, {'arm', self.arm_group_name, gripper_group_name}, self.moveit_action_startup_timeout
+            )
             self.gripper = getattr(self.robot, gripper_group_name)
             self.robot.arm.set_planning_time(self.planning_time)
             self.robot.arm.set_goal_tolerance(arm_goal_tolerance)
@@ -180,6 +183,7 @@ class PickTools:
                 'grasplan pick server could not connect to Moveit in time, exiting! \n' + traceback.format_exc()
             )
             rospy.signal_shutdown('fatal error')
+            sys.exit(1)
 
         self.pickup_action_client = actionlib.SimpleActionClient('pickup', PickupAction)
         rospy.loginfo(f'waiting for {rospy.resolve_name("pickup")} action server')

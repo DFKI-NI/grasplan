@@ -19,6 +19,21 @@
 # SOFTWARE.
 
 
+def connect_move_groups(robot, group_names, wait_for_servers):
+    '''
+    Construct the MoveGroupCommander of each group with a custom wait for the move_group action servers and
+    cache it in robot, so that robot.<group> returns it. RobotCommander.get_group() always waits MoveIt's
+    default 5 s, which is too short when move_group runs on another machine (the real robot seen from a laptop).
+    '''
+    import moveit_commander
+
+    for name in group_names:
+        if name not in robot._groups:
+            robot._groups[name] = moveit_commander.MoveGroupCommander(
+                name, robot._robot_description, robot._ns, wait_for_servers
+            )
+
+
 def separate_object_class_from_id(anchored_object_as_string):
     '''
     e.g. input  : relay_1
