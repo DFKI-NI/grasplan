@@ -91,6 +91,10 @@ class PlaceTools:
         arm_goal_tolerance = rospy.get_param('~arm_goal_tolerance', 0.01)
         self.use_path_constraints = rospy.get_param('~use_path_constraints', False)
         self.disentangle_required = rospy.get_param('~disentangle_required', False)
+        # By default the cable is untangled only when the goal asks to observe first; true also untangles
+        # for goals without observe_before_place (the planner never asks for it, and the real robot's cable
+        # caught on the arm while placing)
+        self.disentangle_without_observe = rospy.get_param('~disentangle_without_observe', False)
         self.poses_to_go_before_place = rospy.get_param('~poses_to_go_before_place', [])
         self.max_batch_size = rospy.get_param('~max_batch_size', 20)
         self.clear_octomap_flag = rospy.get_param('~clear_octomap', False)
@@ -268,8 +272,8 @@ class PlaceTools:
             else:
                 override_disentangle_dont_doit = True
                 override_observe_before_place_dont_doit = True
-            # do not disentangle if we dont go to observe arm pose
-            if not goal.observe_before_place:
+            # do not disentangle if we dont go to observe arm pose, unless configured to
+            if not goal.observe_before_place and not self.disentangle_without_observe:
                 override_disentangle_dont_doit = True
             if self.place_object(
                 goal.support_surface_name,
