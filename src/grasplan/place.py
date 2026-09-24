@@ -195,6 +195,29 @@ class PlaceTools:
         marker_array_msg.markers.append(marker)
         self.marker_array_pub.publish(marker_array_msg)
 
+    def publish_place_box_markers(self, poses, box_size, winning_id=None):
+        """Show measured object boxes at candidate poses, or the chosen pose in green."""
+        markers = MarkerArray()
+        for obj in poses.objects:
+            if winning_id is not None and str(obj.instance_id) != winning_id:
+                continue
+            marker = Marker()
+            marker.header.frame_id = poses.header.frame_id
+            marker.header.stamp = rospy.Time.now()
+            marker.ns = 'place_object_boxes'
+            marker.id = int(obj.instance_id)
+            marker.type = Marker.CUBE
+            marker.action = Marker.ADD
+            marker.pose = obj.pose
+            marker.scale.x, marker.scale.y, marker.scale.z = box_size
+            if winning_id is None:
+                marker.color.r, marker.color.b, marker.color.a = 1.0, 1.0, 0.4
+            else:
+                marker.color.g, marker.color.a = 1.0, 0.85
+            markers.markers.append(marker)
+        if markers.markers:
+            self.marker_array_pub.publish(markers)
+
     def add_objs_to_planning_scene(self):
         # query all poses available in pose selector
         resp = self.get_all_poses_pick_pose_selector_srv()
@@ -354,6 +377,7 @@ class PlaceTools:
 
         # clear pose selector before starting to place in case some data is left over from previous runs
         self.place_pose_selector_clear_srv()
+        self.clear_place_poses_markers()
 
         if not override_observe_before_place_dont_doit and observe_before_place:
             # optionally find free space in table: look at table, update planning scene
@@ -415,6 +439,10 @@ class PlaceTools:
 
         global_place_poses = self.transform_obj_list(local_place_poses, self.global_reference_frame)
         self.place_poses_pub.publish(global_place_poses)
+        attached_object = self.scene.get_attached_objects([object_to_be_placed])[object_to_be_placed].object
+        box_size = list(attached_object.primitives[0].dimensions)
+        if object_class_tbp not in OBJECT_HEIGHTS:
+            self.publish_place_box_markers(global_place_poses, box_size)
 
         # Keep the observed occupancy map by default so unknown objects remain
         # collision obstacles during placement.  Clearing is retained as an
@@ -434,6 +462,8 @@ class PlaceTools:
 
         for i in range(0, len(global_place_poses.objects), max_batch_size):
             # for 25 objs and max_batch_size of 10, "i" would be 0 in the first loop, 10 in the 2nd and 20 in the last
+            if i and object_class_tbp not in OBJECT_HEIGHTS:
+                self.publish_place_box_markers(global_place_poses, box_size)
             batch_poses = self.extract_batch(global_place_poses, i, max_batch_size)
             goal = self.make_place_goal_msg(
                 object_to_be_placed, support_object, batch_poses, use_path_constraints=self.use_path_constraints
@@ -503,6 +533,8 @@ class PlaceTools:
                 rospy.loginfo('Successfully placed object')
                 self.place_pose_selector_clear_srv()
                 self.clear_place_poses_markers()
+                winning_id = result.place_location.id
+                self.publish_place_box_markers(global_place_poses, box_size, winning_id=winning_id)
                 return True
             else:
                 rospy.logerr('Place object failed')
@@ -565,7 +597,7 @@ class PlaceTools:
             pose_stamped_msg = PoseStamped()
             pose_stamped_msg.header.frame_id = frame_id
             pose_stamped_msg.pose = obj.pose
-            place_locations.append(self.make_place_location_msg(pose_stamped_msg))
+            place_locations.append(self.make_place_location_msg(pose_stamped_msg, location_id=str(obj.instance_id)))
 
         # translation = [0.0, -0.9, 0.88] # works for simple pick n place demo
         # rotation = [-0.5, -0.5, 0.5, 0.5]
@@ -670,7 +702,7 @@ class PlaceTools:
 
         return planning_options_msg
 
-    def make_place_location_msg(self, place_pose, allowed_touch_objects=None):
+    def make_place_location_msg(self, place_pose, allowed_touch_objects=None, location_id='1'):
         '''
         see: https://github.com/ros-planning/moveit_msgs/blob/master/msg/PlaceLocation.msg
         '''
@@ -681,9 +713,9 @@ class PlaceTools:
         assert isinstance(allowed_touch_objects, list)
         place_msg = PlaceLocation()
 
-        # A name for this grasp
+        # Identify the candidate so MoveIt's successful result can highlight it
         # string id
-        place_msg.id = '1'
+        place_msg.id = location_id
 
         # The internal posture of the hand for the grasp
         # positions and efforts are used
