@@ -221,6 +221,10 @@ def gen_place_poses_from_plane(
     object_list_msg.header.frame_id = frame_id
     x_y_list = []
     place_poses_id = 1
+    # Set once the plane holds no further well separated spot: the remaining poses skip the
+    # min_dist check instead of each spending the whole attempt budget in vain (25 or 50 poses
+    # on a table with room for a handful took minutes, beyond the callers' place timeout).
+    separation_exhausted = False
     for _ in range(1, number_of_poses + 1):
         object_pose_msg = ObjectPose()
         object_pose_msg.class_id = object_class
@@ -234,6 +238,8 @@ def gen_place_poses_from_plane(
             if support_object in ignore_min_dist_list:
                 rospy.logwarn(f'ignoring min dist param for object: {object_class}')
                 break
+            if separation_exhausted:
+                break
             if well_separated(x_y_list, candidate_x, candidate_y, min_dist=min_dist):
                 break
             count += 1
@@ -241,7 +247,11 @@ def gen_place_poses_from_plane(
             # pose would search in vain (50000 attempts took about 5 s per pose, 2 min per place).
             # 2000 random tries still find a free spot covering 0.5 % of the plane with 99.99 %.
             if count > 2000:
-                rospy.logwarn(f'Could not generate poses too much separated from each other, min dist : {min_dist}')
+                rospy.logwarn(
+                    f'Could not generate poses too much separated from each other, min dist : {min_dist}; '
+                    'the remaining poses ignore it'
+                )
+                separation_exhausted = True
                 break
         x_y_list.append([candidate_x, candidate_y])
 
