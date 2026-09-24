@@ -30,7 +30,7 @@ from geometry_msgs.msg import Point, Vector3, PointStamped
 from std_msgs.msg import Header
 from object_pose_msgs.msg import ObjectList, ObjectPose
 from moveit_msgs.msg import CollisionObject, PlanningScene
-from typing import List
+from typing import List, Optional
 
 
 def make_plane_marker_msg(ref_frame, plane):
@@ -198,10 +198,20 @@ def gen_place_poses_from_plane(
     number_of_poses: int = 10,
     min_dist: float = 0.2,
     ignore_min_dist_list: List[str] = [],
+    yaw_range: float = math.pi,
+    yaws: Optional[List[float]] = None,
+    height_offset: float = 0.001,
 ):
     '''
     random sample poses within a plane and populate object list msg with the result
+
+    yaw_range: a single pose per position gets a random yaw in [0, yaw_range)
+    yaws: the yaws every position is tried with when more than 20 poses are asked for
+          (default 7 yaws 0.5 rad apart, i.e. about half a circle)
+    height_offset: clearance between the object's bottom and the support surface
     '''
+    if yaws is None:
+        yaws = [0.5 * step for step in range(7)]
     if number_of_poses > 100:
         min_dist = 0.03
         rospy.logwarn(
@@ -227,7 +237,10 @@ def gen_place_poses_from_plane(
             if well_separated(x_y_list, candidate_x, candidate_y, min_dist=min_dist):
                 break
             count += 1
-            if count > 50000:  # avoid an infinite loop, cap the max attempts
+            # Cap the attempts: once the plane holds no more well separated spots every further
+            # pose would search in vain (50000 attempts took about 5 s per pose, 2 min per place).
+            # 2000 random tries still find a free spot covering 0.5 % of the plane with 99.99 %.
+            if count > 2000:
                 rospy.logwarn(f'Could not generate poses too much separated from each other, min dist : {min_dist}')
                 break
         x_y_list.append([candidate_x, candidate_y])
@@ -235,18 +248,17 @@ def gen_place_poses_from_plane(
         object_pose_msg.pose.position.x = candidate_x
         object_pose_msg.pose.position.y = candidate_y
 
-        object_pose_msg.pose.position.z = attached_obj_height(support_object, planning_scene)
+        object_pose_msg.pose.position.z = attached_obj_height(support_object, planning_scene, offset=height_offset)
 
         roll = 0.0
         pitch = 0.0
-        yaw = round(random.uniform(0.0, math.pi), 4)
+        yaw = round(random.uniform(0.0, yaw_range), 4)
         # HACK: object specific rotations
         if object_class in ['power_drill_with_grip', 'hot_glue_gun', 'bleach', 'mustard', 'soup', 'meat']:
             roll = -math.pi / 2.0
         if number_of_poses > 20:
-            rospy.loginfo('covering 360 angle for each pose')
-            yaw = 0.0
-            for _ in range(7):
+            rospy.loginfo(f'trying {len(yaws)} yaws for each pose')
+            for yaw in yaws:
                 angular_q = tf.transformations.quaternion_from_euler(roll, pitch, yaw)
                 object_pose_msg.pose.orientation.x = angular_q[0]
                 object_pose_msg.pose.orientation.y = angular_q[1]
@@ -255,7 +267,6 @@ def gen_place_poses_from_plane(
                 object_pose_msg.instance_id = place_poses_id
                 object_list_msg.objects.append(copy.deepcopy(object_pose_msg))
                 place_poses_id += 1
-                yaw += 0.5  # ~ 30 degree
         else:
             angular_q = tf.transformations.quaternion_from_euler(roll, pitch, yaw)
             object_pose_msg.pose.orientation.x = angular_q[0]

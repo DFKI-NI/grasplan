@@ -24,6 +24,7 @@
 example on how to place an object using grasplan and moveit
 '''
 
+import math
 import sys
 import copy
 import tf2_ros
@@ -37,6 +38,7 @@ from grasplan.tools.support_plane_tools import (
     adjust_plane,
     gen_place_poses_from_plane,
     make_plane_marker_msg,
+    OBJECT_HEIGHTS,
 )
 from grasplan.tools.common import separate_object_class_from_id, connect_move_groups
 from grasplan.tools.moveit_errors import print_moveit_error
@@ -75,6 +77,12 @@ class PlaceTools:
         self.gripper_joint_efforts = rospy.get_param('~gripper_joint_efforts')
         self.gripper_release_distance = rospy.get_param('~gripper_release_distance', 0.1)
         self.planning_time = rospy.get_param('~planning_time', 20.0)
+        # Open-set objects (no known height, grasped wherever AnyGrasp found a grasp) are placed
+        # this far above the support surface: their grasps are often low, and put down exactly on
+        # the surface the fingertips end up inside it. They also try yaws around the full circle,
+        # since an angled grasp only fits some approach directions. Known objects are unchanged.
+        self.open_set_place_clearance = rospy.get_param('~open_set_place_clearance', 0.02)
+        self.open_set_place_yaw_steps = int(rospy.get_param('~open_set_place_yaw_steps', 12))
         # MoveIt's pickup/place action servers live in move_group, which on the real robot runs on the
         # robot PC; connecting to it from another machine can take seconds, so the client is created
         # once at startup (a missing server at startup is fatal) and reused for every request
@@ -375,6 +383,18 @@ class PlaceTools:
 
         # generate random place poses within the plane
         object_class_tbp = separate_object_class_from_id(object_to_be_placed)[0]
+        open_set_options = {}
+        if object_class_tbp not in OBJECT_HEIGHTS:
+            steps = max(1, self.open_set_place_yaw_steps)
+            open_set_options = {
+                'yaw_range': 2.0 * math.pi,
+                'yaws': [2.0 * math.pi * step / steps for step in range(steps)],
+                'height_offset': self.open_set_place_clearance,
+            }
+            rospy.loginfo(
+                f'{object_class_tbp} is an open-set object: {steps} yaws around the full circle, '
+                f'released {self.open_set_place_clearance * 100:.1f} cm above {support_object}'
+            )
         local_place_poses = gen_place_poses_from_plane(
             self.place_action_server,
             object_class_tbp,
@@ -385,6 +405,7 @@ class PlaceTools:
             number_of_poses=number_of_poses,
             min_dist=self.min_dist,
             ignore_min_dist_list=self.ignore_min_dist_list,
+            **open_set_options,
         )
 
         if self.place_action_server.is_preempt_requested():
