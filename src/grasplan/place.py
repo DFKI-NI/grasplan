@@ -75,6 +75,11 @@ class PlaceTools:
         self.gripper_joint_efforts = rospy.get_param('~gripper_joint_efforts')
         self.gripper_release_distance = rospy.get_param('~gripper_release_distance', 0.1)
         self.planning_time = rospy.get_param('~planning_time', 20.0)
+        # MoveIt's pickup/place action servers live in move_group, which on the real robot runs on the
+        # robot PC; connecting to it from another machine can take seconds, so the client is created
+        # once at startup (a missing server at startup is fatal) and reused for every request
+        self.moveit_action_startup_timeout = rospy.get_param('~moveit_action_startup_timeout', 60.0)
+        self.moveit_action_server_timeout = rospy.get_param('~moveit_action_server_timeout', 10.0)
         arm_goal_tolerance = rospy.get_param('~arm_goal_tolerance', 0.01)
         self.use_path_constraints = rospy.get_param('~use_path_constraints', False)
         self.disentangle_required = rospy.get_param('~disentangle_required', False)
@@ -143,6 +148,17 @@ class PlaceTools:
                 'grasplan place server could not connect to Moveit in time, exiting! \n' + traceback.format_exc()
             )
             rospy.signal_shutdown('fatal error')
+
+        self.place_action_client = actionlib.SimpleActionClient('place', PlaceAction)
+        rospy.loginfo(f'waiting for {rospy.resolve_name("place")} action server')
+        if not self.place_action_client.wait_for_server(rospy.Duration(self.moveit_action_startup_timeout)):
+            rospy.logfatal(
+                f'MoveIt action server {rospy.resolve_name("place")} not found within '
+                f'{self.moveit_action_startup_timeout} s, grasplan place server exiting!'
+            )
+            rospy.signal_shutdown('fatal error')
+            sys.exit(1)
+        rospy.loginfo(f'found {rospy.resolve_name("place")} action server')
 
         # offer action lib server for object placing if needed
         if action_server_required:
@@ -340,7 +356,7 @@ class PlaceTools:
         # in any case, add all known objects to planning scene before placing
         self.add_objs_to_planning_scene()
 
-        action_client = actionlib.SimpleActionClient(PLACE_OBJECT_SERVER_NAME, PlaceAction)
+        action_client = self.place_action_client
 
         # generate plane from object surface
         plane = obj_to_plane(support_object, self.scene)
@@ -384,8 +400,11 @@ class PlaceTools:
             rospy.logwarn('Clearing octomap before placing')
             rospy.ServiceProxy('clear_octomap', Empty)()
 
-        if not action_client.wait_for_server(timeout=rospy.Duration.from_sec(2.0)):
-            rospy.logerr(f'Action server {PLACE_OBJECT_SERVER_NAME} not available')
+        if not action_client.wait_for_server(timeout=rospy.Duration(self.moveit_action_server_timeout)):
+            rospy.logerr(
+                f'Action server {rospy.resolve_name(PLACE_OBJECT_SERVER_NAME)} not available within '
+                f'{self.moveit_action_server_timeout} s'
+            )
             return False
 
         rospy.loginfo(f'Found {PLACE_OBJECT_SERVER_NAME} action server')

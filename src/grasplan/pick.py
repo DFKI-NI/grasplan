@@ -114,6 +114,11 @@ class PickTools:
         self.anygrasp_arm_pose = rospy.get_param('~anygrasp_arm_pose', 'anygrasp')
         self.gripper_action_name = rospy.get_param('~gripper_action_name', '/mobipick/gripper_hw')
         self.gripper_action_timeout = rospy.get_param('~gripper_action_timeout', 2.0)
+        # MoveIt's pickup/place action servers live in move_group, which on the real robot runs on the
+        # robot PC; connecting to it from another machine can take seconds, so the client is created
+        # once at startup (a missing server at startup is fatal) and reused for every request
+        self.moveit_action_startup_timeout = rospy.get_param('~moveit_action_startup_timeout', 60.0)
+        self.moveit_action_server_timeout = rospy.get_param('~moveit_action_server_timeout', 10.0)
         # TODO: include octomap
 
         if self.anygrasp_server_timeout < 0 or self.anygrasp_result_timeout < 0 or self.gripper_action_timeout < 0:
@@ -175,6 +180,17 @@ class PickTools:
                 'grasplan pick server could not connect to Moveit in time, exiting! \n' + traceback.format_exc()
             )
             rospy.signal_shutdown('fatal error')
+
+        self.pickup_action_client = actionlib.SimpleActionClient('pickup', PickupAction)
+        rospy.loginfo(f'waiting for {rospy.resolve_name("pickup")} action server')
+        if not self.pickup_action_client.wait_for_server(rospy.Duration(self.moveit_action_startup_timeout)):
+            rospy.logfatal(
+                f'MoveIt action server {rospy.resolve_name("pickup")} not found within '
+                f'{self.moveit_action_startup_timeout} s, grasplan pick server exiting!'
+            )
+            rospy.signal_shutdown('fatal error')
+            sys.exit(1)
+        rospy.loginfo(f'found {rospy.resolve_name("pickup")} action server')
 
         self.add_custom_boxes_to_ps(self.planning_scene_boxes)
 
@@ -859,8 +875,8 @@ class PickTools:
         result = None
         PICK_OBJECT_SERVER_NAME = 'pickup'
 
-        action_client = actionlib.SimpleActionClient(PICK_OBJECT_SERVER_NAME, PickupAction)
-        if action_client.wait_for_server(timeout=rospy.Duration.from_sec(2.0)):
+        action_client = self.pickup_action_client
+        if action_client.wait_for_server(timeout=rospy.Duration(self.moveit_action_server_timeout)):
             rospy.loginfo(f'found {rospy.resolve_name(PICK_OBJECT_SERVER_NAME)} action server')
             goal = PickupGoal()
             goal.target_name = object_to_pick.get_object_class_and_id_as_string()
@@ -900,7 +916,10 @@ class PickTools:
                     rospy.loginfo(f'restoring the allowed collision matrix, {OCTOMAP_COLLISION_NAME} blocks again')
                     self.publish_allowed_collision_matrix(original_acm)
         else:
-            rospy.logerr(f'action server {PICK_OBJECT_SERVER_NAME} was not found within allocated time')
+            rospy.logerr(
+                f'action server {rospy.resolve_name(PICK_OBJECT_SERVER_NAME)} was not found within '
+                f'{self.moveit_action_server_timeout} s'
+            )
         return result
 
     def start_pick_node(self):

@@ -35,7 +35,6 @@ from grasplan.tools.support_plane_tools import (
 )
 from grasplan.tools.moveit_errors import print_moveit_error
 from object_pose_msgs.msg import ObjectList
-from moveit_msgs.msg import PlaceAction
 from moveit_msgs.msg import MoveItErrorCodes
 from pose_selector.srv import ClassQuery
 from grasplan.tools.common import objectToPick  # name is misleading, in this case we want to insert an object in it
@@ -234,7 +233,7 @@ class InsertTools:
                     rospy.loginfo(f'going to intermediate arm pose {arm_pose} to disentangle cable')
                     self.place.move_arm_to_posture(arm_pose)
 
-        action_client = actionlib.SimpleActionClient(INSERT_OBJECT_SERVER_NAME, PlaceAction)
+        action_client = self.place.place_action_client  # same 'place' server, connected once at startup
         rospy.loginfo(f'sending insert command as a place goal to {INSERT_OBJECT_SERVER_NAME} action server')
 
         # get object position [x, y] -> without orientation for now
@@ -271,7 +270,7 @@ class InsertTools:
         if self.insert_action_server.is_preempt_requested():
             return False
 
-        if action_client.wait_for_server(timeout=rospy.Duration.from_sec(2.0)):
+        if action_client.wait_for_server(timeout=rospy.Duration(self.place.moveit_action_server_timeout)):
             rospy.loginfo(f'found {INSERT_OBJECT_SERVER_NAME} action server')
             goal = self.place.make_place_goal_msg(
                 object_to_be_inserted,
