@@ -24,8 +24,13 @@
 example on how to insert an object using grasplan and moveit
 '''
 
+import math
+
+import numpy as np
 import rospy
 import actionlib
+import tf2_ros
+import tf.transformations as tft
 from grasplan.place import PlaceTools
 from grasplan.tools.common import separate_object_class_from_id
 from grasplan.tools.support_plane_tools import (
@@ -40,6 +45,9 @@ from pose_selector.srv import ClassQuery
 from grasplan.tools.common import objectToPick  # name is misleading, in this case we want to insert an object in it
 from grasplan.msg import InsertObjectAction, InsertObjectResult
 from grasplan.tools.action_client_helper import ActionClientHelper
+from grasplan.tools.comfortable_insert import comfortable_insert_candidates, pose_to_matrix, matrix_to_pose
+from object_pose_msgs.msg import ObjectPose
+from shape_msgs.msg import SolidPrimitive
 
 
 class InsertTools:
@@ -55,6 +63,19 @@ class InsertTools:
         )
         self.disentangle_required = rospy.get_param('~disentangle_required', False)
         self.poses_to_go_before_insert = rospy.get_param('~poses_to_go_before_insert', [])
+        # False: small objects are released with the gripper pointing straight down and turned as little as
+        # possible from where it is, instead of in the orientation they were grasped in (which can need large
+        # wrist rotations that wind up the arm cable); objects bigger than comfortable_orientation_max_size
+        # (longest side, m) always keep their orientation
+        self.place_same_orientation_as_picked = rospy.get_param('~place_same_orientation_as_picked', True)
+        self.comfortable_orientation_max_size = rospy.get_param('~comfortable_orientation_max_size', 0.15)
+        self.tcp_frame = rospy.get_param('~tcp_frame', 'mobipick/gripper_tcp')
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
+        rospy.loginfo(
+            f'insert: place_same_orientation_as_picked={self.place_same_orientation_as_picked}, '
+            f'comfortable_orientation_max_size={self.comfortable_orientation_max_size} m'
+        )
 
         rospy.loginfo(f'waiting for pose selector services: {pick_pose_selector_class_query_srv_name}')
         rospy.wait_for_service(pick_pose_selector_class_query_srv_name, 30.0)
@@ -104,6 +125,9 @@ class InsertTools:
                 same_orientation_as_support_obj=same_orientation_as_support_obj,
                 override_disentangle_dont_doit=override_disentangle_dont_doit,
                 override_observe_before_place_dont_doit=override_observe_before_place_dont_doit,
+                # comfortable orientation: all rotations about the vertical, sorted by the least wrist rotation (in
+                # the sim, +-90 degrees alone often had no reachable pose and cost a retry)
+                comfortable_max_yaw_offset=math.radians(180.0),
             ):
                 success = True
                 break
@@ -186,6 +210,7 @@ class InsertTools:
         same_orientation_as_support_obj=False,
         override_disentangle_dont_doit=False,
         override_observe_before_place_dont_doit=False,
+        comfortable_max_yaw_offset=math.pi,
     ):
         '''
         use place functionality by creating 1 pose above the support_object_name_as_string object for now
@@ -247,18 +272,36 @@ class InsertTools:
         if not heights_ok:
             return False
 
-        place_poses_as_object_list_msg = gen_insert_poses_from_obj(
-            object_class_tbi,
-            support_object_pose,
-            compute_object_height_for_insertion(
-                object_class_tbi,
-                support_object.obj_class,
-                object_tbi_height=object_tbi_height,
-                support_obj_height=support_obj_height,
-            ),
-            frame_id=self.place.global_reference_frame,
-            same_orientation_as_support_obj=same_orientation_as_support_obj,
+        place_poses_as_object_list_msg = None
+        # read per goal so it can be switched with rosparam set between runs (the node is required, restarting it
+        # takes the whole bringup down)
+        self.place_same_orientation_as_picked = rospy.get_param(
+            '~place_same_orientation_as_picked', self.place_same_orientation_as_picked
         )
+        self.comfortable_orientation_max_size = rospy.get_param(
+            '~comfortable_orientation_max_size', self.comfortable_orientation_max_size
+        )
+        if not self.place_same_orientation_as_picked:
+            place_poses_as_object_list_msg = self.gen_comfortable_insert_poses(
+                object_to_be_inserted, object_class_tbi, support_object, support_object_pose, support_obj_height,
+                comfortable_max_yaw_offset,
+            )
+        if place_poses_as_object_list_msg is None:
+            place_poses_as_object_list_msg = gen_insert_poses_from_obj(
+                object_class_tbi,
+                support_object_pose,
+                compute_object_height_for_insertion(
+                    object_class_tbi,
+                    support_object.obj_class,
+                    object_tbi_height=object_tbi_height,
+                    support_obj_height=support_obj_height,
+                ),
+                frame_id=self.place.global_reference_frame,
+                same_orientation_as_support_obj=same_orientation_as_support_obj,
+            )
+        if len(place_poses_as_object_list_msg.objects) == 0:
+            rospy.logerr(f'no insert pose for {object_to_be_inserted} in {support_object_name_as_string}')
+            return False
         # send places poses to place pose selector for visualization purposes
         self.insert_poses_pub.publish(place_poses_as_object_list_msg)
 
@@ -305,6 +348,94 @@ class InsertTools:
             rospy.logerr(f'action server {INSERT_OBJECT_SERVER_NAME} not available (we use it for insertion)')
             return False
         return False
+
+    def gen_comfortable_insert_poses(
+        self, object_name, object_class, support_object, support_object_pose, support_obj_height, max_yaw_offset
+    ):
+        '''
+        insert poses with the gripper pointing straight down and turned as little as possible from its current
+        rotation (see grasplan.tools.comfortable_insert); None when the object is too big (keeps the grasp
+        orientation) or its geometry is unknown, then the caller falls back to the usual insert poses
+        '''
+        attached = self.place.scene.get_attached_objects([object_name]).get(object_name)
+        if attached is None or len(attached.object.primitives) == 0:
+            rospy.logwarn(f'{object_name} has no attached collision primitive, using the grasp orientation')
+            return None
+        collision_object = attached.object
+        primitive = collision_object.primitives[0]
+        dims = list(primitive.dimensions)
+        if primitive.type == SolidPrimitive.BOX:
+            primitive_type, size = 'box', max(dims)
+        elif primitive.type == SolidPrimitive.CYLINDER:
+            primitive_type, size = 'cylinder', max(dims[0], 2.0 * dims[1])
+        elif primitive.type == SolidPrimitive.SPHERE:
+            primitive_type, size = 'sphere', 2.0 * dims[0]
+        else:
+            rospy.logwarn(f'{object_name}: unsupported primitive type {primitive.type}, using the grasp orientation')
+            return None
+        if size > self.comfortable_orientation_max_size:
+            rospy.loginfo(
+                f'{object_name} is {size:.3f} m long (> {self.comfortable_orientation_max_size} m): '
+                'inserting it in the orientation it was grasped in'
+            )
+            return None
+        try:
+            tcp_to_header = self.tf_buffer.lookup_transform(
+                self.tcp_frame, collision_object.header.frame_id, rospy.Time(0), rospy.Duration(2.0)
+            )
+            world_to_tcp = self.tf_buffer.lookup_transform(
+                self.place.global_reference_frame, self.tcp_frame, rospy.Time(0), rospy.Duration(2.0)
+            )
+        except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException) as e:
+            rospy.logwarn(f'no transform for the comfortable insert ({e}), using the grasp orientation')
+            return None
+
+        def transform_to_matrix(t):
+            r, p = t.transform.rotation, t.transform.translation
+            m = tft.quaternion_matrix([r.x, r.y, r.z, r.w])
+            m[:3, 3] = [p.x, p.y, p.z]
+            return m
+
+        tcp_to_body = transform_to_matrix(tcp_to_header).dot(pose_to_matrix(collision_object.pose))
+        body_to_primitive = (
+            pose_to_matrix(collision_object.primitive_poses[0])
+            if len(collision_object.primitive_poses) > 0
+            else np.eye(4)
+        )
+        support_height = support_obj_height if support_obj_height is not None else OBJECT_HEIGHTS.get(
+            support_object.obj_class, 0.0
+        )
+        support = support_object_pose.pose
+        support_yaw = math.atan2(
+            2.0 * (support.orientation.w * support.orientation.z + support.orientation.x * support.orientation.y),
+            1.0 - 2.0 * (support.orientation.y ** 2 + support.orientation.z ** 2),
+        )
+        if support_object_pose.size.y > support_object_pose.size.x:
+            support_yaw += math.pi / 2.0
+        bodies = comfortable_insert_candidates(
+            transform_to_matrix(world_to_tcp)[:3, :3],
+            tcp_to_body,
+            body_to_primitive,
+            primitive_type,
+            dims,
+            (support.position.x, support.position.y),
+            support.position.z + support_height / 2.0,
+            support_long_axis_yaw=support_yaw,
+            max_yaw_offset=max_yaw_offset,
+        )
+        object_list_msg = ObjectList()
+        object_list_msg.header.frame_id = self.place.global_reference_frame
+        for index, body in enumerate(bodies):
+            object_pose_msg = ObjectPose()
+            object_pose_msg.class_id = object_class
+            object_pose_msg.instance_id = index + 1
+            matrix_to_pose(body, object_pose_msg.pose)
+            object_list_msg.objects.append(object_pose_msg)
+        rospy.loginfo(
+            f'{object_name} ({size:.3f} m): {len(bodies)} comfortable insert poses, gripper straight down, '
+            f'within {math.degrees(max_yaw_offset):.0f} deg of the current wrist rotation'
+        )
+        return object_list_msg
 
     def start_insert_node(self):
         rospy.loginfo('ready to insert objects')
