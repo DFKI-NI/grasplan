@@ -313,7 +313,9 @@ class InsertTools:
         if self.insert_action_server.is_preempt_requested():
             return False
 
-        if action_client.wait_for_server(timeout=rospy.Duration(self.place.moveit_action_server_timeout)):
+        if self.place.use_mtc or action_client.wait_for_server(
+            timeout=rospy.Duration(self.place.moveit_action_server_timeout)
+        ):
             rospy.loginfo(f'found {INSERT_OBJECT_SERVER_NAME} action server')
             goal = self.place.make_place_goal_msg(
                 object_to_be_inserted,
@@ -324,11 +326,10 @@ class InsertTools:
 
             rospy.loginfo(f'sending place {object_to_be_inserted} goal to {INSERT_OBJECT_SERVER_NAME} action server')
             rospy.loginfo(f'waiting for result from {INSERT_OBJECT_SERVER_NAME} action server')
-            if self.action_client_helper.send_goal_to_rogue_server_and_wait(goal, action_client, patience_timeout=0.1):
+            result = self.place.run_place_goal(goal, self.insert_action_server, self.action_client_helper)
+            if result is not None:
                 if self.insert_action_server.is_preempt_requested():
                     return False
-
-                result = action_client.get_result()
 
                 # handle moveit pick result
                 if result.error_code.val == MoveItErrorCodes.SUCCESS:

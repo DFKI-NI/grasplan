@@ -98,6 +98,8 @@ class PlaceTools:
         self.poses_to_go_before_place = rospy.get_param('~poses_to_go_before_place', [])
         self.max_batch_size = rospy.get_param('~max_batch_size', 20)
         self.clear_octomap_flag = rospy.get_param('~clear_octomap', False)
+        # plan and execute place (and insert) with MoveIt Task Constructor instead of move_group's place action
+        self.use_mtc = rospy.get_param('~use_mtc', False)
 
         self.plane_vis_pub = rospy.Publisher('~support_plane_as_marker', Marker, queue_size=1, latch=True)
         self.place_poses_pub = rospy.Publisher('~place_poses', ObjectList, queue_size=50)
@@ -163,16 +165,29 @@ class PlaceTools:
             rospy.signal_shutdown('fatal error')
             sys.exit(1)
 
-        self.place_action_client = actionlib.SimpleActionClient('place', PlaceAction)
-        rospy.loginfo(f'waiting for {rospy.resolve_name("place")} action server')
-        if not self.place_action_client.wait_for_server(rospy.Duration(self.moveit_action_startup_timeout)):
-            rospy.logfatal(
-                f'MoveIt action server {rospy.resolve_name("place")} not found within '
-                f'{self.moveit_action_startup_timeout} s, grasplan place server exiting!'
+        self.mtc = None
+        if self.use_mtc:
+            from grasplan.mtc_pick_place import MtcPickPlace
+
+            self.mtc = MtcPickPlace(
+                self.group_name,
+                self.robot.get_group(self.group_name).get_end_effector_link(),
+                self.robot.get_link_names(group=rospy.get_param('~gripper_group_name', 'gripper')),
+                self.robot.get_planning_frame(),
+                lambda: False,  # replaced by the requesting action server in run_place_goal
             )
-            rospy.signal_shutdown('fatal error')
-            sys.exit(1)
-        rospy.loginfo(f'found {rospy.resolve_name("place")} action server')
+            rospy.loginfo('place: place goals are planned and executed with MoveIt Task Constructor')
+        self.place_action_client = actionlib.SimpleActionClient('place', PlaceAction)
+        if not self.use_mtc:
+            rospy.loginfo(f'waiting for {rospy.resolve_name("place")} action server')
+            if not self.place_action_client.wait_for_server(rospy.Duration(self.moveit_action_startup_timeout)):
+                rospy.logfatal(
+                    f'MoveIt action server {rospy.resolve_name("place")} not found within '
+                    f'{self.moveit_action_startup_timeout} s, grasplan place server exiting!'
+                )
+                rospy.signal_shutdown('fatal error')
+                sys.exit(1)
+            rospy.loginfo(f'found {rospy.resolve_name("place")} action server')
 
         # offer action lib server for object placing if needed
         if action_server_required:
@@ -189,6 +204,22 @@ class PlaceTools:
 
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
+
+    def run_place_goal(self, goal, action_server, action_client_helper):
+        '''
+        execute a moveit_msgs/PlaceGoal with move_group's place action or, in MTC mode, with MoveIt Task
+        Constructor. Returns the PlaceResult, or None when the goal was preempted or the action failed to run.
+        '''
+        if self.mtc is not None:
+            self.mtc.is_preempt_requested = action_server.is_preempt_requested
+            rospy.loginfo(f'planning place of {goal.attached_object_name} with MTC, {len(goal.place_locations)} poses')
+            result = self.mtc.place(goal)
+            if action_server.is_preempt_requested():
+                return None
+            return result
+        if not action_client_helper.send_goal_to_rogue_server_and_wait(goal, self.place_action_client, patience_timeout=0.1):
+            return None
+        return self.place_action_client.get_result()
 
     def clear_place_poses_markers(self):
         marker_array_msg = MarkerArray()
@@ -455,7 +486,9 @@ class PlaceTools:
             rospy.logwarn('Clearing octomap before placing')
             rospy.ServiceProxy('clear_octomap', Empty)()
 
-        if not action_client.wait_for_server(timeout=rospy.Duration(self.moveit_action_server_timeout)):
+        if not self.use_mtc and not action_client.wait_for_server(
+            timeout=rospy.Duration(self.moveit_action_server_timeout)
+        ):
             rospy.logerr(
                 f'Action server {rospy.resolve_name(PLACE_OBJECT_SERVER_NAME)} not available within '
                 f'{self.moveit_action_server_timeout} s'
@@ -488,10 +521,9 @@ class PlaceTools:
                 f'{(len(global_place_poses.objects) + max_batch_size - 1) // max_batch_size}, '
                 f'{(i + len(batch_poses.objects)) * 100 // len(global_place_poses.objects)}% completed'
             )
-            if not self.action_client_helper.send_goal_to_rogue_server_and_wait(
-                goal, action_client, patience_timeout=0.1
-            ):
-                rospy.logerr('Failed to send goal to action server')
+            result = self.run_place_goal(goal, self.place_action_server, self.action_client_helper)
+            if result is None:
+                rospy.logerr('Failed to run the place goal')
                 return False
 
             if self.place_action_server.is_preempt_requested():
@@ -499,7 +531,6 @@ class PlaceTools:
                 action_client.cancel_goal()
                 return False
 
-            result = action_client.get_result()
             # rospy.loginfo(f'{PLACE_OBJECT_SERVER_NAME} is done with execution, resuĺt was = "{result}"')
 
             # # ------ result handling

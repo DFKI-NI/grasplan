@@ -119,6 +119,8 @@ class PickTools:
         # once at startup (a missing server at startup is fatal) and reused for every request
         self.moveit_action_startup_timeout = rospy.get_param('~moveit_action_startup_timeout', 60.0)
         self.moveit_action_server_timeout = rospy.get_param('~moveit_action_server_timeout', 10.0)
+        # plan and execute the grasps with MoveIt Task Constructor instead of move_group's pickup action
+        self.use_mtc = rospy.get_param('~use_mtc', False)
         # TODO: include octomap
 
         if self.anygrasp_server_timeout < 0 or self.anygrasp_result_timeout < 0 or self.gripper_action_timeout < 0:
@@ -185,16 +187,29 @@ class PickTools:
             rospy.signal_shutdown('fatal error')
             sys.exit(1)
 
-        self.pickup_action_client = actionlib.SimpleActionClient('pickup', PickupAction)
-        rospy.loginfo(f'waiting for {rospy.resolve_name("pickup")} action server')
-        if not self.pickup_action_client.wait_for_server(rospy.Duration(self.moveit_action_startup_timeout)):
-            rospy.logfatal(
-                f'MoveIt action server {rospy.resolve_name("pickup")} not found within '
-                f'{self.moveit_action_startup_timeout} s, grasplan pick server exiting!'
+        self.mtc = None
+        if self.use_mtc:
+            from grasplan.mtc_pick_place import MtcPickPlace
+
+            self.mtc = MtcPickPlace(
+                self.arm_group_name,
+                self.robot.arm.get_end_effector_link(),
+                self.robot.get_link_names(group=gripper_group_name),
+                self.robot.get_planning_frame(),
+                lambda: self.pick_action_server.is_preempt_requested(),
             )
-            rospy.signal_shutdown('fatal error')
-            sys.exit(1)
-        rospy.loginfo(f'found {rospy.resolve_name("pickup")} action server')
+            rospy.loginfo('pick: grasps are planned and executed with MoveIt Task Constructor')
+        self.pickup_action_client = actionlib.SimpleActionClient('pickup', PickupAction)
+        if not self.use_mtc:
+            rospy.loginfo(f'waiting for {rospy.resolve_name("pickup")} action server')
+            if not self.pickup_action_client.wait_for_server(rospy.Duration(self.moveit_action_startup_timeout)):
+                rospy.logfatal(
+                    f'MoveIt action server {rospy.resolve_name("pickup")} not found within '
+                    f'{self.moveit_action_startup_timeout} s, grasplan pick server exiting!'
+                )
+                rospy.signal_shutdown('fatal error')
+                sys.exit(1)
+            rospy.loginfo(f'found {rospy.resolve_name("pickup")} action server')
 
         self.add_custom_boxes_to_ps(self.planning_scene_boxes)
 
@@ -879,6 +894,9 @@ class PickTools:
         result = None
         PICK_OBJECT_SERVER_NAME = 'pickup'
 
+        if self.mtc is not None:
+            return self._pick_with_mtc(object_to_pick, grasps, support_surface_name)
+
         action_client = self.pickup_action_client
         if action_client.wait_for_server(timeout=rospy.Duration(self.moveit_action_server_timeout)):
             rospy.loginfo(f'found {rospy.resolve_name(PICK_OBJECT_SERVER_NAME)} action server')
@@ -923,6 +941,28 @@ class PickTools:
             rospy.logerr(
                 f'action server {rospy.resolve_name(PICK_OBJECT_SERVER_NAME)} was not found within '
                 f'{self.moveit_action_server_timeout} s'
+            )
+        return result
+
+    def _pick_with_mtc(self, object_to_pick, grasps, support_surface_name):
+        '''
+        same goal as _pick_with_action, planned and executed with MoveIt Task Constructor (grasplan.mtc_pick_place).
+        MTC plans in this node, so the octomap contact is allowed inside the task and move_group's allowed
+        collision matrix stays untouched.
+        '''
+        goal = PickupGoal()
+        goal.target_name = object_to_pick.get_object_class_and_id_as_string()
+        goal.group_name = self.arm_group_name
+        goal.possible_grasps = grasps
+        goal.support_surface_name = support_surface_name
+        goal.allowed_planning_time = self.planning_time
+        rospy.loginfo(f'planning pick of {goal.target_name} with MTC, {len(grasps)} grasps')
+        pickup_result = self.mtc.pickup(goal)
+        result = pickup_result.error_code.val
+        if result == MoveItErrorCodes.SUCCESS:
+            executed = pickup_result.grasp
+            rospy.loginfo(
+                f'mtc executed grasp {executed.id!r} (quality {executed.grasp_quality:.3f}) out of {len(grasps)} offered'
             )
         return result
 
