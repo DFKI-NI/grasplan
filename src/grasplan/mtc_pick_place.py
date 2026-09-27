@@ -78,6 +78,11 @@ from moveit.task_constructor import core, stages
 # the name MoveIt gives the octomap inside the planning scene (planning_scene::PlanningScene::OCTOMAP_NS)
 OCTOMAP_COLLISION_NAME = '<octomap>'
 
+# STOPGAP until the cable model refit (#118): default ~mtc_cable_max_stretch, sim and real. On the real robot the
+# guarded plans that caught or nearly caught the tube had a wrist stretch of -0.108 / -0.103, all clean ones
+# -0.126..-0.217 (#121), so the model's 0.0 (tube just taut) let tangling plans through. Revisit after the refit.
+DEFAULT_CABLE_MAX_STRETCH = -0.115
+
 # what the executor does with each MTC sub trajectory, in the order the leaf stages were added
 ARM, GRIPPER, ATTACH, DETACH, NOOP = 'arm', 'gripper', 'attach', 'detach', 'noop'
 
@@ -112,7 +117,8 @@ class CableGuard:
       wrist span (where the tube takes the short way around the joint), so no motion adds a turn of winding. The
       model alone cannot see extra turns once the wrist_3 housing no longer holds the tube, hence this bound.
     - trajectory check: the stretch s = L_req / L_free - 1 of every span, evaluated along the whole joint path
-      (geometry only, no rope history), must stay below ~mtc_cable_max_stretch (0 = tube just taut).
+      (geometry only, no rope history), must stay below ~mtc_cable_max_stretch (0 = tube just taut; default
+      DEFAULT_CABLE_MAX_STRETCH, a stopgap).
     '''
 
     def __init__(self, joint_prefix):
@@ -129,7 +135,7 @@ class CableGuard:
         wrist_3 = [wj for span in self.cfg.spans for wj in span.joints if wj.joint == 'ur5_wrist_3_joint']
         self.wrist_3_neutral = wrist_3[0].neutral if wrist_3 else math.pi - 0.25
         self.wrist_3_joint = joint_prefix + 'ur5_wrist_3_joint'
-        self.max_stretch = 0.0
+        self.max_stretch = DEFAULT_CABLE_MAX_STRETCH
         self.half_window = math.radians(170.0)
         self.max_points = 40
         self.update_params()
@@ -139,7 +145,7 @@ class CableGuard:
         )
 
     def update_params(self):
-        self.max_stretch = rospy.get_param('~mtc_cable_max_stretch', 0.0)
+        self.max_stretch = rospy.get_param('~mtc_cable_max_stretch', DEFAULT_CABLE_MAX_STRETCH)
         self.half_window = math.radians(rospy.get_param('~mtc_cable_wrist_3_half_window_deg', 170.0))
         self.max_points = int(rospy.get_param('~mtc_cable_points_per_trajectory', 40))
 

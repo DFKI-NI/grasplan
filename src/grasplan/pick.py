@@ -42,6 +42,7 @@ from std_msgs.msg import String
 from std_srvs.srv import Empty, SetBool
 from pose_selector.srv import ClassQuery, PoseDelete, GetPoses
 from geometry_msgs.msg import PoseStamped
+from shape_msgs.msg import SolidPrimitive
 from grasplan.tools.moveit_errors import print_moveit_error
 from moveit_msgs.msg import (
     AllowedCollisionEntry,
@@ -55,6 +56,7 @@ from moveit_msgs.srv import GetPlanningScene, GetPlanningSceneRequest
 from grasplan.msg import (
     GenerateGraspsAction,
     GenerateGraspsGoal,
+    GraspCandidate,
     PickObjectAction,
     PickObjectGoal,
     PickObjectResult,
@@ -63,6 +65,7 @@ from grasplan.srv import ViewObject
 from grasplan.tools.common import objectToPick, connect_move_groups, roscpp_initialize_named
 from grasplan.tools.action_client_helper import ActionClientHelper
 from grasplan.tools.gripper_envelope import fingertip_envelope, lowest_point_offset
+from grasplan.tools.topdown_grasps import clamp_box_to_support, topdown_grasps
 from visualization_msgs.msg import Marker, MarkerArray
 
 ACTION_STATES = {value: name for name, value in vars(GoalStatus).items() if name.isupper() and isinstance(value, int)}
@@ -86,6 +89,9 @@ class PickTools:
         self.pregrasp_posture_required = rospy.get_param('~pregrasp_posture_required', False)
         self.pregrasp_posture = rospy.get_param('~pregrasp_posture', 'home')
         self.planning_scene_boxes = rospy.get_param('~planning_scene_boxes', [])
+        # raise the bottom of perceived object boxes that reach into a table of the planning scene (noisy depth) to its
+        # top, so the object does not collide with its support, e.g. during the lift (#148)
+        self.clamp_object_boxes_to_support = rospy.get_param('~clamp_object_boxes_to_support', False)
         # MoveIt's pickup plans the grasps it is given in parallel and executes the first one that
         # planned, not the best scored one; external (AnyGrasp) candidates arrive best first, so they
         # are offered in batches of this size to keep the score order (0 = all at once)
@@ -414,13 +420,13 @@ class PickTools:
                 f'result.success={getattr(result, "success", None)}: {server_text}'
             )
             rospy.logerr(message)
-            return False, message, False
+            return self.pick_topdown_without_anygrasp(goal, message)
 
         detection = result.detection
         if not detection.object.class_id or not detection.grasps:
             message = 'AnyGrasp returned an incomplete detection'
             rospy.logerr(message)
-            return False, message, False
+            return self.pick_topdown_without_anygrasp(goal, message)
         anchored_object_name = f'{detection.object.class_id}_{detection.object.instance_id}'
         success = self.pick_object(
             anchored_object_name,
@@ -440,6 +446,30 @@ class PickTools:
         if not success and self.mtc is not None and self.mtc.failure_reason:
             message += f': {self.mtc.failure_reason}'
         return success, message, False
+
+    def pick_topdown_without_anygrasp(self, goal, anygrasp_message):
+        '''
+        AnyGrasp gave no grasp at all: with ~open_set_topdown_fallback, pick the object with the top-down fallback
+        from its pose selector box (the perception committed it there); returns (success, message, preempted)
+        '''
+        if not rospy.get_param('~open_set_topdown_fallback', False):
+            return False, anygrasp_message, False
+        rospy.logwarn(f'{anygrasp_message}; trying the top-down fallback from the pose selector box of '
+                      f'{goal.object_name}')
+        success = self.pick_object(
+            goal.object_name,
+            goal.support_surface_name,
+            self.grasp_type,
+            goal.ignore_object_list,
+            external_grasp_candidates=[],
+            perceive_object=False,
+        )
+        if success:
+            return True, f'Grasplan picked open-set object {goal.object_name} with the top-down fallback', False
+        message = f'{anygrasp_message}; the top-down fallback failed too'
+        if self.mtc is not None and self.mtc.failure_reason:
+            message += f': {self.mtc.failure_reason}'
+        return False, message, False
 
     def graspTypeCB(self, msg):
         self.grasp_type = msg.data
@@ -482,6 +512,8 @@ class PickTools:
         object_found = False
         # query pose selector
         resp = self.pose_selector_get_all_poses_srv()
+        perceived = {f'{o.class_id}_{o.instance_id}' for o in resp.poses.objects} | {external_object_name}
+        supports = self.support_boxes(exclude=perceived) if self.clamp_object_boxes_to_support else []
         if len(resp.poses.objects) > 0:
             for pose_selector_object in resp.poses.objects:
                 # object name
@@ -521,7 +553,7 @@ class PickTools:
                 else:
                     rospy.loginfo(f'adding object {object_name} to planning scene')
                     # add all perceived objects to planning scene (one at at time)
-                    self.scene.add_box(object_name, pose_stamped_msg, object_bounding_box)
+                    self.add_object_box(object_name, pose_stamped_msg, object_bounding_box, supports)
         if external_object is not None:
             object_to_pick_pose = PoseStamped()
             object_to_pick_pose.header.frame_id = external_object.header.frame_id or self.global_reference_frame
@@ -534,7 +566,7 @@ class PickTools:
                 f'(frame {object_to_pick_pose.header.frame_id}, '
                 f'size {[round(v, 3) for v in object_to_pick_bounding_box]})'
             )
-            self.scene.add_box(external_object_name, object_to_pick_pose, object_to_pick_bounding_box)
+            self.add_object_box(external_object_name, object_to_pick_pose, object_to_pick_bounding_box, supports)
         if not object_found:
             rospy.logerr(
                 'the specific object you want to pick was not found:'
@@ -546,6 +578,54 @@ class PickTools:
             object_to_pick_bounding_box,
             object_to_pick_id,
         )
+
+    def support_boxes(self, exclude=()):
+        '''
+        {frame: [(center, orientation, size)]} of the table-sized (>= 30 cm wide) boxes of the planning scene that are
+        not perceived objects (tables, walls: the ones an object box may reach into), for clamp_box_to_support
+        '''
+        boxes = {}
+        # the configured tables directly: add_custom_boxes_to_ps() has only just sent them to move_group (a topic),
+        # the scene query below may not see them yet
+        for b in self.planning_scene_boxes:
+            boxes.setdefault(b['frame_id'], []).append((
+                (b['box_position_x'], b['box_position_y'], b['box_position_z']),
+                (b['box_orientation_x'], b['box_orientation_y'], b['box_orientation_z'], b['box_orientation_w']),
+                (b['box_x_dimension'], b['box_y_dimension'], b['box_z_dimension']),
+            ))
+        for name, obj in self.scene.get_objects().items():
+            if name in exclude or any(b['scene_name'] == name for b in self.planning_scene_boxes):
+                continue
+            for primitive, pose in zip(obj.primitives, obj.primitive_poses):
+                if primitive.type != SolidPrimitive.BOX or min(primitive.dimensions[:2]) < 0.3:
+                    continue  # not a table: e.g. the box of an object picked earlier
+                p = obj.pose.position
+                object_q, primitive_q = (
+                    [q.x, q.y, q.z, q.w] if (q.x, q.y, q.z, q.w) != (0.0, 0.0, 0.0, 0.0) else [0.0, 0.0, 0.0, 1.0]
+                    for q in (obj.pose.orientation, pose.orientation)
+                )  # an unset quaternion (all 0) means identity
+                rotation = tf.transformations.quaternion_matrix(object_q)[:3, :3]
+                center = [p.x, p.y, p.z] + rotation @ [pose.position.x, pose.position.y, pose.position.z]
+                orientation = tf.transformations.quaternion_multiply(object_q, primitive_q)
+                boxes.setdefault(obj.header.frame_id, []).append((center, orientation, primitive.dimensions[:3]))
+        return boxes
+
+    def add_object_box(self, name, pose_stamped, size, supports=None):
+        '''
+        add a perceived object box to the planning scene; with ~clamp_object_boxes_to_support its bottom is raised to
+        the top of the support box (supports: support_boxes()) it reaches into; only the scene box changes, the pose
+        used for grasping stays as perceived (#148)
+        '''
+        frame_supports = (supports or {}).get(pose_stamped.header.frame_id, [])
+        if frame_supports:
+            p, o = pose_stamped.pose.position, pose_stamped.pose.orientation
+            center, clamped, lifted = clamp_box_to_support((p.x, p.y, p.z), (o.x, o.y, o.z, o.w), size, frame_supports)
+            if lifted > 0.0:
+                rospy.loginfo(f'{name}: box bottom was {lifted * 100:.1f} cm inside its support, raised to its top')
+                pose_stamped = copy.deepcopy(pose_stamped)
+                pose_stamped.pose.position.z = float(center[2])
+                size = [float(v) for v in clamped]
+        self.scene.add_box(name, pose_stamped, size)
 
     def clean_scene(self):
         '''
@@ -850,19 +930,23 @@ class PickTools:
                 grasp_type,
             )
         else:
-            grasps = self.grasp_planner.make_grasps_msgs_from_candidates(
-                object_to_pick.get_object_class_and_id_as_string(),
-                external_grasp_candidates,
-                external_reference_frame,
-                self.robot.arm.get_end_effector_link(),
-            )
-            grasps = self.raise_low_grasps(
-                grasps, support_surface_name, [candidate.width for candidate in external_grasp_candidates]
-            )
+            grasps = []
+            if external_grasp_candidates:
+                grasps = self.grasp_planner.make_grasps_msgs_from_candidates(
+                    object_to_pick.get_object_class_and_id_as_string(),
+                    external_grasp_candidates,
+                    external_reference_frame,
+                    self.robot.arm.get_end_effector_link(),
+                )
+                grasps = self.raise_low_grasps(
+                    grasps, support_surface_name, [candidate.width for candidate in external_grasp_candidates]
+                )
             if not grasps:
-                rospy.logerr(f'no open-set grasp of {object_to_pick.get_object_class_and_id_as_string()} keeps the '
-                             f'fingertips clear of {support_surface_name}')
-                return False
+                rospy.logwarn(f'no open-set grasp of {object_to_pick.get_object_class_and_id_as_string()} keeps the '
+                              f'fingertips clear of {support_surface_name}')
+                grasps = self.topdown_fallback_grasps(object_to_pick, object_pose, bounding_box, support_surface_name)
+                if not grasps:
+                    return False
 
         # clear octomap from the planning scene if needed
         if self.clear_octomap_flag:
@@ -901,6 +985,17 @@ class PickTools:
                     return False
         else:
             result = self._pick_with_action(object_to_pick, grasps, support_surface_name)
+        # every AnyGrasp grasp failed before the arm moved (no IK, blocked lift, ...): try the top-down fallback once
+        if (
+            external_grasp_candidates is not None
+            and result not in (MoveItErrorCodes.SUCCESS, None)
+            and not any(g.id.startswith('topdown_') for g in grasps)
+            and self.arm_did_not_move(result)
+            and not self.pick_action_server.is_preempt_requested()
+        ):
+            fallback = self.topdown_fallback_grasps(object_to_pick, object_pose, bounding_box, support_surface_name)
+            if fallback:
+                result = self._pick_with_action(object_to_pick, fallback, support_surface_name)
         # handle moveit pick result
         if result == MoveItErrorCodes.SUCCESS:
             self.ensure_attached(object_to_pick.get_object_class_and_id_as_string())
@@ -989,6 +1084,81 @@ class PickTools:
                           f'{max_backoff * 100:.1f} cm back): '
                           f'{", ".join(dropped)}')
         return kept
+
+    def arm_did_not_move(self, result):
+        '''whether a failed pick left the arm where it was: MTC knows, MoveIt's pickup only when planning failed'''
+        if self.mtc is not None:
+            return not self.mtc.executed
+        return result in (MoveItErrorCodes.PLANNING_FAILED, MoveItErrorCodes.NO_IK_SOLUTION)
+
+    def support_top(self, support_surface_name, frame):
+        '''top z of the support surface box in frame, None if it is not in the planning scene in that frame'''
+        if not support_surface_name:
+            return None
+        support = self.scene.get_objects([support_surface_name]).get(support_surface_name)
+        if support is None or not support.primitives or support.header.frame_id != frame:
+            return None
+        return max(
+            support.pose.position.z + pose.position.z + primitive.dimensions[2] / 2.0
+            for primitive, pose in zip(support.primitives, support.primitive_poses)
+        )
+
+    def topdown_fallback_grasps(self, object_to_pick, object_pose, bounding_box, support_surface_name):
+        '''
+        ~open_set_topdown_fallback: when AnyGrasp offers no usable grasp of an open-set object (#148), grasp it straight
+        down from its box instead (grasplan.tools.topdown_grasps): closing across a horizontal box axis at most
+        ~open_set_topdown_max_width wide (narrow one first, each also turned 180 degrees), the TCP as low as
+        ~open_set_min_fingertip_height (lowest fingertip point) and ~open_set_min_grasp_height (TCP) above the support
+        allow, and the pads reaching at least ~open_set_topdown_min_overlap below the object top. Returns MoveIt grasps
+        (ids topdown_N), [] when off or impossible.
+        '''
+        if not rospy.get_param('~open_set_topdown_fallback', False):
+            return []
+        name = object_to_pick.get_object_class_and_id_as_string()
+        frame = object_pose.header.frame_id
+        top = self.support_top(support_surface_name, frame)
+        envelope = self.fingertip_envelope()
+        if top is None or not envelope:
+            rospy.logwarn(f'top-down fallback for {name}: no {support_surface_name} box in {frame} or no fingertip '
+                          'envelope, skipped')
+            return []
+        p, o = object_pose.pose.position, object_pose.pose.orientation
+        poses, skipped = topdown_grasps(
+            (p.x, p.y, p.z),
+            (o.x, o.y, o.z, o.w),
+            bounding_box,
+            top,
+            # over the whole closing motion: the perceived box is often wider than the object, the fingers close
+            # further than its width and the Robotiq 140 tips move down while closing
+            lambda q, width: lowest_point_offset(envelope, q, 0.0),
+            rospy.get_param('~open_set_min_fingertip_height', 0.0),
+            rospy.get_param('~open_set_min_grasp_height', 0.0),
+            rospy.get_param('~open_set_topdown_max_width', 0.10),
+            rospy.get_param('~open_set_topdown_min_overlap', 0.01),
+        )
+        if skipped:
+            rospy.loginfo(f'top-down fallback for {name}: skipped {"; ".join(skipped)}')
+        if not poses:
+            rospy.logerr(f'top-down fallback for {name}: no grasp, box {[round(v, 3) for v in bounding_box]}')
+            return []
+        candidates = []
+        for position, q, width in poses:
+            candidate = GraspCandidate(quality=0.5, width=width)
+            candidate.pose.position.x, candidate.pose.position.y, candidate.pose.position.z = position
+            candidate.pose.orientation.x, candidate.pose.orientation.y = q[0], q[1]
+            candidate.pose.orientation.z, candidate.pose.orientation.w = q[2], q[3]
+            candidates.append(candidate)
+        grasps = self.grasp_planner.make_grasps_msgs_from_candidates(
+            name, candidates, frame, self.robot.arm.get_end_effector_link()
+        )
+        for i, grasp in enumerate(grasps):
+            grasp.id = f'topdown_{i}'
+        rospy.logwarn(
+            f'top-down fallback for {name}: {len(grasps)} grasp(s), widths '
+            f'{", ".join(f"{w * 100:.1f}" for _, _, w in poses)} cm, TCP '
+            f'{(poses[0][0][2] - top) * 100:.1f} cm above {support_surface_name}'
+        )
+        return grasps
 
     def fingertip_envelope(self):
         '''fingertip corners in the TCP frame over the closing motion (tools.gripper_envelope), [] if unknown'''
