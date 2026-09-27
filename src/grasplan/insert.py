@@ -41,11 +41,17 @@ from grasplan.tools.support_plane_tools import (
 from grasplan.tools.moveit_errors import print_moveit_error
 from object_pose_msgs.msg import ObjectList
 from moveit_msgs.msg import MoveItErrorCodes
+from moveit_msgs.srv import GetPositionIK, GetPositionIKRequest
 from pose_selector.srv import ClassQuery
 from grasplan.tools.common import objectToPick  # name is misleading, in this case we want to insert an object in it
 from grasplan.msg import InsertObjectAction, InsertObjectResult
 from grasplan.tools.action_client_helper import ActionClientHelper
-from grasplan.tools.comfortable_insert import comfortable_insert_candidates, pose_to_matrix, matrix_to_pose
+from grasplan.tools.comfortable_insert import (
+    comfortable_insert_candidates,
+    free_yaw_insert_candidates,
+    matrix_to_pose,
+    pose_to_matrix,
+)
 from object_pose_msgs.msg import ObjectPose
 from shape_msgs.msg import SolidPrimitive
 
@@ -63,17 +69,21 @@ class InsertTools:
         )
         self.disentangle_required = rospy.get_param('~disentangle_required', False)
         self.poses_to_go_before_insert = rospy.get_param('~poses_to_go_before_insert', [])
-        # False: small objects are released with the gripper pointing straight down and turned as little as
-        # possible from where it is, instead of in the orientation they were grasped in (which can need large
-        # wrist rotations that wind up the arm cable); objects bigger than comfortable_orientation_max_size
-        # (longest side, m) always keep their orientation
+        # insert_orientation (see INSERT_ORIENTATIONS): how the held object is turned over the container; empty
+        # means place_same_orientation_as_picked decides (true: as_picked, false: gripper_down); gripper_down
+        # applies only to objects up to comfortable_orientation_max_size (longest side, m)
+        self.insert_orientation = rospy.get_param('~insert_orientation', '')
         self.place_same_orientation_as_picked = rospy.get_param('~place_same_orientation_as_picked', True)
         self.comfortable_orientation_max_size = rospy.get_param('~comfortable_orientation_max_size', 0.15)
         self.tcp_frame = rospy.get_param('~tcp_frame', 'mobipick/gripper_tcp')
+        # free_yaw: order the yaws by the wrist_3 change an IK solution (seeded with the current arm state) needs,
+        # instead of by the TCP rotation, which does not predict wrist_3 when the arm has to reconfigure (#106)
+        self.insert_sort_by_ik = rospy.get_param('~insert_sort_by_ik', True)
+        self.compute_ik_srv = rospy.ServiceProxy('compute_ik', GetPositionIK)
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
         rospy.loginfo(
-            f'insert: place_same_orientation_as_picked={self.place_same_orientation_as_picked}, '
+            f'insert: insert_orientation={self.read_insert_orientation()}, '
             f'comfortable_orientation_max_size={self.comfortable_orientation_max_size} m'
         )
 
@@ -145,6 +155,36 @@ class InsertTools:
             self.insert_action_server.set_aborted(
                 InsertObjectResult(success=False), f'insert failed: {reason}' if reason else 'insert failed'
             )
+
+    # as_picked: the object keeps its grasp orientation (the container's yaw or 8 fixed yaws), can need large
+    #     wrist rotations that wind up the arm cable (#103)
+    # free_yaw: the object keeps the roll and pitch it was picked with, its yaw about the vertical is chosen for the
+    #     least wrist rotation (#106)
+    # gripper_down: small objects are released with the gripper pointing straight down and turned as little as
+    #     possible, changes the object's roll and pitch after an oblique grasp
+    INSERT_ORIENTATIONS = ('as_picked', 'free_yaw', 'gripper_down')
+
+    def read_insert_orientation(self):
+        '''
+        the insert orientation mode, read on every goal so it can be switched with rosparam set between runs (the
+        node is required, restarting it takes the whole bringup down)
+        '''
+        self.insert_orientation = rospy.get_param('~insert_orientation', self.insert_orientation)
+        self.place_same_orientation_as_picked = rospy.get_param(
+            '~place_same_orientation_as_picked', self.place_same_orientation_as_picked
+        )
+        self.comfortable_orientation_max_size = rospy.get_param(
+            '~comfortable_orientation_max_size', self.comfortable_orientation_max_size
+        )
+        if not self.insert_orientation:
+            return 'as_picked' if self.place_same_orientation_as_picked else 'gripper_down'
+        if self.insert_orientation not in self.INSERT_ORIENTATIONS:
+            rospy.logerr(
+                f'unknown insert_orientation {self.insert_orientation}, expected one of {self.INSERT_ORIENTATIONS}:'
+                ' using as_picked'
+            )
+            return 'as_picked'
+        return self.insert_orientation
 
     def get_support_object_pose(self, support_object):
         '''
@@ -280,18 +320,11 @@ class InsertTools:
             return False
 
         place_poses_as_object_list_msg = None
-        # read per goal so it can be switched with rosparam set between runs (the node is required, restarting it
-        # takes the whole bringup down)
-        self.place_same_orientation_as_picked = rospy.get_param(
-            '~place_same_orientation_as_picked', self.place_same_orientation_as_picked
-        )
-        self.comfortable_orientation_max_size = rospy.get_param(
-            '~comfortable_orientation_max_size', self.comfortable_orientation_max_size
-        )
-        if not self.place_same_orientation_as_picked:
+        insert_orientation = self.read_insert_orientation()
+        if insert_orientation != 'as_picked':
             place_poses_as_object_list_msg = self.gen_comfortable_insert_poses(
                 object_to_be_inserted, object_class_tbi, support_object, support_object_pose, support_obj_height,
-                comfortable_max_yaw_offset,
+                comfortable_max_yaw_offset, free_yaw=insert_orientation == 'free_yaw',
             )
         if place_poses_as_object_list_msg is None:
             place_poses_as_object_list_msg = gen_insert_poses_from_obj(
@@ -358,12 +391,21 @@ class InsertTools:
         return False
 
     def gen_comfortable_insert_poses(
-        self, object_name, object_class, support_object, support_object_pose, support_obj_height, max_yaw_offset
+        self,
+        object_name,
+        object_class,
+        support_object,
+        support_object_pose,
+        support_obj_height,
+        max_yaw_offset,
+        free_yaw=False,
     ):
         '''
-        insert poses with the gripper pointing straight down and turned as little as possible from its current
-        rotation (see grasplan.tools.comfortable_insert); None when the object is too big (keeps the grasp
-        orientation) or its geometry is unknown, then the caller falls back to the usual insert poses
+        insert poses that need little wrist rotation (see grasplan.tools.comfortable_insert), best first:
+        free_yaw: the object keeps the roll and pitch it was picked with and only its yaw is chosen (any size);
+        otherwise the gripper points straight down, turned as little as possible from its current rotation.
+        None when the object is too big for the gripper-down mode or its geometry is unknown, then the caller
+        falls back to the usual insert poses
         '''
         attached = self.place.scene.get_attached_objects([object_name]).get(object_name)
         if attached is None or len(attached.object.primitives) == 0:
@@ -381,7 +423,7 @@ class InsertTools:
         else:
             rospy.logwarn(f'{object_name}: unsupported primitive type {primitive.type}, using the grasp orientation')
             return None
-        if size > self.comfortable_orientation_max_size:
+        if not free_yaw and size > self.comfortable_orientation_max_size:
             rospy.loginfo(
                 f'{object_name} is {size:.3f} m long (> {self.comfortable_orientation_max_size} m): '
                 'inserting it in the orientation it was grasped in'
@@ -420,17 +462,44 @@ class InsertTools:
         )
         if support_object_pose.size.y > support_object_pose.size.x:
             support_yaw += math.pi / 2.0
-        bodies = comfortable_insert_candidates(
-            transform_to_matrix(world_to_tcp)[:3, :3],
-            tcp_to_body,
-            body_to_primitive,
-            primitive_type,
-            dims,
-            (support.position.x, support.position.y),
-            support.position.z + support_height / 2.0,
-            support_long_axis_yaw=support_yaw,
-            max_yaw_offset=max_yaw_offset,
-        )
+        target_xy = (support.position.x, support.position.y)
+        support_top_z = support.position.z + support_height / 2.0
+        current_tcp_rotation = transform_to_matrix(world_to_tcp)[:3, :3]
+        if free_yaw:
+            # the roll and pitch the object was picked with: the one the usual insert poses give it (open-set
+            # objects were added map-axis-aligned, some known ones lie on their side), their yaw does not matter
+            picked_pose = gen_insert_poses_from_obj(object_class, support_object_pose, 0.0).objects[0].pose
+            picked_rotation = pose_to_matrix(picked_pose)[:3, :3]
+            o = collision_object.pose.orientation
+            if not any((o.x, o.y, o.z, o.w)):
+                # no object pose: the body frame is the link it hangs on, the picked tilt belongs to the primitive
+                picked_rotation = picked_rotation.dot(body_to_primitive[:3, :3].T)
+            bodies = free_yaw_insert_candidates(
+                current_tcp_rotation,
+                tcp_to_body,
+                body_to_primitive,
+                picked_rotation,
+                primitive_type,
+                dims,
+                target_xy,
+                support_top_z,
+                support_long_axis_yaw=support_yaw,
+                max_yaw_offset=max_yaw_offset,
+            )
+        else:
+            bodies = comfortable_insert_candidates(
+                current_tcp_rotation,
+                tcp_to_body,
+                body_to_primitive,
+                primitive_type,
+                dims,
+                target_xy,
+                support_top_z,
+                support_long_axis_yaw=support_yaw,
+                max_yaw_offset=max_yaw_offset,
+            )
+        if free_yaw and rospy.get_param('~insert_sort_by_ik', self.insert_sort_by_ik):
+            bodies = self.sort_by_wrist_3_change(bodies, tcp_to_body)
         object_list_msg = ObjectList()
         object_list_msg.header.frame_id = self.place.global_reference_frame
         for index, body in enumerate(bodies):
@@ -439,11 +508,61 @@ class InsertTools:
             object_pose_msg.instance_id = index + 1
             matrix_to_pose(body, object_pose_msg.pose)
             object_list_msg.objects.append(object_pose_msg)
+        mode = 'picked roll and pitch, free yaw' if free_yaw else 'gripper straight down'
         rospy.loginfo(
-            f'{object_name} ({size:.3f} m): {len(bodies)} comfortable insert poses, gripper straight down, '
-            f'within {math.degrees(max_yaw_offset):.0f} deg of the current wrist rotation'
+            f'{object_name} ({size:.3f} m): {len(bodies)} comfortable insert poses, {mode}, '
+            f'within {math.degrees(max_yaw_offset):.0f} deg of the least wrist rotation'
         )
         return object_list_msg
+
+    def sort_by_wrist_3_change(self, bodies, tcp_to_body):
+        '''
+        object body poses sorted by how far wrist_3 turns from where it is to reach them (collision-aware IK seeded
+        with the current arm state); poses without an IK solution keep their order at the end. MTC samples its own
+        IK solutions, so this predicts the wrist_3 it uses rather than fixing it. Unsorted when IK is unavailable.
+        '''
+        try:
+            self.compute_ik_srv.wait_for_service(2.0)
+        except rospy.ROSException:
+            rospy.logwarn(f'{self.compute_ik_srv.resolved_name} not available: insert poses not sorted by wrist_3')
+            return bodies
+        current_state = self.place.robot.get_current_state()
+        wrist_3_names = [n for n in current_state.joint_state.name if n.endswith('ur5_wrist_3_joint')]
+        if not wrist_3_names:
+            return bodies
+        wrist_3_name = wrist_3_names[0]
+        wrist_3_now = current_state.joint_state.position[current_state.joint_state.name.index(wrist_3_name)]
+        body_to_tcp = np.linalg.inv(tcp_to_body)
+        keyed = []
+        for index, body in enumerate(bodies):
+            request = GetPositionIKRequest()
+            request.ik_request.group_name = self.place.group_name
+            request.ik_request.robot_state = current_state
+            request.ik_request.avoid_collisions = True
+            request.ik_request.ik_link_name = self.tcp_frame
+            request.ik_request.pose_stamped.header.frame_id = self.place.global_reference_frame
+            matrix_to_pose(body.dot(body_to_tcp), request.ik_request.pose_stamped.pose)
+            request.ik_request.timeout = rospy.Duration(0.05)
+            try:
+                response = self.compute_ik_srv(request)
+            except rospy.ServiceException as e:
+                rospy.logwarn(f'compute_ik failed ({e}): insert poses not sorted by wrist_3')
+                return bodies
+            key = (1, float(index), None)
+            if response.error_code.val == MoveItErrorCodes.SUCCESS:
+                names = response.solution.joint_state.name
+                if wrist_3_name in names:
+                    wrist_3 = response.solution.joint_state.position[names.index(wrist_3_name)]
+                    key = (0, abs(wrist_3 - wrist_3_now), wrist_3)
+            keyed.append((key, body))
+        keyed.sort(key=lambda k: k[0][:2])
+        reachable = [k for k, _ in keyed if k[0] == 0]
+        first = ', '.join(f'{math.degrees(k[2]):.0f}' for k in reachable[:6])
+        rospy.loginfo(
+            f'insert poses by wrist_3 change (now {math.degrees(wrist_3_now):.0f} deg): {len(reachable)} of '
+            f'{len(bodies)} with IK, wrist_3 {first}{" ..." if len(reachable) > 6 else ""}'
+        )
+        return [body for _, body in keyed]
 
     def start_insert_node(self):
         rospy.loginfo('ready to insert objects')

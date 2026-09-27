@@ -5,7 +5,12 @@ import math
 import numpy as np
 import tf.transformations as tft
 
-from grasplan.tools.comfortable_insert import comfortable_insert_candidates, top_down_rotation
+from grasplan.tools.comfortable_insert import (
+    comfortable_insert_candidates,
+    free_yaw_insert_candidates,
+    rotation_angle,
+    top_down_rotation,
+)
 
 
 def oblique_grasp():
@@ -50,3 +55,33 @@ def test_elongated_object_follows_the_container():
         axis = body[:3, 2]
         assert abs(axis[1]) < math.sin(math.radians(25.0)) + 1e-9
     assert 0 < len(bodies) < 24
+
+
+def test_free_yaw_keeps_picked_roll_and_pitch():
+    picked = tft.euler_matrix(-math.pi / 2.0, 0.0, 0.8)[:3, :3]  # lying on its side (like the soup can), any yaw
+    current = tft.euler_matrix(0.2, 0.5, 1.0)[:3, :3]
+    bodies = free_yaw_insert_candidates(
+        current, oblique_grasp(), np.eye(4), picked, 'sphere', [0.033], (21.2, 14.0), 0.85, max_yaw_offset=math.pi
+    )
+    assert len(bodies) == 24
+    for body in bodies:
+        assert np.allclose(body[:3, :3].dot(picked.T)[:, 2], [0, 0, 1], atol=1e-9)  # differs only by a yaw
+        assert np.allclose(body[:2, 3], [21.2, 14.0], atol=1e-9)
+        assert abs(body[2, 3] - (0.85 + 0.02 + 0.033)) < 1e-9  # sphere released gap above the rim
+
+
+def test_free_yaw_sorted_by_least_tcp_rotation():
+    tcp_to_body = oblique_grasp()
+    picked = np.eye(3)
+    # current TCP: the body upright at yaw 1.3 plus a small extra tilt, so the best yaw is about 1.3
+    current = tft.euler_matrix(0.05, 0.0, 1.3)[:3, :3].dot(tcp_to_body[:3, :3].T)
+    bodies = free_yaw_insert_candidates(current, tcp_to_body, np.eye(4), picked, 'sphere', [0.03], (0, 0), 0.8)
+    angles = [rotation_angle(current, b[:3, :3].dot(tcp_to_body[:3, :3].T)) for b in bodies]
+    assert angles == sorted(angles)
+    assert angles[0] < 0.05 + 1e-6  # only the extra tilt is left
+    yaw = math.atan2(bodies[0][1, 0], bodies[0][0, 0])
+    assert abs(yaw - 1.3) < 1e-6
+    limited = free_yaw_insert_candidates(
+        current, tcp_to_body, np.eye(4), picked, 'sphere', [0.03], (0, 0), 0.8, max_yaw_offset=math.radians(90)
+    )
+    assert len(limited) == 13
