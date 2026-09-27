@@ -59,7 +59,7 @@ from grasplan.msg import (
     PickObjectGoal,
     PickObjectResult,
 )
-from grasplan.tools.common import objectToPick, connect_move_groups
+from grasplan.tools.common import objectToPick, connect_move_groups, roscpp_initialize_named
 from grasplan.tools.action_client_helper import ActionClientHelper
 from visualization_msgs.msg import Marker, MarkerArray
 
@@ -154,7 +154,7 @@ class PickTools:
         )
         # if wait_for_service fails, it will throw a
         # rospy.exceptions.ROSException, and the node will exit (as long as
-        # this happens before moveit_commander.roscpp_initialize()).
+        # this happens before roscpp_initialize_named()).
         rospy.wait_for_service(pose_selector_activate_srv_name, 30.0)
         rospy.wait_for_service(pose_selector_class_query_srv_name, 30.0)
         rospy.wait_for_service(pose_selector_get_all_poses_srv_name, 30.0)
@@ -167,7 +167,7 @@ class PickTools:
 
         try:
             rospy.loginfo('waiting for move_group action server')
-            moveit_commander.roscpp_initialize(sys.argv)
+            roscpp_initialize_named(sys.argv)
             self.robot = moveit_commander.RobotCommander()
             connect_move_groups(
                 self.robot, {'arm', self.arm_group_name, gripper_group_name}, self.moveit_action_startup_timeout
@@ -179,7 +179,7 @@ class PickTools:
             self.get_planning_scene_srv = rospy.ServiceProxy('get_planning_scene', GetPlanningScene)
             rospy.loginfo('found move_group action server')
         except RuntimeError:
-            # moveit_commander.roscpp_initialize overwrites the signal handler,
+            # roscpp_initialize_named overwrites the signal handler,
             # so if a RuntimeError occurs here, we have to manually call
             # signal_shutdown() in order for the node to properly exit.
             rospy.logfatal(

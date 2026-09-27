@@ -34,6 +34,21 @@ def connect_move_groups(robot, group_names, wait_for_servers):
             )
 
 
+def roscpp_initialize_named(args):
+    '''
+    moveit_commander.roscpp_initialize(args), but the roscpp node of this process is called <rospy node name>_cpp
+    (e.g. /mobipick/pick_object_node_cpp) instead of the anonymous move_group_commander_wrappers_<time>. MTC
+    publishes its task introspection under that node (<name>/solution, description, statistics), so the RViz
+    "Motion Planning Tasks" display can use a fixed topic. A __name remap turns off roscpp's anonymous suffix.
+    '''
+    import rospy
+    from moveit_ros_planning_interface import _moveit_roscpp_initializer
+
+    name = rospy.get_name().split('/')[-1] + '_cpp'
+    args = [a for a in args if not a.startswith('__name:=')] + [f'__name:={name}']
+    _moveit_roscpp_initializer.roscpp_init(name, args)
+
+
 def separate_object_class_from_id(anchored_object_as_string):
     '''
     e.g. input  : relay_1

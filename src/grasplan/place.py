@@ -40,7 +40,7 @@ from grasplan.tools.support_plane_tools import (
     make_plane_marker_msg,
     OBJECT_HEIGHTS,
 )
-from grasplan.tools.common import separate_object_class_from_id, connect_move_groups
+from grasplan.tools.common import separate_object_class_from_id, connect_move_groups, roscpp_initialize_named
 from grasplan.tools.moveit_errors import print_moveit_error
 from std_srvs.srv import Empty, SetBool, Trigger
 from object_pose_msgs.msg import ObjectList
@@ -151,7 +151,7 @@ class PlaceTools:
 
         try:
             rospy.loginfo('waiting for move_group action server')
-            moveit_commander.roscpp_initialize(sys.argv)
+            roscpp_initialize_named(sys.argv)
             self.robot = moveit_commander.RobotCommander()
             connect_move_groups(self.robot, {'arm', self.group_name}, self.moveit_action_startup_timeout)
             self.robot.arm.set_planning_time(self.planning_time)
