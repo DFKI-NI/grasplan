@@ -290,9 +290,11 @@ class MtcPickPlace:
         '''
         plan and execute a moveit_msgs/PlaceGoal with MTC, trying its locations in order; returns PlaceResult.
         When no location can be planned but some only failed at the retreat (the gripper opened, then could not
-        back off the full min_distance, e.g. its camera touches the box rim), the locations are tried again
-        accepting a retreat of at least ~mtc_relaxed_retreat_min_distance: the object is already released there
-        and the next arm motion is planned collision free anyway.
+        back off the full min_distance), the locations are tried again: first retreating straight up (planning
+        frame +z) instead of back along the gripper axis, which on a tilted grasp (open-set, insert with free_yaw)
+        runs into the box wall (#136); then accepting a retreat of at least ~mtc_relaxed_retreat_min_distance
+        (e.g. the camera touches the box rim) along the axis, then straight up. The object is already released
+        there and the next arm motion is planned collision free anyway.
         '''
         result = PlaceResult()
         result.error_code.val = MoveItErrorCodes.PLANNING_FAILED
@@ -311,20 +313,28 @@ class MtcPickPlace:
         except (tf2_ros.TransformException, ValueError) as e:
             rospy.logerr(f'mtc: cannot place {goal.attached_object_name}: {e}')
             return result
-        for retreat_min_distance in (None, self.relaxed_retreat_min_distance):
-            if retreat_min_distance is not None:
+        passes = [(None, False), (None, True), (self.relaxed_retreat_min_distance, False),
+                  (self.relaxed_retreat_min_distance, True)]
+        for number, (retreat_min_distance, straight_up) in enumerate(passes):
+            if number > 0:
                 if not self.retreat_failed:
                     break
-                rospy.logwarn(f'mtc: retrying the place locations accepting a retreat of {retreat_min_distance:.2f} m')
+                how = 'straight up' if straight_up else 'along the gripper axis'
+                if retreat_min_distance is not None:
+                    how += f' of at least {retreat_min_distance:.2f} m'
+                rospy.logwarn(f'mtc: retrying the place locations with a retreat {how}')
             self.retreat_failed = False
             for index, location in enumerate(goal.place_locations):
                 if self.is_preempt_requested():
                     result.error_code.val = MoveItErrorCodes.PREEMPTED
                     return result
                 try:
-                    task, roles = self.make_place_task(goal, location, eef_to_object, retreat_min_distance)
+                    task, roles = self.make_place_task(goal, location, eef_to_object, retreat_min_distance, straight_up)
                 except (tf2_ros.TransformException, ValueError) as e:
                     rospy.logwarn(f'mtc: place location {location.id} skipped: {e}')
+                    continue
+                if task is None:
+                    self.retreat_failed = True  # same plan as the axis retreat, keep going to the next pass
                     continue
                 if not self.plan(task, f'place location {location.id} ({index + 1}/{len(goal.place_locations)})'):
                     self.retreat_failed |= self.only_retreat_failed(task)
@@ -377,7 +387,9 @@ class MtcPickPlace:
         task.add(grasp_stages)
         return task, roles
 
-    def make_place_task(self, goal, location, eef_to_object, retreat_min_distance=None):
+    def make_place_task(self, goal, location, eef_to_object, retreat_min_distance=None, straight_up=False):
+        '''place task for one location; with straight_up the retreat goes along planning frame +z instead of its
+        own direction, and (None, None) is returned when that direction already is within 10 degrees of it'''
         obj = goal.attached_object_name
         task, roles = self.start_task(f'place {obj} {location.id}')
 
@@ -416,6 +428,12 @@ class MtcPickPlace:
         place_stages.add(detach)
         roles.append(DETACH)
         retreat = copy.deepcopy(location.post_place_retreat)
+        if straight_up:
+            if self.world_direction(retreat.direction, eef_pose)[2] > math.cos(math.radians(10)):
+                return None, None
+            retreat.direction = Vector3Stamped(
+                header=rospy.Header(frame_id=self.planning_frame), vector=Vector3(0.0, 0.0, 1.0)
+            )
         if retreat_min_distance is not None:
             retreat.min_distance = min(retreat.min_distance, retreat_min_distance)
         place_stages.add(self.move_relative('retreat', retreat))
@@ -489,6 +507,16 @@ class MtcPickPlace:
             self.tf_buffer.lookup_transform(self.planning_frame, frame, rospy.Time(0), rospy.Duration(2.0))
         )[:3, :3]
         return Vector3Stamped(header=rospy.Header(frame_id=self.planning_frame), vector=Vector3(*rotation.dot(vector)))
+
+    def world_direction(self, direction, eef_pose):
+        '''unit direction in the planning frame; a direction in the end effector link is taken at eef_pose'''
+        if (direction.header.frame_id or self.planning_frame) == self.eef_link:
+            vector = pose_to_matrix(eef_pose.pose)[:3, :3].dot(
+                [direction.vector.x, direction.vector.y, direction.vector.z])
+        else:
+            v = self.direction_in_planning_frame(direction).vector
+            vector = np.array([v.x, v.y, v.z])
+        return vector / np.linalg.norm(vector)
 
     def eef_to_attached_object(self, object_name):
         '''4x4 pose of the attached object relative to the end effector link, read from move_group's scene'''
