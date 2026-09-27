@@ -107,6 +107,13 @@ def rank_by_quality(candidates):
 CYLINDER_MIN_ELONGATION = 1.5
 CYLINDER_MAX_ROUNDNESS = 1.3
 SIDE_GRASP_SCORE_MULTIPLIER = 1.5
+# By size (Oscar, 2026-09-28, baseball vs strawberry): an object whose longest side is below TINY_OBJECT_MAX_SIZE (m)
+# keeps the strict top-down ranking; a compact round one (all sides within ROUND_MAX_RATIO of each other, e.g. a
+# baseball or tennis ball) is grasped from the side at its centre height; flat or elongated ones (banana, multimeter)
+# stay top-down.
+TINY_OBJECT_MAX_SIZE = 0.06
+ROUND_MAX_RATIO = 1.3
+STANDING_MAX_TILT_DEG = 35.0   # a lying cylinder (banana, a can on its side) keeps top-down grasps across it
 
 
 def _unit(v):
@@ -157,3 +164,26 @@ def apply_cylinder_side_bonus(candidates, grasp_axes, centre, axis, length, scor
         multiplier = cylinder_side_multiplier(approach, closing, offset, axis, length, score_multiplier)
         candidate.quality = raw * multiplier
         candidate.scores = make_candidate_scores(candidate.quality, nn=raw, side_bonus=multiplier)
+
+
+def side_grasp_axis(size, rotation=None, up=(0.0, 0.0, 1.0)):
+    '''
+    (axis, length) along which side grasps should close across, or None for top-down ranking (Oscar, 2026-09-28):
+    tiny objects (longest side < TINY_OBJECT_MAX_SIZE) None; a STANDING long cylinder (axis within
+    STANDING_MAX_TILT_DEG of ``up``) its own axis, a lying one (banana) None; a compact round object
+    (all sides within ROUND_MAX_RATIO) the vertical ``up`` with its height; anything else (flat, elongated) None.
+    size/rotation as for cylinder_axis; up in the frame of rotation.
+    '''
+    dims = [float(v) for v in size]
+    if min(dims) <= 0.0 or max(dims) < TINY_OBJECT_MAX_SIZE:
+        return None
+    up = _unit(up)
+    cylinder = cylinder_axis(dims, rotation)
+    if cylinder is not None:
+        standing = abs(sum(a * u for a, u in zip(cylinder[0], up))) >= math.cos(math.radians(STANDING_MAX_TILT_DEG))
+        return cylinder if standing else None
+    if max(dims) > ROUND_MAX_RATIO * min(dims):
+        return None
+    rotation = rotation or ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+    height = sum(abs(sum(up[r] * rotation[r][c] for r in range(3))) * dims[c] for c in range(3))
+    return up, height
