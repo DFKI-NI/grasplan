@@ -61,6 +61,7 @@ from grasplan.msg import (
 )
 from grasplan.tools.common import objectToPick, connect_move_groups, roscpp_initialize_named
 from grasplan.tools.action_client_helper import ActionClientHelper
+from grasplan.tools.gripper_envelope import fingertip_envelope, lowest_point_offset
 from visualization_msgs.msg import Marker, MarkerArray
 
 ACTION_STATES = {value: name for name, value in vars(GoalStatus).items() if name.isupper() and isinstance(value, int)}
@@ -78,6 +79,7 @@ class PickTools:
         self.arm_group_name = rospy.get_param('~arm_group_name', 'arm')
         gripper_group_name = rospy.get_param('~gripper_group_name', 'gripper')
         self.gripper_group_name = gripper_group_name
+        self._fingertip_envelope = None  # lazily, see fingertip_envelope()
         arm_goal_tolerance = rospy.get_param('~arm_goal_tolerance', 0.01)
         self.planning_time = rospy.get_param('~planning_time', 20.0)
         self.pregrasp_posture_required = rospy.get_param('~pregrasp_posture_required', False)
@@ -833,7 +835,13 @@ class PickTools:
                 external_reference_frame,
                 self.robot.arm.get_end_effector_link(),
             )
-            self.raise_low_grasps(grasps, support_surface_name)
+            grasps = self.raise_low_grasps(
+                grasps, support_surface_name, [candidate.width for candidate in external_grasp_candidates]
+            )
+            if not grasps:
+                rospy.logerr(f'no open-set grasp of {object_to_pick.get_object_class_and_id_as_string()} keeps the '
+                             f'fingertips clear of {support_surface_name}')
+                return False
 
         # clear octomap from the planning scene if needed
         if self.clear_octomap_flag:
@@ -891,40 +899,97 @@ class PickTools:
                 print_moveit_error(result)  # only print moveit error if result is different than None
         return False
 
-    def raise_low_grasps(self, grasps, support_surface_name):
+    def raise_low_grasps(self, grasps, support_surface_name, widths=None):
         '''
-        ~open_set_min_grasp_height (m, 0 = off, re-read on every goal): AnyGrasp does not know the Robotiq 140
-        fingers, so for small objects it proposes grasps whose knuckles would go into the table (#124, strawberry).
-        A grasp whose TCP is lower than this above the support surface is moved back along its approach axis
-        (TCP +x) until it is that high; grasps that approach sideways (less than 17 degrees downwards) are left alone.
+        AnyGrasp does not know the Robotiq 140 fingers, so for small objects it proposes grasps whose fingers would
+        go into the table (#124 strawberry, #134 banana). Two limits above the top of the support surface (m, 0 =
+        off, re-read on every goal), the higher requirement wins:
+        ~open_set_min_grasp_height: of the TCP.
+        ~open_set_min_fingertip_height: of the lowest fingertip point while the gripper closes from open down to the
+        grasp width (widths, AnyGrasp jaw opening per grasp; 0 or missing = fully closed), from the URDF: on a tilted
+        grasp the lower finger dips below the TCP, and the 140's tips move 2.4 cm forward while closing.
+        A grasp that is too low is moved back along its approach axis (TCP +x) until both hold, at most
+        ~open_set_max_grasp_backoff (m, 0 = no limit): further back the fingers would close on air, so such a grasp
+        is dropped, as is a grasp approaching sideways (less than 17 degrees downwards) whose fingertips are too low
+        (backing off does not raise it). Returns the grasps to try.
         '''
         min_height = rospy.get_param('~open_set_min_grasp_height', 0.0)
-        if min_height <= 0.0 or not support_surface_name or not grasps:
-            return
+        min_fingertip_height = rospy.get_param('~open_set_min_fingertip_height', 0.0)
+        max_backoff = rospy.get_param('~open_set_max_grasp_backoff', 0.0)
+        if (min_height <= 0.0 and min_fingertip_height <= 0.0) or not support_surface_name or not grasps:
+            return grasps
         support = self.scene.get_objects([support_surface_name]).get(support_surface_name)
         frame = grasps[0].grasp_pose.header.frame_id
         if support is None or not support.primitives or support.header.frame_id != frame:
-            rospy.logwarn(f'open_set_min_grasp_height: no {support_surface_name} box in frame {frame}, grasps unchanged')
-            return
+            rospy.logwarn(f'open-set grasp height: no {support_surface_name} box in frame {frame}, grasps unchanged')
+            return grasps
         top = -float('inf')
         for primitive, pose in zip(support.primitives, support.primitive_poses):
             top = max(top, support.pose.position.z + pose.position.z + primitive.dimensions[2] / 2.0)
-        raised = []
-        for grasp in grasps:
+        envelope = self.fingertip_envelope() if min_fingertip_height > 0.0 else None
+        widths = list(widths) if widths is not None else [0.0] * len(grasps)
+        kept, raised, dropped = [], [], []
+        for grasp, width in zip(grasps, widths):
             pose = grasp.grasp_pose.pose
-            q = pose.orientation
-            approach = tf.transformations.quaternion_matrix([q.x, q.y, q.z, q.w])[:3, 0]
-            missing = top + min_height - pose.position.z
-            if missing <= 0.0 or approach[2] > -0.3 or pose.position.z < top - 0.05:
-                continue  # high enough, sideways, or the object is not on this surface (e.g. fell to the floor)
+            q = [pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w]
+            approach = tf.transformations.quaternion_matrix(q)[:3, 0]
+            if pose.position.z < top - 0.05:
+                kept.append(grasp)
+                continue  # the object is not on this surface (e.g. fell to the floor)
+            missing = top + min_height - pose.position.z if min_height > 0.0 else 0.0
+            if envelope:
+                lowest = pose.position.z + lowest_point_offset(envelope, q, width)
+                missing = max(missing, top + min_fingertip_height - lowest)
+            if missing <= 0.0:
+                kept.append(grasp)
+                continue
+            if approach[2] > -0.3:
+                if envelope and lowest < top + min_fingertip_height:
+                    dropped.append(f'{grasp.id} ({(lowest - top) * 100:+.1f} cm)')
+                else:
+                    kept.append(grasp)
+                continue
             shift = missing / -approach[2]
+            if 0.0 < max_backoff < shift:
+                dropped.append(f'{grasp.id} (needs {shift * 100:.1f} cm back)')
+                continue
             pose.position.x -= shift * approach[0]
             pose.position.y -= shift * approach[1]
             pose.position.z -= shift * approach[2]
             raised.append(f'{grasp.id} +{missing * 100:.1f} cm')
+            kept.append(grasp)
         if raised:
-            rospy.loginfo(f'raised {len(raised)} of {len(grasps)} grasps to {min_height * 100:.1f} cm above '
-                          f'{support_surface_name} (top {top:.3f}): {", ".join(raised)}')
+            rospy.loginfo(f'raised {len(raised)} of {len(grasps)} grasps (tcp {min_height * 100:.1f} cm, fingertips '
+                          f'{min_fingertip_height * 100:.1f} cm above {support_surface_name}, top {top:.3f}): '
+                          f'{", ".join(raised)}')
+        if dropped:
+            rospy.loginfo(f'dropped {len(dropped)} grasps that cannot keep the fingertips '
+                          f'{min_fingertip_height * 100:.1f} cm above {support_surface_name} (sideways, or more than '
+                          f'{max_backoff * 100:.1f} cm back): '
+                          f'{", ".join(dropped)}')
+        return kept
+
+    def fingertip_envelope(self):
+        '''fingertip corners in the TCP frame over the closing motion (tools.gripper_envelope), [] if unknown'''
+        if self._fingertip_envelope is None:
+            self._fingertip_envelope = []
+            try:
+                from urdf_parser_py.urdf import URDF
+
+                robot = URDF.from_xml_string(rospy.get_param('robot_description'))
+                tips = [
+                    link
+                    for link in self.robot.get_link_names(group=self.gripper_group_name)
+                    if 'fingertip' in link
+                ]
+                actuated = self.gripper.get_active_joints()[0]
+                self._fingertip_envelope = fingertip_envelope(
+                    robot, self.robot.arm.get_end_effector_link(), tips, actuated
+                )
+                rospy.loginfo(f'fingertip envelope from {tips}, {actuated}: {len(self._fingertip_envelope)} samples')
+            except Exception as e:  # keep picking with the TCP limit only
+                rospy.logerr(f'no fingertip envelope, ~open_set_min_fingertip_height is ignored: {e}')
+        return self._fingertip_envelope
 
     def _pick_with_moveit_commander(self, object_to_pick, grasps, support_surface_name):
         self.robot.arm.set_support_surface_name(support_surface_name)

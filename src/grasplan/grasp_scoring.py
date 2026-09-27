@@ -26,8 +26,11 @@ Ranking of external (AnyGrasp-style) grasp candidates.
 The AnyGrasp action server and its recorded-grasp mockup share this module so
 both rank candidates identically: the raw network score ("nn") is multiplied
 by a top-down bonus that grows with how well the approach direction points
-straight down in a gravity-aligned frame. Every function is ROS-free apart
-from the GraspCandidate message fields it reads and writes.
+straight down in a gravity-aligned frame, and by an extra straight bonus for
+approaches within a few degrees of vertical: a tilted gripper dips one finger
+towards the table (#134), so near-vertical grasps must win clearly. Every
+function is ROS-free apart from the GraspCandidate message fields it reads and
+writes.
 '''
 
 import math
@@ -35,6 +38,9 @@ import math
 from grasplan.grasp_markers import make_candidate_scores
 
 NN_SCORE_NAME = 'nn'
+# default straight bonus of the AnyGrasp server and the mockup (#134): x1.5 at vertical, fading out at 20 deg
+STRAIGHT_GRASP_SCORE_MULTIPLIER = 1.5
+STRAIGHT_GRASP_MAX_ANGLE_DEG = 20.0
 
 
 def top_down_alignment(approach_vector):
@@ -46,9 +52,21 @@ def top_down_alignment(approach_vector):
     return max(0.0, min(1.0, -z / norm))
 
 
-def top_down_multiplier(alignment, score_multiplier):
-    '''Linear bonus: 1.0 for a horizontal approach, score_multiplier for a vertical one.'''
-    return 1.0 + (score_multiplier - 1.0) * alignment
+def top_down_multiplier(alignment, score_multiplier, straight_multiplier=1.0, straight_max_angle=0.0):
+    '''
+    Linear bonus: 1.0 for a horizontal approach, score_multiplier for a vertical one; times the straight bonus,
+    which grows linearly from 1.0 at straight_max_angle (rad) off vertical to straight_multiplier at vertical.
+    '''
+    top_down = 1.0 + (score_multiplier - 1.0) * alignment
+    return top_down * straight_bonus(alignment, straight_multiplier, straight_max_angle)
+
+
+def straight_bonus(alignment, straight_multiplier, straight_max_angle):
+    '''1.0 beyond straight_max_angle (rad) off vertical, rising linearly in the angle to straight_multiplier.'''
+    if straight_multiplier == 1.0 or straight_max_angle <= 0.0:
+        return 1.0
+    angle = math.acos(max(-1.0, min(1.0, alignment)))
+    return 1.0 + (straight_multiplier - 1.0) * max(0.0, 1.0 - angle / straight_max_angle)
 
 
 def nn_score(candidate):
@@ -59,7 +77,9 @@ def nn_score(candidate):
     return float(candidate.quality)
 
 
-def apply_top_down_bonus(candidates, approach_vectors, score_multiplier):
+def apply_top_down_bonus(
+    candidates, approach_vectors, score_multiplier, straight_multiplier=1.0, straight_max_angle=0.0
+):
     '''
     Re-score candidates in place: quality = nn * top_down_multiplier, scores = [nn, top_bonus, final].
 
@@ -67,7 +87,9 @@ def apply_top_down_bonus(candidates, approach_vectors, score_multiplier):
     '''
     for candidate, approach in zip(candidates, approach_vectors):
         raw = nn_score(candidate)
-        multiplier = top_down_multiplier(top_down_alignment(approach), score_multiplier)
+        multiplier = top_down_multiplier(
+            top_down_alignment(approach), score_multiplier, straight_multiplier, straight_max_angle
+        )
         candidate.quality = raw * multiplier
         candidate.scores = make_candidate_scores(candidate.quality, nn=raw, top_bonus=multiplier)
 
