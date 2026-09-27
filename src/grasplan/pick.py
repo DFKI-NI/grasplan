@@ -37,6 +37,7 @@ import moveit_commander
 from actionlib_msgs.msg import GoalStatus
 from control_msgs.msg import GripperCommandAction, GripperCommandGoal
 from tf import TransformListener
+import tf.transformations
 from std_msgs.msg import String
 from std_srvs.srv import Empty, SetBool
 from pose_selector.srv import ClassQuery, PoseDelete, GetPoses
@@ -248,6 +249,9 @@ class PickTools:
             self.pick_action_server.set_preempted()
             return
 
+        if self.mtc is not None:
+            self.mtc.failure_reason, self.mtc.executed = '', False  # nothing left over from the previous goal
+
         # Unknown objects are sent directly to the open-set pipeline. A known
         # object's result is final, including a failed Grasplan attempt.
         if self.grasp_planner.supports_object(goal.object_name):
@@ -255,6 +259,8 @@ class PickTools:
                 goal.object_name, goal.support_surface_name, self.grasp_type, goal.ignore_object_list
             )
             status_text = 'Grasplan pick succeeded' if success else 'Grasplan pick failed'
+            if not success and self.mtc is not None and self.mtc.failure_reason:
+                status_text += f': {self.mtc.failure_reason}'
             preempted = False
         else:
             if self.anygrasp_handles_execution:
@@ -425,6 +431,8 @@ class PickTools:
             if success
             else f'Grasplan failed to pick open-set object {anchored_object_name}'
         )
+        if not success and self.mtc is not None and self.mtc.failure_reason:
+            message += f': {self.mtc.failure_reason}'
         return success, message, False
 
     def graspTypeCB(self, msg):
@@ -825,6 +833,7 @@ class PickTools:
                 external_reference_frame,
                 self.robot.arm.get_end_effector_link(),
             )
+            self.raise_low_grasps(grasps, support_surface_name)
 
         # clear octomap from the planning scene if needed
         if self.clear_octomap_flag:
@@ -857,6 +866,8 @@ class PickTools:
                 result = self._pick_with_action(object_to_pick, chunk, support_surface_name)
                 if result == MoveItErrorCodes.SUCCESS or result is None:
                     break
+                if self.mtc is not None and self.mtc.executed:
+                    break  # the arm moved (e.g. closed on nothing): report instead of retrying from a changed state
                 if self.pick_action_server.is_preempt_requested():
                     return False
         else:
@@ -879,6 +890,41 @@ class PickTools:
             if result:  # if result is None it means moveit action server was not found within 2 secs
                 print_moveit_error(result)  # only print moveit error if result is different than None
         return False
+
+    def raise_low_grasps(self, grasps, support_surface_name):
+        '''
+        ~open_set_min_grasp_height (m, 0 = off, re-read on every goal): AnyGrasp does not know the Robotiq 140
+        fingers, so for small objects it proposes grasps whose knuckles would go into the table (#124, strawberry).
+        A grasp whose TCP is lower than this above the support surface is moved back along its approach axis
+        (TCP +x) until it is that high; grasps that approach sideways (less than 17 degrees downwards) are left alone.
+        '''
+        min_height = rospy.get_param('~open_set_min_grasp_height', 0.0)
+        if min_height <= 0.0 or not support_surface_name or not grasps:
+            return
+        support = self.scene.get_objects([support_surface_name]).get(support_surface_name)
+        frame = grasps[0].grasp_pose.header.frame_id
+        if support is None or not support.primitives or support.header.frame_id != frame:
+            rospy.logwarn(f'open_set_min_grasp_height: no {support_surface_name} box in frame {frame}, grasps unchanged')
+            return
+        top = -float('inf')
+        for primitive, pose in zip(support.primitives, support.primitive_poses):
+            top = max(top, support.pose.position.z + pose.position.z + primitive.dimensions[2] / 2.0)
+        raised = []
+        for grasp in grasps:
+            pose = grasp.grasp_pose.pose
+            q = pose.orientation
+            approach = tf.transformations.quaternion_matrix([q.x, q.y, q.z, q.w])[:3, 0]
+            missing = top + min_height - pose.position.z
+            if missing <= 0.0 or approach[2] > -0.3 or pose.position.z < top - 0.05:
+                continue  # high enough, sideways, or the object is not on this surface (e.g. fell to the floor)
+            shift = missing / -approach[2]
+            pose.position.x -= shift * approach[0]
+            pose.position.y -= shift * approach[1]
+            pose.position.z -= shift * approach[2]
+            raised.append(f'{grasp.id} +{missing * 100:.1f} cm')
+        if raised:
+            rospy.loginfo(f'raised {len(raised)} of {len(grasps)} grasps to {min_height * 100:.1f} cm above '
+                          f'{support_surface_name} (top {top:.3f}): {", ".join(raised)}')
 
     def _pick_with_moveit_commander(self, object_to_pick, grasps, support_surface_name):
         self.robot.arm.set_support_surface_name(support_surface_name)

@@ -289,6 +289,8 @@ class PlaceTools:
 
     def place_obj_action_callback(self, goal):
         success = False
+        if self.mtc is not None:
+            self.mtc.failure_reason, self.mtc.executed = '', False  # nothing left over from the previous goal
         num_poses_list = [5, 25, 50]  # first try 5 poses, then 25, then 50
         override_disentangle_dont_doit = False
         override_observe_before_place_dont_doit = False
@@ -320,13 +322,18 @@ class PlaceTools:
                 if self.place_action_server.is_preempt_requested():
                     success = False
                     break
+                if self.mtc is not None and self.mtc.executed:
+                    break  # the arm moved: the caller decides about a retry (#128)
         if success:
             self.place_action_server.set_succeeded(PlaceObjectResult(success=True))
         elif self.place_action_server.is_preempt_requested():
             rospy.logwarn("Preemption requested during place goal processing.")
             self.place_action_server.set_preempted()
         else:
-            self.place_action_server.set_aborted(PlaceObjectResult(success=False))
+            reason = self.mtc.failure_reason if self.mtc is not None else ''
+            self.place_action_server.set_aborted(
+                PlaceObjectResult(success=False), f'place failed: {reason}' if reason else 'place failed'
+            )
 
     def transform_obj_list(self, obj_list: ObjectList, target_frame_id: str) -> ObjectList:
         """Transforms an object list from a source frame to a target frame."""
@@ -576,6 +583,9 @@ class PlaceTools:
                 self.place_pose_selector_clear_srv()
                 self.clear_place_poses_markers()
                 print_moveit_error(result.error_code.val)
+                if self.mtc is not None and self.mtc.executed:
+                    # the arm moved (maybe the gripper already opened): report instead of retrying from a changed state
+                    return False
 
         rospy.logerr('All batches processed, but no successful placement')
         return False

@@ -37,9 +37,17 @@ so MTC cannot plan the gripper. MTC plans the arm and the planning scene changes
 executed here: arm segments through move_group's execute_trajectory action, the gripper steps through
 the GripperCommand action with the metre values of the goal, attach and detach through
 apply_planning_scene. This also makes the execution preemptible, which the pickup action was not.
+
+Optional arm cable guard (~mtc_cable_constraints, re-read on every goal): the cable model of
+mobipick_sim_cable_entanglement (#118) turns into constraints on the joint path instead of joint limits that
+reject grasps (#120, #124). Every free motion (Connect) gets a MoveIt path constraint that keeps wrist_3 within
+half a turn of the angle where the tube is least wound (no extra winding), several solutions are planned, and
+the cheapest one whose whole joint path keeps the cable model's stretch below ~mtc_cable_max_stretch is executed.
 '''
 
 import copy
+import math
+import os
 import time
 
 import numpy as np
@@ -54,6 +62,8 @@ from geometry_msgs.msg import PoseStamped, Vector3Stamped, Vector3
 from moveit_msgs.msg import (
     AttachedCollisionObject,
     CollisionObject,
+    Constraints,
+    JointConstraint,
     ExecuteTrajectoryAction,
     ExecuteTrajectoryGoal,
     MoveItErrorCodes,
@@ -93,6 +103,82 @@ def transform_to_matrix(transform):
     return matrix
 
 
+class CableGuard:
+    '''
+    Arm cable entanglement as constraints on MTC paths (#124), from the cable model of
+    mobipick_sim_cable_entanglement (doc/cable_model.md there, #118):
+
+    - path constraint: wrist_3 stays within ~mtc_cable_wrist_3_half_window_deg of the neutral angle of the model's
+      wrist span (where the tube takes the short way around the joint), so no motion adds a turn of winding. The
+      model alone cannot see extra turns once the wrist_3 housing no longer holds the tube, hence this bound.
+    - trajectory check: the stretch s = L_req / L_free - 1 of every span, evaluated along the whole joint path
+      (geometry only, no rope history), must stay below ~mtc_cable_max_stretch (0 = tube just taut).
+    '''
+
+    def __init__(self, joint_prefix):
+        from mobipick_sim_cable_entanglement.cable_model import CableModel, config_from_dict  # amenable_ws
+        import rospkg
+        import yaml
+
+        config = rospy.get_param('~mtc_cable_model_config', '') or os.path.join(
+            rospkg.RosPack().get_path('mobipick_sim_cable_entanglement'), 'config', 'cable_model.yaml'
+        )
+        with open(config) as f:
+            self.cfg = config_from_dict(yaml.safe_load(f))
+        self.model = CableModel(rospy.get_param('robot_description'), self.cfg)
+        wrist_3 = [wj for span in self.cfg.spans for wj in span.joints if wj.joint == 'ur5_wrist_3_joint']
+        self.wrist_3_neutral = wrist_3[0].neutral if wrist_3 else math.pi - 0.25
+        self.wrist_3_joint = joint_prefix + 'ur5_wrist_3_joint'
+        self.max_stretch = 0.0
+        self.half_window = math.radians(170.0)
+        self.max_points = 40
+        self.update_params()
+        rospy.loginfo(
+            f'mtc cable guard: model {config}, wrist_3 {math.degrees(self.wrist_3_neutral):.1f} +- '
+            f'{math.degrees(self.half_window):.0f} deg, max stretch {self.max_stretch:+.3f}'
+        )
+
+    def update_params(self):
+        self.max_stretch = rospy.get_param('~mtc_cable_max_stretch', 0.0)
+        self.half_window = math.radians(rospy.get_param('~mtc_cable_wrist_3_half_window_deg', 170.0))
+        self.max_points = int(rospy.get_param('~mtc_cable_points_per_trajectory', 40))
+
+    def path_constraints(self):
+        constraints = Constraints()
+        constraints.name = 'arm cable: wrist_3 winding'
+        constraints.joint_constraints.append(
+            JointConstraint(
+                joint_name=self.wrist_3_joint,
+                position=self.wrist_3_neutral,
+                tolerance_above=self.half_window,
+                tolerance_below=self.half_window,
+                weight=1.0,
+            )
+        )
+        return constraints
+
+    def check(self, solution_msg):
+        '''(ok, worst stretch, worst span, worst joint angles in degrees) along all sub trajectories'''
+        worst, worst_span, worst_q = -float('inf'), '', {}
+        lo, hi = self.wrist_3_neutral - self.half_window, self.wrist_3_neutral + self.half_window
+        for sub in solution_msg.sub_trajectory:
+            trajectory = sub.trajectory.joint_trajectory
+            points = trajectory.points
+            if not points:
+                continue
+            step = max(1, len(points) // self.max_points)
+            for point in list(points[::step]) + [points[-1]]:
+                q = dict(zip(trajectory.joint_names, point.positions))
+                w3 = q.get(self.wrist_3_joint)
+                if w3 is not None and not lo - 1e-3 <= w3 <= hi + 1e-3:
+                    return False, float('inf'), 'wrist_3 window', {k: round(math.degrees(v), 1) for k, v in q.items()}
+                state = self.model.evaluate(q)
+                if state.max_stretch > worst:
+                    worst, worst_span = state.max_stretch, state.worst_span
+                    worst_q = {k.split('/')[-1]: round(math.degrees(v), 1) for k, v in q.items()}
+        return worst < self.max_stretch, worst, worst_span, worst_q
+
+
 class MtcPickPlace:
     def __init__(self, arm_group, eef_link, gripper_links, planning_frame, is_preempt_requested):
         '''
@@ -121,6 +207,15 @@ class MtcPickPlace:
         self.gripper_action_timeout = rospy.get_param('~mtc_gripper_action_timeout', 10.0)
         self.relaxed_retreat_min_distance = rospy.get_param('~mtc_relaxed_retreat_min_distance', 0.05)
         self.retreat_failed = False
+        self.cable_guard = None  # CableGuard, built on the first goal with ~mtc_cable_constraints true
+        self.cable_solutions = 1
+        self.chosen_solution = None
+        # why the last goal failed (for the action status text) and whether it moved anything
+        self.failure_reason = ''
+        self.executed = False
+        self.check_grasp = rospy.get_param('~mtc_check_grasp', True)
+        self.grasp_check_delay = rospy.get_param('~mtc_grasp_check_delay', 1.0)
+        self.gripper_fact = self.make_gripper_fact() if self.check_grasp else None
         server_timeout = rospy.get_param('~moveit_action_startup_timeout', 60.0)
 
         self.tf_buffer = tf2_ros.Buffer()
@@ -157,6 +252,8 @@ class MtcPickPlace:
         '''plan and execute a moveit_msgs/PickupGoal with MTC, trying its grasps in order; returns PickupResult'''
         result = PickupResult()
         result.error_code.val = MoveItErrorCodes.PLANNING_FAILED
+        self.failure_reason, self.executed = '', False
+        self.update_cable_guard()
         touch = self.gripper_links + [goal.target_name]
         for index, grasp in enumerate(goal.possible_grasps):
             if self.is_preempt_requested():
@@ -170,12 +267,22 @@ class MtcPickPlace:
             if not self.plan(task, f'grasp {grasp.id} ({index + 1}/{len(goal.possible_grasps)})'):
                 continue
             # the pre grasp posture (open) is not a stage, it is sent before the first arm motion
+            self.executed = True
             code = self.execute(task, roles, [grasp.pre_grasp_posture], grasp.grasp_posture,
-                                attach=(goal.target_name, touch))
+                                attach=(goal.target_name, touch), check_grasp=True)
+            if code == MoveItErrorCodes.SUCCESS and not self.gripper_holds_object('after the lift'):
+                self.failure_reason = f'{goal.target_name} was lost during the lift (the gripper is empty)'
+                code = MoveItErrorCodes.FAILURE
+            if code != MoveItErrorCodes.SUCCESS and self.failure_reason:
+                rospy.logerr(f'mtc: pick failed: {self.failure_reason}')
+                self.release_empty_grasp(goal.target_name, grasp.pre_grasp_posture)
             result.error_code.val = code
             if code == MoveItErrorCodes.SUCCESS:
                 result.grasp = grasp
+            elif not self.failure_reason:
+                self.failure_reason = f'executing grasp {grasp.id} failed with MoveIt error code {code}'
             return result  # something moved: never try another grasp from a changed state
+        self.failure_reason = f'none of the {len(goal.possible_grasps)} grasps could be planned'
         rospy.logerr(f'mtc: none of the {len(goal.possible_grasps)} grasps of {goal.target_name} could be planned')
         return result
 
@@ -189,6 +296,16 @@ class MtcPickPlace:
         '''
         result = PlaceResult()
         result.error_code.val = MoveItErrorCodes.PLANNING_FAILED
+        self.failure_reason, self.executed = '', False
+        self.update_cable_guard()
+        if not self.gripper_holds_object('before placing', delay=0.2):
+            # e.g. it slipped out while the arm swung through the observe or untangle poses
+            self.failure_reason = f'{goal.attached_object_name} is no longer in the gripper (gripper_has_object false)'
+            rospy.logerr(f'mtc: place failed: {self.failure_reason}')
+            self.release_empty_grasp(goal.attached_object_name, None)
+            self.executed = True
+            result.error_code.val = MoveItErrorCodes.FAILURE
+            return result
         try:
             eef_to_object = self.eef_to_attached_object(goal.attached_object_name)
         except (tf2_ros.TransformException, ValueError) as e:
@@ -212,13 +329,17 @@ class MtcPickPlace:
                 if not self.plan(task, f'place location {location.id} ({index + 1}/{len(goal.place_locations)})'):
                     self.retreat_failed |= self.only_retreat_failed(task)
                     continue
+                self.executed = True
                 code = self.execute(task, roles, [], location.post_place_posture,
                                     detach=goal.attached_object_name)
                 result.error_code.val = code
                 if code == MoveItErrorCodes.SUCCESS:
                     result.place_location = location
+                else:
+                    self.failure_reason = f'executing place location {location.id} failed with MoveIt error code {code}'
                 return result
         rospy.logerr(f'mtc: none of the {len(goal.place_locations)} place locations could be planned')
+        self.failure_reason = f'none of the {len(goal.place_locations)} place locations could be planned'
         return result
 
     # ------------------------------------------------------------------ task construction
@@ -312,6 +433,8 @@ class MtcPickPlace:
     def connect(self, name):
         connect = stages.Connect(name, [(self.arm_group, self.pipeline)])
         connect.timeout = self.connect_timeout
+        if self.cable_guard is not None:
+            connect.properties['path_constraints'] = self.cable_guard.path_constraints()
         return connect
 
     def move_relative(self, name, gripper_translation):
@@ -386,21 +509,61 @@ class MtcPickPlace:
 
     # ------------------------------------------------------------------ planning and execution
 
+    def update_cable_guard(self):
+        '''(re)read ~mtc_cable_constraints on every goal, so the guard can be switched without a restart'''
+        if not rospy.get_param('~mtc_cable_constraints', False):
+            if self.cable_guard is not None:
+                rospy.loginfo('mtc: cable guard off')
+            self.cable_guard = None
+            return
+        if self.cable_guard is None:
+            if getattr(self, '_cable_guard_cache', None) is None:
+                prefix = self.eef_link.rsplit('/', 1)[0] + '/' if '/' in self.eef_link else ''
+                try:
+                    self._cable_guard_cache = CableGuard(prefix)
+                except Exception as e:  # the model package lives in amenable_ws, it may be missing
+                    rospy.logerr(f'mtc: cable guard requested but not available, planning without it: {e}')
+                    return
+            self.cable_guard = self._cable_guard_cache
+        self.cable_guard.update_params()
+        self.cable_solutions = max(1, int(rospy.get_param('~mtc_cable_solutions', 4)))
+
     def plan(self, task, what):
+        '''plan task; sets self.chosen_solution (the cheapest solution, or with the cable guard the cheapest one
+        whose joint path passes the cable check)'''
         start = time.monotonic()
+        self.chosen_solution = None
         try:
             task.init()
-            planned = bool(task.plan(1)) and len(task.solutions) > 0
+            planned = bool(task.plan(self.cable_solutions if self.cable_guard else 1)) and len(task.solutions) > 0
         except Exception as e:  # MTC raises InitStageError for inconsistent stage setups
             rospy.logwarn(f'mtc: {what}: {e}')
             return False
         elapsed = time.monotonic() - start
-        if planned:
-            rospy.loginfo(f'mtc: {what} planned in {elapsed:.1f} s (cost {task.solutions[0].cost:.2f})')
-            task.publish(task.solutions[0])
-        else:
+        if not planned:
             rospy.loginfo(f'mtc: {what} not feasible ({elapsed:.1f} s): {self.describe_failures(task)}')
-        return planned
+            return False
+        if self.cable_guard is None:
+            self.chosen_solution = task.solutions[0]
+        else:
+            checks = []
+            for index, solution in enumerate(task.solutions):
+                ok, stretch, span, q = self.cable_guard.check(solution.toMsg())
+                checks.append(f'{index}: cost {solution.cost:.1f} stretch {stretch:+.3f} ({span})')
+                if ok:
+                    self.chosen_solution = solution
+                    break
+                rospy.loginfo(f'mtc: {what} solution {index} rejected by the cable guard: stretch {stretch:+.3f} '
+                              f'> {self.cable_guard.max_stretch:+.3f} in the {span} span at {q}')
+            if self.chosen_solution is None:
+                rospy.loginfo(f'mtc: {what}: all {len(task.solutions)} solutions entangle the arm cable '
+                              f'({"; ".join(checks)})')
+                return False
+            rospy.loginfo(f'mtc: {what} cable check passed ({checks[-1]})')
+        elapsed = time.monotonic() - start
+        rospy.loginfo(f'mtc: {what} planned in {elapsed:.1f} s (cost {self.chosen_solution.cost:.2f})')
+        task.publish(self.chosen_solution)
+        return True
 
     @staticmethod
     def only_retreat_failed(task):
@@ -443,13 +606,13 @@ class MtcPickPlace:
             visit(stage, stage.name + '/')
         return '; '.join(report)
 
-    def execute(self, task, roles, postures_before, stage_posture, attach=None, detach=None):
+    def execute(self, task, roles, postures_before, stage_posture, attach=None, detach=None, check_grasp=False):
         '''
         run the first solution of task. roles has one entry per leaf stage in the order they were added.
         postures_before are gripper postures (trajectory_msgs/JointTrajectory, opening in metres) sent before
         anything else, stage_posture is the one for the GRIPPER stage
         '''
-        sub_trajectories = list(task.solutions[0].toMsg().sub_trajectory)
+        sub_trajectories = list(self.chosen_solution.toMsg().sub_trajectory)
         if len(sub_trajectories) != len(roles):
             rospy.logerr(
                 f'mtc: solution has {len(sub_trajectories)} sub trajectories, expected {len(roles)} '
@@ -467,6 +630,10 @@ class MtcPickPlace:
                 code = self.execute_arm(sub.trajectory)
             elif role == GRIPPER:
                 code = self.command_gripper(postures.pop(0))
+                if code == MoveItErrorCodes.SUCCESS and check_grasp and not postures:  # the closing step
+                    if not self.gripper_holds_object('after closing'):
+                        self.failure_reason = f'the gripper closed on nothing at {attach[0] if attach else "the object"}'
+                        return MoveItErrorCodes.FAILURE
             elif role == ATTACH:
                 code = self.attach(*attach)
             elif role == DETACH:
@@ -479,6 +646,51 @@ class MtcPickPlace:
             if code != MoveItErrorCodes.SUCCESS:
                 return code
         return MoveItErrorCodes.SUCCESS
+
+    def make_gripper_fact(self):
+        '''
+        the gripper_has_object fact of symbolic_fact_generation (tested in sim and on the real robot: finger joint
+        position and effort in the sim, the Robotiq gOBJ register on the real robot), with the parameters of its
+        facts_config.yaml so both agree
+        '''
+        try:
+            import rospkg
+            import yaml
+            from symbolic_fact_generation.gripper_facts_generator import GripperHasObjectGenerator
+
+            config = rospy.get_param('~mtc_gripper_fact_config', '') or os.path.join(
+                rospkg.RosPack().get_path('symbolic_fact_generation'), 'config', 'facts_config.yaml'
+            )
+            with open(config) as f:
+                facts = yaml.safe_load(f)
+            entries = facts.get('facts', facts) if isinstance(facts, dict) else facts
+            params = next(e['gripper_has_object']['params'] for e in entries if 'gripper_has_object' in e)
+            rospy.loginfo(f'mtc: grasp check with gripper_has_object from {config}')
+            return GripperHasObjectGenerator('gripper_has_object', *params)
+        except Exception as e:
+            rospy.logerr(f'mtc: grasp check unavailable, picks are not verified: {e}')
+            return None
+
+    def gripper_holds_object(self, when, delay=None):
+        if self.gripper_fact is None:
+            return True
+        rospy.sleep(self.grasp_check_delay if delay is None else delay)  # the fingers settle, the fact's effort hold and gOBJ catch up
+        holds = bool(self.gripper_fact.generate_facts())
+        rospy.loginfo(f'mtc: gripper_has_object {when}: {holds}')
+        return holds
+
+    def release_empty_grasp(self, object_name, open_posture):
+        '''after a failed grasp: the object is not in the hand, so drop it from the scene and open the gripper'''
+        self.detach(object_name)
+        removal = PlanningScene()
+        removal.is_diff = True
+        removal.world.collision_objects = [CollisionObject(id=object_name, operation=CollisionObject.REMOVE)]
+        try:
+            self.apply_planning_scene_srv(removal)
+        except rospy.ServiceException as e:
+            rospy.logwarn(f'mtc: could not remove {object_name} from the scene: {e}')
+        if open_posture is not None:
+            self.command_gripper(open_posture)
 
     def execute_arm(self, robot_trajectory):
         self.execute_client.send_goal(ExecuteTrajectoryGoal(trajectory=robot_trajectory))

@@ -100,6 +100,8 @@ class InsertTools:
 
     def insert_obj_action_callback(self, goal):
         success = False
+        if getattr(self.place, 'mtc', None) is not None:
+            self.place.mtc.failure_reason, self.place.mtc.executed = '', False  # nothing left over from the previous goal
         for i in range(2):  # 0, 1 = 2 attemps
             if self.insert_action_server.is_preempt_requested():
                 break
@@ -131,13 +133,18 @@ class InsertTools:
             ):
                 success = True
                 break
+            if getattr(self.place, 'mtc', None) is not None and self.place.mtc.executed:
+                break  # the arm moved (maybe the gripper already opened): report instead of retrying (#128)
         if success:
             self.insert_action_server.set_succeeded(InsertObjectResult(success=True))
         elif self.insert_action_server.is_preempt_requested():
             rospy.logwarn("Preemption requested during insert goal processing.")
             self.insert_action_server.set_preempted()
         else:
-            self.insert_action_server.set_aborted(InsertObjectResult(success=False))
+            reason = self.place.mtc.failure_reason if getattr(self.place, 'mtc', None) is not None else ''
+            self.insert_action_server.set_aborted(
+                InsertObjectResult(success=False), f'insert failed: {reason}' if reason else 'insert failed'
+            )
 
     def get_support_object_pose(self, support_object):
         '''
