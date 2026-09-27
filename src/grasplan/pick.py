@@ -59,6 +59,7 @@ from grasplan.msg import (
     PickObjectGoal,
     PickObjectResult,
 )
+from grasplan.srv import ViewObject
 from grasplan.tools.common import objectToPick, connect_move_groups, roscpp_initialize_named
 from grasplan.tools.action_client_helper import ActionClientHelper
 from grasplan.tools.gripper_envelope import fingertip_envelope, lowest_point_offset
@@ -115,6 +116,9 @@ class PickTools:
         self.anygrasp_server_timeout = rospy.get_param('~anygrasp_server_timeout', 2.0)
         self.anygrasp_result_timeout = rospy.get_param('~anygrasp_result_timeout', 300.0)
         self.anygrasp_arm_pose = rospy.get_param('~anygrasp_arm_pose', 'anygrasp')
+        # a grasplan/ViewObject service that moves the camera to a view of the object that suits AnyGrasp (e.g. the
+        # whole object within the depth range); when it is missing or fails the arm goes to anygrasp_arm_pose
+        self.anygrasp_view_service = rospy.get_param('~anygrasp_view_service', '/mobipick/grasp_view')
         self.gripper_action_name = rospy.get_param('~gripper_action_name', '/mobipick/gripper_hw')
         self.gripper_action_timeout = rospy.get_param('~gripper_action_timeout', 2.0)
         # MoveIt's pickup/place action servers live in move_group, which on the real robot runs on the
@@ -312,7 +316,7 @@ class PickTools:
             rospy.logerr(message)
             return False, message, False
 
-        if not self.move_arm_to_posture(self.anygrasp_arm_pose):
+        if not self.move_to_anygrasp_view(object_name):
             message = f'failed to move arm to {self.anygrasp_arm_pose!r} before calling AnyGrasp'
             rospy.logerr(message)
             return False, message, False
@@ -375,7 +379,7 @@ class PickTools:
             rospy.logerr(message)
             return False, message, False
 
-        if not self.move_arm_to_posture(self.anygrasp_arm_pose):
+        if not self.move_to_anygrasp_view(object_name):
             message = f'failed to move arm to {self.anygrasp_arm_pose!r} before calling AnyGrasp'
             rospy.logerr(message)
             return False, message, False
@@ -614,6 +618,23 @@ class PickTools:
         acm.entry_names = names
         acm.entry_values = [AllowedCollisionEntry(enabled=row) for row in rows]
         return acm
+
+    def move_to_anygrasp_view(self, object_name):
+        '''
+        point the camera at the object for AnyGrasp: the view service when there is one, else anygrasp_arm_pose
+        '''
+        if self.anygrasp_view_service:
+            try:
+                rospy.wait_for_service(self.anygrasp_view_service, timeout=1.0)
+                response = rospy.ServiceProxy(self.anygrasp_view_service, ViewObject)(object_name=object_name)
+                if response.success:
+                    rospy.loginfo(f'AnyGrasp view of {object_name!r}: {response.message}')
+                    return True
+                rospy.logwarn(f'no AnyGrasp view of {object_name!r} ({response.message}), using {self.anygrasp_arm_pose!r}')
+            except (rospy.ROSException, rospy.ServiceException) as exc:
+                rospy.logwarn(f'AnyGrasp view service {self.anygrasp_view_service} unavailable ({exc}), '
+                              f'using {self.anygrasp_arm_pose!r}')
+        return self.move_arm_to_posture(self.anygrasp_arm_pose)
 
     def move_arm_to_posture(self, arm_posture_name):
         '''

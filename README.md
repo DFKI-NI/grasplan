@@ -23,6 +23,10 @@ The fallback is configured by these private parameters on `pick_object_node`:
 - `anygrasp_handles_execution` (default `false`): when `false`, AnyGrasp only generates candidates and Grasplan executes them through MoveIt; set it to `true` to retain AnyGrasp-owned execution
 - `anygrasp_server_timeout` (default `2.0` seconds)
 - `anygrasp_result_timeout` (default `300.0` seconds; `0` waits indefinitely)
+- `anygrasp_arm_pose` (default `anygrasp`): SRDF arm pose from which AnyGrasp sees the object
+- `anygrasp_view_service` (default `/mobipick/grasp_view`): a `grasplan/ViewObject` service that moves the
+  camera to a view of the object suited to AnyGrasp (e.g. the whole object within the depth range); when it is
+  unavailable or fails, the arm goes to `anygrasp_arm_pose`; empty disables it
 - `anygrasp_use_gripper_width` (default `false`): when disabled, unknown
   objects use the fully closed `gripper_close` posture. When enabled, each
   AnyGrasp candidate's predicted jaw width is used instead.

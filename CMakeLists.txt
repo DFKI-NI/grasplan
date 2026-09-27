@@ -46,6 +46,7 @@ add_service_files(
   FILES
     VerifyCandidate.srv
     VerifyObject.srv
+    ViewObject.srv
 )
 
 ## Generate added messages and services with any dependencies listed here

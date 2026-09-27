@@ -1,0 +1,7 @@
+# Move the camera to a view of an object that suits grasp generation (e.g. AnyGrasp): the whole object within
+# the depth camera's range. Implemented outside grasplan (e.g. mobipick_active_perception's grasp_view); the pick
+# node calls it before generating grasps for an unknown object when ~anygrasp_view_service names one.
+string object_name
+---
+bool success                  # the camera reached a view of the object
+string message                # human readable: the view reached or why none was
