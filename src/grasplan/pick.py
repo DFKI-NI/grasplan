@@ -52,7 +52,7 @@ from moveit_msgs.msg import (
     PlanningScene,
     PlanningSceneComponents,
 )
-from moveit_msgs.srv import GetPlanningScene, GetPlanningSceneRequest
+from moveit_msgs.srv import GetPlanningScene, GetPlanningSceneRequest, GetPositionIK, GetPositionIKRequest
 from grasplan.msg import (
     GenerateGraspsAction,
     GenerateGraspsGoal,
@@ -96,6 +96,10 @@ class PickTools:
         # planned, not the best scored one; external (AnyGrasp) candidates arrive best first, so they
         # are offered in batches of this size to keep the score order (0 = all at once)
         self.external_grasp_batch_size = int(rospy.get_param('~external_grasp_batch_size', 3))
+        # external (AnyGrasp) grasps: drop those whose grasp pose has no IK solution before planning (a standing
+        # Pringles can: 50 grasps, 32 infeasible, ~2 min of MTC), then offer at most the best N (0 = all)
+        self.external_grasp_ik_prefilter = rospy.get_param('~external_grasp_ik_prefilter', True)
+        self.external_grasp_max_attempts = int(rospy.get_param('~external_grasp_max_attempts', 12))
         self.clear_planning_scene = rospy.get_param('~clear_planning_scene', True)
         self.clear_octomap_flag = rospy.get_param('~clear_octomap', False)
         # MoveIt's pick pipeline lets the gripper touch the target object and the support
@@ -941,6 +945,7 @@ class PickTools:
                 grasps = self.raise_low_grasps(
                     grasps, support_surface_name, [candidate.width for candidate in external_grasp_candidates]
                 )
+                grasps = self.reachable_external_grasps(grasps)
             if not grasps:
                 rospy.logwarn(f'no open-set grasp of {object_to_pick.get_object_class_and_id_as_string()} keeps the '
                               f'fingertips clear of {support_surface_name}')
@@ -968,6 +973,7 @@ class PickTools:
         # try to pick object with moveit
         # result = self._pick_with_moveit_commander(object_to_pick, grasps, support_surface_name)
         batch = self.external_grasp_batch_size if external_grasp_candidates is not None else 0
+        planning_started = time.time()
         if batch > 0 and len(grasps) > batch:
             result = None
             for start in range(0, len(grasps), batch):
@@ -976,7 +982,10 @@ class PickTools:
                     f'trying grasps {start + 1}-{start + len(chunk)} of {len(grasps)} (best first, qualities '
                     f'{", ".join(f"{g.grasp_quality:.3f}" for g in chunk)})'
                 )
+                chunk_started = time.time()
                 result = self._pick_with_action(object_to_pick, chunk, support_surface_name)
+                rospy.loginfo(f'grasps {start + 1}-{start + len(chunk)}: result {result} after '
+                              f'{time.time() - chunk_started:.1f} s ({time.time() - planning_started:.1f} s in total)')
                 if result == MoveItErrorCodes.SUCCESS or result is None:
                     break
                 if self.mtc is not None and self.mtc.executed:
@@ -1245,6 +1254,42 @@ class PickTools:
                 f'{self.moveit_action_server_timeout} s'
             )
         return result
+
+    def reachable_external_grasps(self, grasps):
+        '''
+        External grasps whose grasp pose has an IK solution (compute_ik, seeded with the current state, no collision
+        check: the fingers touch the object box there, which MTC allows), best first, at most
+        external_grasp_max_attempts of them. Unfiltered when compute_ik is unavailable.
+        '''
+        started = time.time()
+        offered = len(grasps)
+        if self.external_grasp_ik_prefilter and grasps:
+            ik = rospy.ServiceProxy('compute_ik', GetPositionIK, persistent=True)
+            try:
+                ik.wait_for_service(2.0)
+                state = self.robot.get_current_state()
+                reachable = []
+                for grasp in grasps:
+                    request = GetPositionIKRequest()
+                    request.ik_request.group_name = self.arm_group_name
+                    request.ik_request.robot_state = state
+                    request.ik_request.avoid_collisions = False
+                    request.ik_request.ik_link_name = self.robot.arm.get_end_effector_link()
+                    request.ik_request.pose_stamped = grasp.grasp_pose
+                    request.ik_request.timeout = rospy.Duration(0.1)
+                    if ik(request).error_code.val == MoveItErrorCodes.SUCCESS:
+                        reachable.append(grasp)
+                rospy.loginfo(f'IK pre-filter: {len(reachable)} of {offered} grasps reachable '
+                              f'({time.time() - started:.1f} s)')
+                grasps = reachable
+            except (rospy.ROSException, rospy.ServiceException) as e:
+                rospy.logwarn(f'IK pre-filter skipped, compute_ik unavailable: {e}')
+            finally:
+                ik.close()
+        if 0 < self.external_grasp_max_attempts < len(grasps):
+            rospy.loginfo(f'offering the best {self.external_grasp_max_attempts} of {len(grasps)} grasps')
+            grasps = grasps[: self.external_grasp_max_attempts]
+        return grasps
 
     def _pick_with_mtc(self, object_to_pick, grasps, support_surface_name):
         '''

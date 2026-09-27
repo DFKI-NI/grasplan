@@ -27,6 +27,10 @@ The fallback is configured by these private parameters on `pick_object_node`:
 - `anygrasp_view_service` (default `/mobipick/grasp_view`): a `grasplan/ViewObject` service that moves the
   camera to a view of the object suited to AnyGrasp (e.g. the whole object within the depth range); when it is
   unavailable or fails, the arm goes to `anygrasp_arm_pose`; empty disables it
+- `external_grasp_ik_prefilter` (default `true`): before planning, drop AnyGrasp grasps whose grasp pose has no
+  IK solution (`compute_ik`, 0.1 s each, no collision check); `external_grasp_max_attempts` (default `12`, `0` =
+  all): then offer only the best N to the planner. A standing Pringles can once cost ~2 min of MTC on 50 grasps.
+  The log gives the time of the pre-filter and of every batch.
 - `anygrasp_use_gripper_width` (default `false`): when disabled, unknown
   objects use the fully closed `gripper_close` posture. When enabled, each
   AnyGrasp candidate's predicted jaw width is used instead.
