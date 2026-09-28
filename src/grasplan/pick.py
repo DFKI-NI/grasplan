@@ -66,7 +66,8 @@ from grasplan.tools.common import objectToPick, connect_move_groups, roscpp_init
 from grasplan.tools.action_client_helper import ActionClientHelper
 from grasplan.tools.gripper_envelope import fingertip_envelope, lowest_point_offset
 from grasplan.tools.topdown_grasps import clamp_box_to_support, topdown_grasps
-from grasplan.tools.cable_rank import joint_path, order_by_predicted_stretch
+from grasplan.tools.cable_rank import gate_chunks, joint_path, order_by_predicted_stretch
+from grasplan.grasp_scoring import is_compact_round
 from visualization_msgs.msg import Marker, MarkerArray
 
 ACTION_STATES = {value: name for name, value in vars(GoalStatus).items() if name.isupper() and isinstance(value, int)}
@@ -101,6 +102,7 @@ class PickTools:
         # Pringles can: 50 grasps, 32 infeasible, ~2 min of MTC), then offer at most the best N (0 = all)
         self.external_grasp_ik_prefilter = rospy.get_param('~external_grasp_ik_prefilter', True)
         self.external_grasp_max_attempts = int(rospy.get_param('~external_grasp_max_attempts', 12))
+        self.cable_gate_passing = 0  # leading grasps of the current pick predicted to pass the cable guard (#151)
         self.clear_planning_scene = rospy.get_param('~clear_planning_scene', True)
         self.clear_octomap_flag = rospy.get_param('~clear_octomap', False)
         # MoveIt's pick pipeline lets the gripper touch the target object and the support
@@ -729,14 +731,13 @@ class PickTools:
         defined in srdf
         '''
         rospy.loginfo(f'moving arm to {arm_posture_name}')
-        self.robot.arm.set_named_target(arm_posture_name)
-        # attempt to move it 2 times, (sometimes fails with only 1 time)
-        if self.robot.arm.go():
-            return True
-        else:
-            rospy.logwarn(f'failed to move arm to posture: {arm_posture_name}, will retry one more time in 1 sec')
-            rospy.sleep(1.0)
-            return self.robot.arm.go()
+        # with the MTC cable guard on, the named-pose move is planned and cable-checked before it runs (#121)
+        from grasplan.mtc_pick_place import guarded_named_move
+        guard = None
+        if getattr(self, 'mtc', None) is not None:
+            self.mtc.update_cable_guard()
+            guard = self.mtc.cable_guard
+        return guarded_named_move(self.robot.arm, arm_posture_name, guard)
 
     def open_gripper(self):
         '''Open the gripper through its GripperCommand action server.'''
@@ -908,6 +909,18 @@ class PickTools:
         # this condition is when user only specified object class but no id, then we assign the first available id
         if id is not None:
             object_to_pick.set_id(id)
+        if self.mtc is not None:
+            # a round object may be grasped turned about its approach axis when the cable guard needs it (#121)
+            round_object = bounding_box is not None and is_compact_round(bounding_box)
+            self.mtc.yaw_free_objects = {object_to_pick.get_object_class_and_id_as_string()} if round_object else set()
+            # open-set grasps (segmented, padded box) keep the open fingers outside the object box, so the gripper may
+            # touch the object only from the grasp pose on (#151); closed-set grasps put the fingers inside the full
+            # DOPE box (klt rim, handles) and keep the allowance from the start
+            self.mtc.strict_contact_order = external_grasp_candidates is not None
+            # the IK pin is for this pick's ranked open-set grasps (set by reachable_external_grasps): none left from an
+            # earlier pick, whose grasp ids may repeat
+            self.mtc.grasp_ik_states = {}
+        self.cable_gate_passing = 0
 
         self.obj_pose_pub.publish(object_pose)  # publish object pose for visualization purposes
 
@@ -977,10 +990,16 @@ class PickTools:
         # result = self._pick_with_moveit_commander(object_to_pick, grasps, support_surface_name)
         batch = self.external_grasp_batch_size if external_grasp_candidates is not None else 0
         planning_started = time.time()
-        if batch > 0 and len(grasps) > batch:
+        # cable gate (#151): the grasps predicted to pass the cable guard go first in batches of their own; the rest is
+        # offered only when all of them failed
+        gated = external_grasp_candidates is not None and 0 < self.cable_gate_passing < len(grasps)
+        if (batch > 0 and len(grasps) > batch) or gated:
             result = None
-            for start in range(0, len(grasps), batch):
-                chunk = grasps[start:start + batch]
+            for start, end in gate_chunks(len(grasps), self.cable_gate_passing if gated else 0, batch):
+                chunk = grasps[start:end]
+                if gated and start == self.cable_gate_passing:
+                    rospy.loginfo(f'cable gate: all {start} predicted-pass grasps failed, offering the '
+                                  f'{len(grasps) - start} held back')
                 rospy.loginfo(
                     f'trying grasps {start + 1}-{start + len(chunk)} of {len(grasps)} (best first, qualities '
                     f'{", ".join(f"{g.grasp_quality:.3f}" for g in chunk)})'
@@ -1316,6 +1335,10 @@ class PickTools:
         if 0 < self.external_grasp_max_attempts < len(grasps):
             rospy.loginfo(f'offering the best {self.external_grasp_max_attempts} of {len(grasps)} grasps')
             grasps = grasps[: self.external_grasp_max_attempts]
+        self.cable_gate_passing = min(self.cable_gate_passing, len(grasps))
+        if self.cable_gate_passing:
+            rospy.loginfo(f'cable gate: {self.cable_gate_passing} predicted-pass offered first, '
+                          f'{len(grasps) - self.cable_gate_passing} held back')
         return grasps
 
     def rank_by_predicted_cable_stretch(self, grasps, joint_states, start=None):
@@ -1343,6 +1366,7 @@ class PickTools:
                 rospy.logwarn(f'cable ranking: no prediction for a grasp: {e}')
                 stretches.append(None)
         ordered, passing = order_by_predicted_stretch(grasps, stretches, guard.max_stretch)
+        self.cable_gate_passing = passing   # the cable gate offers these first (#151)
         known = sorted(s for s in stretches if s is not None)
         rospy.loginfo(
             f'cable ranking: {passing} of {len(grasps)} reachable grasps predicted to pass the cable guard '
@@ -1364,11 +1388,8 @@ class PickTools:
         goal.support_surface_name = support_surface_name
         goal.allowed_planning_time = self.planning_time
         rospy.loginfo(f'planning pick of {goal.target_name} with MTC, {len(grasps)} grasps')
-        try:
-            pickup_result = self.mtc.pickup(goal)
-        finally:
-            # consumed: a later pick may reuse the same grasp ids for another object
-            self.mtc.grasp_ik_states = {}
+        # grasp_ik_states stays set for every batch of this pick (pick_object resets it for the next pick)
+        pickup_result = self.mtc.pickup(goal)
         result = pickup_result.error_code.val
         if result == MoveItErrorCodes.SUCCESS:
             executed = pickup_result.grasp

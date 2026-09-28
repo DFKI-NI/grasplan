@@ -101,6 +101,77 @@ def matrix_to_pose(matrix, pose):
     return pose
 
 
+# a round object's grasp may turn by any angle about its approach only this close to straight down (#121)
+TURN_ANY_ANGLE_MAX_TILT_DEG = 20.0
+
+
+def turn_grasp_about_approach(grasp, turn_deg):
+    '''copy of a moveit_msgs/Grasp whose grasp pose (of the gripper_tcp) is turned by turn_deg about its own x axis,
+    the approach axis and, on the Mobipick, the wrist_3 axis (#121)'''
+    turned = copy.deepcopy(grasp)
+    turned.id = f'{grasp.id}_turned{turn_deg:+.0f}'
+    matrix_to_pose(pose_to_matrix(grasp.grasp_pose.pose).dot(tft.rotation_matrix(math.radians(turn_deg), (1, 0, 0))),
+                   turned.grasp_pose.pose)
+    return turned
+
+
+def speed_changes_on():
+    """~mtc_speed_changes (default true, read per goal): false turns off the untested 2026-09-28 pick speed changes
+    (IK pin, plan-one-first; pick.py's cable gate reads it too) for a real-robot run where they misbehave (#151)"""
+    return bool(rospy.get_param('~mtc_speed_changes', True))
+
+
+def solution_joint_state(msg):
+    """joint name -> position at the end of a moveit_task_constructor_msgs/Solution: the full start scene state,
+    updated by the robot state of the last sub trajectory's scene diff (a ComputeIK solution: the IK state)"""
+    js = msg.start_scene.robot_state.joint_state
+    q = dict(zip(js.name, js.position))
+    if msg.sub_trajectory:
+        diff = msg.sub_trajectory[-1].scene_diff.robot_state.joint_state
+        q.update(zip(diff.name, diff.position))
+    return q
+
+
+def pinned_ik_cost(reference, tolerance):
+    '''MTC cost term for the grasp-pose IK stage (#151): an IK solution farther than tolerance (rad, any joint) from
+    reference (joint name -> rad, the IK the cable ranking judged) is marked as failed; the others cost their summed
+    joint distance, so the pinned branch is planned (and cable-checked) first. MTC 0.1.3 calls it with
+    (SubTrajectory, comment): pybind picks that overload for any callable. The state comes from the solution message:
+    sub.end.scene is a C++ PlanningScene without a Python conversion in this MTC build.'''
+    def cost(sub, comment=''):
+        try:
+            positions = solution_joint_state(sub.toMsg())
+        except Exception as e:  # no state on this solution: no pin rather than a broken pick
+            rospy.logwarn_once(f'mtc: grasp IK pin not applicable ({e}); planning without it')
+            return 0.0
+        diffs = [abs(positions[n] - v) for n, v in reference.items() if n in positions]
+        if not diffs:
+            rospy.logwarn_once('mtc: grasp IK pin: no reference joint in the IK solution; planning without it')
+            return 0.0
+        if max(diffs) > tolerance:
+            sub.markAsFailure(f'not the ranked IK branch (max joint offset {math.degrees(max(diffs)):.0f} deg)')
+            return float('inf')
+        return float(sum(diffs))
+    return cost
+
+
+def has_twin(grasps, grasp, turn_deg, max_angle_deg=5.0, max_offset=0.01):
+    '''True when grasps already hold grasp turned by turn_deg about its approach axis (same frame, TCP within
+    max_offset m, orientation within max_angle_deg), e.g. the 180 deg twins the grasp server adds itself'''
+    target = pose_to_matrix(turn_grasp_about_approach(grasp, turn_deg).grasp_pose.pose)
+    frame = grasp.grasp_pose.header.frame_id
+    for other in grasps:
+        if other is grasp or other.grasp_pose.header.frame_id != frame:
+            continue
+        m = pose_to_matrix(other.grasp_pose.pose)
+        if np.linalg.norm(m[:3, 3] - target[:3, 3]) > max_offset:
+            continue
+        cos = (np.trace(m[:3, :3].T.dot(target[:3, :3])) - 1.0) / 2.0
+        if math.degrees(math.acos(max(-1.0, min(1.0, cos)))) <= max_angle_deg:
+            return True
+    return False
+
+
 def transform_to_matrix(transform):
     t, r = transform.transform.translation, transform.transform.rotation
     matrix = tft.quaternion_matrix([r.x, r.y, r.z, r.w])
@@ -155,9 +226,15 @@ class CableGuard:
         )
 
     def update_params(self):
+        self.rope_check = bool(rospy.get_param('~mtc_cable_rope_check', True))
+        self.rope_rate = float(rospy.get_param('~mtc_cable_rope_rate', 10.0))
         self.max_stretch = rospy.get_param('~mtc_cable_max_stretch', DEFAULT_CABLE_MAX_STRETCH)
         self.half_window = math.radians(rospy.get_param('~mtc_cable_wrist_3_half_window_deg', 170.0))
         self.max_points = int(rospy.get_param('~mtc_cable_points_per_trajectory', 40))
+
+    def stop_stretch(self):
+        '''the cable monitor's stop threshold (config decision.stop_stretch, e.g. +0.02)'''
+        return float(self.cfg.decision.stop_stretch)
 
     def path_constraints(self):
         constraints = Constraints()
@@ -173,17 +250,24 @@ class CableGuard:
         )
         return constraints
 
-    def check(self, solution_msg):
-        '''(ok, worst stretch, worst span, worst joint angles in degrees) along all sub trajectories'''
+    def check(self, solution_msg, max_stretch=None, rope_stops=True):
+        '''(ok, worst stretch, worst span, worst joint angles in degrees) along all sub trajectories; max_stretch
+        overrides the planning margin ~mtc_cable_max_stretch (named-pose moves use the monitor's stop threshold);
+        rope_stops False only logs a rope replay stop instead of rejecting the path'''
+        limit = self.max_stretch if max_stretch is None else max_stretch
         worst, worst_span, worst_q = -float('inf'), '', {}
+        self.worst_q_rad = None   # the state turn_for_slack() starts from; never one of an earlier solution
         lo, hi = self.wrist_3_neutral - self.half_window, self.wrist_3_neutral + self.half_window
-        for sub in solution_msg.sub_trajectory:
+        self.worst_where = None   # (sub trajectory index, point index, points) of the worst point, for the logs
+        for sub_index, sub in enumerate(solution_msg.sub_trajectory):
             trajectory = sub.trajectory.joint_trajectory
             points = trajectory.points
             if not points:
                 continue
             step = max(1, len(points) // self.max_points)
-            for point in list(points[::step]) + [points[-1]]:
+            indices = list(range(0, len(points), step)) + [len(points) - 1]
+            for point_index in indices:
+                point = points[point_index]
                 q = dict(zip(trajectory.joint_names, point.positions))
                 w3 = q.get(self.wrist_3_joint)
                 if w3 is not None and not lo - 1e-3 <= w3 <= hi + 1e-3:
@@ -192,7 +276,180 @@ class CableGuard:
                 if state.max_stretch > worst:
                     worst, worst_span = state.max_stretch, state.worst_span
                     worst_q = {k.split('/')[-1]: round(math.degrees(v), 1) for k, v in q.items()}
-        return worst < self.max_stretch, worst, worst_span, worst_q
+                    self.worst_q_rad = dict(q)   # for turn_for_slack()
+                    self.worst_where = (sub_index, point_index, len(points))
+        if worst < limit and getattr(self, 'rope_check', False):
+            verdict = self.rope_verdict(solution_msg)
+            if verdict is not None and verdict.stop and not rope_stops:
+                rospy.logwarn(f'mtc cable guard: the rope replay would stop this path ({verdict.span}, '
+                              f'{verdict.limiting}, {verdict.max_stretch:+.3f}), not rejected: rope check is log only')
+            elif verdict is not None and verdict.stop:
+                # the sim monitor would stop this path: its rope catches on the tool, which the geometry cannot see
+                self.worst_q_rad = dict(verdict.q)   # a turn must fix the rope's worst point, not the geometry's
+                return False, verdict.max_stretch, f'{verdict.span} ({verdict.limiting}, rope replay)', {
+                    k.split('/')[-1]: round(math.degrees(v), 1) for k, v in verdict.q.items()}
+        return worst < limit, worst, worst_span, worst_q
+
+    def rope_verdict(self, solution_msg):
+        '''the cable monitor's decision (rope with history, same model and thresholds) along the whole joint path of
+        the solution, from a freshly settled rope at its start (mobipick_sim_cable_entanglement.path_check, #121)'''
+        from mobipick_sim_cable_entanglement.cable_model import CableModel
+        from mobipick_sim_cable_entanglement.path_check import rope_replay
+        if getattr(self, 'rope_model', None) is None:
+            cfg = copy.deepcopy(self.cfg)
+            cfg.rope.enabled = True
+            self.rope_model = CableModel(rospy.get_param('robot_description'), cfg)
+        samples, offset = [], 0.0
+        for sub in solution_msg.sub_trajectory:
+            trajectory = sub.trajectory.joint_trajectory
+            if not trajectory.points:
+                continue
+            for point in trajectory.points:
+                samples.append((offset + point.time_from_start.to_sec(), dict(zip(trajectory.joint_names, point.positions))))
+            offset = samples[-1][0] + 1e-3
+        start = time.monotonic()
+        verdict = rope_replay(self.rope_model, samples, self.rope_rate)
+        if verdict is not None:
+            rospy.loginfo(f'mtc cable guard: rope replay of {verdict.updates} ticks in {time.monotonic() - start:.1f} s: '
+                          f'max stretch {verdict.max_stretch:+.3f} ({verdict.limiting}), stop {verdict.stop}')
+        return verdict
+
+    def turn_for_slack(self, q, round_object):
+        '''(turn in degrees, predicted stretch) about the grasp approach axis (= the wrist_3 axis) that gives the most
+        slack at the rejected joint state q (radians): any angle within +-60 deg or the 180 deg flip for a round
+        object, only the flip otherwise; None when no turn is predicted to pass (#121)'''
+        from mobipick_sim_cable_entanglement.slack import FLIP_ONLY, ROUND_TURNS, best_wrist_3_turn
+        return best_wrist_3_turn(
+            self.model, q, self.max_stretch,
+            (self.wrist_3_neutral - self.half_window, self.wrist_3_neutral + self.half_window),
+            ROUND_TURNS if round_object else FLIP_ONLY,
+        )
+
+
+def named_move_guard_mode():
+    '''~mtc_cable_guard_named_moves: enforce (refuse, replan, go via transport), log (move as without the guard, only
+    log what it would do) or off; default enforce in the sim (/use_sim_time) and log on the real robot (Oscar
+    2026-09-28: the real named moves only log for now). Booleans of the old param: true enforce, false off.'''
+    mode = rospy.get_param('~mtc_cable_guard_named_moves', None)
+    if mode is None:
+        return 'enforce' if rospy.get_param('/use_sim_time', False) else 'log'
+    if isinstance(mode, bool):
+        return 'enforce' if mode else 'off'
+    mode = str(mode).strip().lower()
+    if mode not in ('enforce', 'log', 'off'):
+        rospy.logwarn_once(f'~mtc_cable_guard_named_moves {mode!r} unknown (enforce, log, off): logging only')
+        return 'log'
+    return mode
+
+
+def _plain_named_move(arm, name):
+    '''the old named move: go, one retry after 1 s'''
+    if arm.go():
+        return True
+    rospy.logwarn(f'failed to move arm to posture: {name}, will retry one more time in 1 sec')
+    rospy.sleep(1.0)
+    return bool(arm.go())
+
+
+def _logged_named_move(arm, name, guard):
+    '''plan the named move without the wrist_3 constraint like arm.go() does, log what the guard (stop_stretch and
+    rope replay) would say, and execute that same plan whatever it says; no plan: the old go with its retry'''
+    planned = arm.plan()
+    success, trajectory = (planned[0], planned[1]) if isinstance(planned, tuple) else (True, planned)
+    if not success or not trajectory.joint_trajectory.points:
+        return _plain_named_move(arm, name)
+    try:
+        guard.update_params()
+        ok, stretch, span, q = guard.check(_SolutionView([trajectory]), max_stretch=guard.stop_stretch(),
+                                           rope_stops=True)
+        if ok:
+            rospy.loginfo(f'moving arm to {name} (cable check passed: stretch {stretch:+.3f}, log only)')
+        else:
+            rospy.logwarn(f'moving arm to {name} although the cable guard would refuse it (log only): stretch '
+                          f'{stretch:+.3f} in the {span} span at {q}')
+    except Exception as e:   # the log must never keep the arm from moving
+        rospy.logwarn(f'moving arm to {name}: cable check failed ({e}), log only')
+    return bool(arm.execute(trajectory, wait=True))
+
+
+def guarded_named_move(arm, name, guard, attempts=2, via=None):
+    '''
+    Move a MoveGroupCommander arm to the SRDF pose name like arm.go(), but plan first and let the MTC cable guard
+    (geometry and the monitor's rope replay, #121) check the joint path before anything moves: the 2026-09-28 sim
+    stop at 02:03 came from such an unguarded move (to the anygrasp pose). The check uses the monitor's own stop
+    criterion (decision.stop_stretch, rope stop), not the MTC planning margin ~mtc_cable_max_stretch, which refused the
+    standard anygrasp view (-0.09) after a place (night19). A rejected plan is replanned (the planner is randomized) up
+    to attempts times, then the move goes via ~mtc_cable_named_move_via (default [transport]); if that fails too,
+    nothing more moves and False is returned with the reason logged. guard None: the old behaviour (go, one retry).
+    A rope replay stop only logs unless ~mtc_cable_named_move_rope_stops is true: it refused a re-pick the unguarded
+    code does fine (suite 2026-09-28, #121). ~mtc_cable_guard_named_moves (see named_move_guard_mode) can make the
+    whole guard log only: the arm then moves as without it and the checks are only logged.
+    '''
+    arm.set_named_target(name)
+    mode = named_move_guard_mode() if guard is not None else 'off'
+    if mode == 'log':
+        return _logged_named_move(arm, name, guard)
+    if mode == 'off':
+        return _plain_named_move(arm, name)
+    guard.update_params()
+    rope_stops = bool(rospy.get_param('~mtc_cable_named_move_rope_stops', False))
+    w3 = _current_joint(guard.wrist_3_joint)
+    lo, hi = guard.wrist_3_neutral - guard.half_window, guard.wrist_3_neutral + guard.half_window
+    if w3 is not None and lo <= w3 <= hi:
+        arm.set_path_constraints(guard.path_constraints())
+    else:
+        # a start outside the window (manual jog, after a protective stop) would make every plan fail: plan without
+        # the constraint so recovery moves (home, transport) stay possible; the cable check below still runs
+        rospy.logwarn(f'arm move to {name}: wrist_3 {"unknown" if w3 is None else f"{math.degrees(w3):.0f} deg"} '
+                      f'outside the cable window, planning without the wrist_3 constraint')
+    try:
+        reason = 'no plan'
+        for attempt in range(1, attempts + 1):
+            planned = arm.plan()
+            success, trajectory = (planned[0], planned[1]) if isinstance(planned, tuple) else (True, planned)
+            if not success or not trajectory.joint_trajectory.points:
+                reason = 'no plan'
+                continue
+            # the monitor's own stop criterion (stop_stretch, rope stop), not the MTC planning margin: the standard
+            # poses (anygrasp view at about -0.09) would otherwise be refused after a place (night19)
+            ok, stretch, span, q = guard.check(_SolutionView([trajectory]), max_stretch=guard.stop_stretch(),
+                                                rope_stops=rope_stops)
+            if ok:
+                rospy.loginfo(f'moving arm to {name} (cable check passed: stretch {stretch:+.3f}, attempt {attempt})')
+                return bool(arm.execute(trajectory, wait=True))
+            reason = f'cable guard: stretch {stretch:+.3f} in the {span} span at {q}'
+            rospy.logwarn(f'arm move to {name}: plan {attempt}/{attempts} rejected by the {reason}')
+    finally:
+        arm.clear_path_constraints()
+    # still refused: go via an intermediate pose (~mtc_cable_named_move_via, e.g. transport) and try once more
+    via = rospy.get_param('~mtc_cable_named_move_via', ['transport']) if via is None else via
+    for pose in [p for p in via if p != name]:
+        rospy.logwarn(f'arm move to {name} refused ({reason}); trying via {pose}')
+        if guarded_named_move(arm, pose, guard, attempts, via=[]) and guarded_named_move(arm, name, guard, attempts, via=[]):
+            return True
+    rospy.logerr(f'not moving the arm to {name}: {reason}')
+    return False
+
+
+def _current_joint(joint, timeout=2.0):
+    '''position (rad) of joint from one fresh joint_states message of this node's namespace, None if none came'''
+    from sensor_msgs.msg import JointState
+    try:
+        msg = rospy.wait_for_message('joint_states', JointState, timeout=timeout)
+    except rospy.ROSException:
+        return None
+    return dict(zip(msg.name, msg.position)).get(joint)
+
+
+class _SolutionView:
+    '''a moveit_msgs/RobotTrajectory list shaped like an MTC solution message for CableGuard.check'''
+
+    class _Sub:
+        def __init__(self, trajectory):
+            self.trajectory = trajectory
+
+    def __init__(self, trajectories):
+        self.sub_trajectory = [self._Sub(t) for t in trajectories]
 
 
 class MtcPickPlace:
@@ -281,7 +538,9 @@ class MtcPickPlace:
                 rospy.logwarn(f'mtc: grasp {grasp.id} skipped: {e}')
                 continue
             if not self.plan(task, f'grasp {grasp.id} ({index + 1}/{len(goal.possible_grasps)})'):
-                continue
+                grasp, task, roles = self.turned_grasp_plan(goal, grasp)
+                if grasp is None:
+                    continue
             # the pre grasp posture (open) is not a stage, it is sent before the first arm motion
             self.executed = True
             code = self.execute(task, roles, [grasp.pre_grasp_posture], grasp.grasp_posture,
@@ -334,32 +593,35 @@ class MtcPickPlace:
         if force_straight_up:
             rospy.logwarn('mtc: TEST ~mtc_test_force_straight_up: planning the place locations with a retreat straight up')
         passes = place_retreat_passes(self.relaxed_retreat_min_distance, force_straight_up)
-        for number, (retreat_min_distance, straight_up) in enumerate(passes):
-            if number > 0:
-                if not self.retreat_failed:
-                    break
-                how = 'straight up' if straight_up else 'along the gripper axis'
-                if retreat_min_distance is not None:
-                    how += f' of at least {retreat_min_distance:.2f} m'
-                rospy.logwarn(f'mtc: retrying the place locations with a retreat {how}')
-            self.retreat_failed = False
-            for index, location in enumerate(goal.place_locations):
+        # per location, nearest first (#132): its later retreat variants are tried before the next location, so a
+        # near spot whose axis retreat is blocked is placed with a straight-up retreat instead of the object going to
+        # a far spot that plans at once (sim 2026-09-28 night20: tennis ball 27 cm deep into table 2, re-pick no IK)
+        for index, location in enumerate(goal.place_locations):
+            for number, (retreat_min_distance, straight_up) in enumerate(passes):
                 if self.is_preempt_requested():
                     result.error_code.val = MoveItErrorCodes.PREEMPTED
                     return result
+                if number > 0:
+                    if not self.retreat_failed:
+                        break
+                    how = 'straight up' if straight_up else 'along the gripper axis'
+                    if retreat_min_distance is not None:
+                        how += f' of at least {retreat_min_distance:.2f} m'
+                    rospy.logwarn(f'mtc: retrying place location {location.id} with a retreat {how}')
+                self.retreat_failed = False
                 try:
                     task, roles = self.make_place_task(goal, location, eef_to_object, retreat_min_distance, straight_up)
                 except (tf2_ros.TransformException, ValueError) as e:
                     rospy.logwarn(f'mtc: place location {location.id} skipped: {e}')
-                    continue
+                    break
                 if task is None and force_straight_up:
                     # its own retreat is already vertical: the axis plan is the straight-up plan
                     task, roles = self.make_place_task(goal, location, eef_to_object, retreat_min_distance, False)
                 if task is None:
-                    self.retreat_failed = True  # same plan as the axis retreat, keep going to the next pass
+                    self.retreat_failed = True  # same plan as the axis retreat, keep going to the next variant
                     continue
                 if not self.plan(task, f'place location {location.id} ({index + 1}/{len(goal.place_locations)})'):
-                    self.retreat_failed |= self.only_retreat_failed(task)
+                    self.retreat_failed = self.only_retreat_failed(task)
                     continue
                 self.executed = True
                 code = self.execute(task, roles, [], location.post_place_posture,
@@ -374,18 +636,61 @@ class MtcPickPlace:
         self.failure_reason = f'none of the {len(goal.place_locations)} place locations could be planned'
         return result
 
+    def turned_grasp_plan(self, goal, grasp):
+        '''
+        after the cable guard rejected every plan of grasp: plan it once more turned about its approach axis
+        (gripper_tcp +x, which is the wrist_3 axis, so only wrist_3 changes) by the angle the cable model predicts to
+        give the tube the most slack (#121); the guard checks the new plan as usual. Round objects
+        (~yaw_free_objects, set per goal by pick.py) approached within TURN_ANY_ANGLE_MAX_TILT_DEG of straight down may
+        turn by any angle, everything else only by 180 deg (the fingers are symmetric). Returns (turned grasp, task, roles) when that plan passed, else (None, None, None).
+        '''
+        q = getattr(self, 'guard_rejected_q', None)
+        if self.cable_guard is None or q is None or not rospy.get_param('~mtc_cable_turn_rejected_grasps', True):
+            return None, None, None
+        round_object = goal.target_name in getattr(self, 'yaw_free_objects', ())
+        if round_object:
+            # any angle only for a near top-down approach: turning a tilted grasp moves a fingertip towards the table,
+            # while the 180 deg flip swaps two identical fingers
+            approach = pose_to_matrix(self.to_planning_frame(grasp.grasp_pose).pose)[:3, 0]
+            round_object = -approach[2] >= math.cos(math.radians(TURN_ANY_ANGLE_MAX_TILT_DEG))
+        best = self.cable_guard.turn_for_slack(q, round_object)
+        if best is not None and abs(abs(best[0]) - 180.0) < 1e-6 and has_twin(goal.possible_grasps, grasp, best[0]):
+            rospy.loginfo(f'mtc: grasp {grasp.id}: its 180 deg twin is offered already, not replanning it turned')
+            return None, None, None
+        if best is None:
+            rospy.loginfo(f'mtc: grasp {grasp.id}: no turn about its approach axis is predicted to give the cable slack')
+            return None, None, None
+        turned = turn_grasp_about_approach(grasp, best[0])
+        rospy.loginfo(f'mtc: grasp {grasp.id}: trying it turned {best[0]:+.0f} deg about its approach axis '
+                      f'({"round object" if round_object else "flip only"}; model: stretch {best[1]:+.3f})')
+        try:
+            task, roles = self.make_pick_task(goal, turned)
+        except (tf2_ros.TransformException, ValueError) as e:
+            rospy.logwarn(f'mtc: grasp {turned.id} skipped: {e}')
+            return None, None, None
+        if not self.plan(task, f'grasp {turned.id}'):
+            return None, None, None
+        return turned, task, roles
+
     # ------------------------------------------------------------------ task construction
 
     def make_pick_task(self, goal, grasp):
         obj = goal.target_name
         task, roles = self.start_task(f'pick {obj} {grasp.id}')
         touch = self.gripper_links + [obj]
+        # the gripper may touch the object only from the grasp pose on (MTC pick demo layout, #151): allowed from the
+        # start, the free-space Connect to the pregrasp and the approach could sweep the open gripper through the
+        # object (night10: a side grasp knocked the Pringles can off the table). ~mtc_allow_gripper_contacts_early
+        # restores the old layout if the stricter check rejects too many grasps (e.g. padded object boxes).
+        early = bool(rospy.get_param('~mtc_allow_gripper_contacts_early', False)) or not getattr(
+            self, 'strict_contact_order', False)   # set per pick by pick.py: open-set grasps only
 
-        allow = stages.ModifyPlanningScene('allow gripper contacts')
-        allow.allowCollisions(obj, self.gripper_links, True)
+        before = stages.ModifyPlanningScene('allow octomap contact')
         if self.allow_octomap_contact:
-            allow.allowCollisions(OCTOMAP_COLLISION_NAME, touch, True)
-        task.add(allow)
+            before.allowCollisions(OCTOMAP_COLLISION_NAME, touch, True)
+        if early:
+            before.allowCollisions(obj, self.gripper_links, True)
+        task.add(before)
         roles.append(NOOP)
 
         task.add(self.connect('move to pregrasp'))
@@ -394,7 +699,18 @@ class MtcPickPlace:
         grasp_stages = core.SerialContainer('grasp')
         grasp_stages.add(self.move_relative('approach', grasp.pre_grasp_approach))
         roles.append(ARM)
-        grasp_stages.add(self.compute_ik('grasp pose', self.to_planning_frame(grasp.grasp_pose), task['allow gripper contacts']))
+        ik = self.compute_ik('grasp pose', self.to_planning_frame(grasp.grasp_pose), task['allow octomap contact'])
+        ik_state = getattr(self, 'grasp_ik_states', {}).get(grasp.id)
+        if ik_state is not None and speed_changes_on() and rospy.get_param('~mtc_pin_grasp_ik', True):
+            # the IK solution pick.py's cable ranking judged (#151): MTC's own IK branch differed and failed the guard
+            reference = {n: p for n, p in zip(ik_state.name, ik_state.position) if 'ur5_' in n}
+            tolerance = math.radians(rospy.get_param('~mtc_pin_grasp_ik_tolerance_deg', 20.0))
+            ik.setCostTerm(pinned_ik_cost(reference, tolerance))
+        grasp_stages.add(ik)
+        roles.append(NOOP)
+        allow = stages.ModifyPlanningScene('allow gripper contacts')
+        allow.allowCollisions(obj, self.gripper_links, True)
+        grasp_stages.add(allow)
         roles.append(NOOP)
         grasp_stages.add(stages.ModifyPlanningScene('close gripper'))
         roles.append(GRIPPER)
@@ -580,36 +896,56 @@ class MtcPickPlace:
 
     def plan(self, task, what):
         '''plan task; sets self.chosen_solution (the cheapest solution, or with the cable guard the cheapest one
-        whose joint path passes the cable check)'''
+        whose joint path passes the cable check). With the guard, one solution is planned first and more
+        (~mtc_cable_solutions) only when the guard rejects it: asked for 4 at once, MTC searched until its stage timeouts
+        for solutions that mostly do not exist (~9 s per grasp, also for plans that pass; suite 2026-09-28)'''
         start = time.monotonic()
         self.chosen_solution = None
-        try:
-            task.init()
-            planned = bool(task.plan(self.cable_solutions if self.cable_guard else 1)) and len(task.solutions) > 0
-        except Exception as e:  # MTC raises InitStageError for inconsistent stage setups
-            rospy.logwarn(f'mtc: {what}: {e}')
-            return False
-        elapsed = time.monotonic() - start
-        if not planned:
-            rospy.loginfo(f'mtc: {what} not feasible ({elapsed:.1f} s): {self.describe_failures(task)}')
-            return False
-        if self.cable_guard is None:
-            self.chosen_solution = task.solutions[0]
+        self.guard_rejected_q = None   # joint state (radians) of the least bad solution when the guard rejects all
+        if self.cable_guard is None or self.cable_solutions <= 1:
+            counts = [1]
+        elif speed_changes_on():
+            counts = [1, self.cable_solutions]
         else:
+            counts = [self.cable_solutions]   # the old search for all solutions at once
+        least_bad = float('inf')
+        for attempt, count in enumerate(counts):
+            try:
+                task.init()
+                planned = bool(task.plan(count)) and len(task.solutions) > 0
+            except Exception as e:  # MTC raises InitStageError for inconsistent stage setups
+                rospy.logwarn(f'mtc: {what}: {e}')
+                return False
+            elapsed = time.monotonic() - start
+            if not planned:
+                rospy.loginfo(f'mtc: {what} not feasible ({elapsed:.1f} s): {self.describe_failures(task)}')
+                return False
+            if self.cable_guard is None:
+                self.chosen_solution = task.solutions[0]
+                break
             checks = []
             for index, solution in enumerate(task.solutions):
                 ok, stretch, span, q = self.cable_guard.check(solution.toMsg())
+                if not ok and span != 'wrist_3 window' and stretch < least_bad:
+                    least_bad, self.guard_rejected_q = stretch, self.cable_guard.worst_q_rad
                 checks.append(f'{index}: cost {solution.cost:.1f} stretch {stretch:+.3f} ({span})')
                 if ok:
                     self.chosen_solution = solution
                     break
-                rospy.loginfo(f'mtc: {what} solution {index} rejected by the cable guard: stretch {stretch:+.3f} '
+                where = self.where_in_task(task, self.cable_guard)
+                rospy.loginfo(f'mtc: {what} solution {index} rejected by the cable guard{where}: stretch {stretch:+.3f} '
                               f'> {self.cable_guard.max_stretch:+.3f} in the {span} span at {q}')
-            if self.chosen_solution is None:
-                rospy.loginfo(f'mtc: {what}: all {len(task.solutions)} solutions entangle the arm cable '
-                              f'({"; ".join(checks)})')
-                return False
-            rospy.loginfo(f'mtc: {what} cable check passed ({checks[-1]})')
+            if self.chosen_solution is not None:
+                self.guard_rejected_q = None
+                rospy.loginfo(f'mtc: {what} cable check passed ({checks[-1]})')
+                break
+            if attempt + 1 < len(counts):
+                rospy.loginfo(f'mtc: {what}: planned {len(task.solutions)} in {elapsed:.1f} s, rejected by the cable '
+                              f'guard; planning up to {counts[attempt + 1]} solutions')
+                continue
+            rospy.loginfo(f'mtc: {what}: all {len(task.solutions)} solutions entangle the arm cable '
+                          f'({"; ".join(checks)})')
+            return False
         elapsed = time.monotonic() - start
         rospy.loginfo(f'mtc: {what} planned in {elapsed:.1f} s (cost {self.chosen_solution.cost:.2f})')
         task.publish(self.chosen_solution)
@@ -623,6 +959,44 @@ class MtcPickPlace:
             return (len(place_stages['detach object'].solutions) > 0 and len(list(place_stages['retreat'].failures)) > 0)
         except Exception:
             return False
+
+    @staticmethod
+    def leaf_stage_names(task):
+        '''names of the leaf stages in solution order (one sub trajectory each), e.g. grasp/approach'''
+        names = []
+
+        def visit(stage, prefix):
+            index = 0
+            while True:
+                try:
+                    child = stage[index]
+                except Exception:  # past the last child, or not a container
+                    break
+                index += 1
+                visit(child, prefix + child.name + '/')
+            if index == 0:
+                names.append(prefix[:-1])
+
+        index = 0
+        while True:
+            try:
+                stage = task[index]
+            except Exception:
+                break
+            index += 1
+            visit(stage, stage.name + '/')
+        return names
+
+    @classmethod
+    def where_in_task(cls, task, guard):
+        '''" at stage <name> point i/n" for the guard's worst point (the geometric one), '' when unknown'''
+        where = getattr(guard, 'worst_where', None)
+        if where is None:
+            return ''
+        names = cls.leaf_stage_names(task)
+        sub_index, point_index, points = where
+        name = names[sub_index] if sub_index < len(names) else f'sub trajectory {sub_index}'
+        return f' (worst point in {name}, point {point_index + 1}/{points})'
 
     @staticmethod
     def describe_failures(task):

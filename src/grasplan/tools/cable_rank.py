@@ -29,3 +29,17 @@ def joint_path(start, goal, samples=10):
         path.append({name: (start[name] + (value - start[name]) * a) if name in start else value
                      for name, value in goal.items()})
     return path
+
+
+def gate_chunks(total, passing, batch):
+    '''
+    (start, end) index ranges to offer a ranked grasp list in (#151 cable gate): the first passing grasps (predicted to
+    pass the cable guard) in batches of batch, then the held-back rest in batches of batch, so no batch mixes the two
+    groups and the rest is planned only when every predicted-pass grasp failed. batch <= 0: one range per group.
+    '''
+    passing = max(0, min(passing, total))
+    chunks = []
+    for first, last in ((0, passing), (passing, total)):
+        step = batch if batch > 0 else max(last - first, 1)
+        chunks += [(start, min(start + step, last)) for start in range(first, last, step)]
+    return chunks

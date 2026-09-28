@@ -166,6 +166,13 @@ def apply_cylinder_side_bonus(candidates, grasp_axes, centre, axis, length, scor
         candidate.scores = make_candidate_scores(candidate.quality, nn=raw, side_bonus=multiplier)
 
 
+def is_compact_round(size):
+    '''True for a roughly round object box (all sides within ROUND_MAX_RATIO of each other: a ball, an apple, an
+    orange): a two-finger grasp of it holds the same when turned about its approach axis (#121).'''
+    dims = [float(v) for v in size]
+    return min(dims) > 0.0 and max(dims) <= ROUND_MAX_RATIO * min(dims)
+
+
 def side_grasp_axis(size, rotation=None, up=(0.0, 0.0, 1.0)):
     '''
     (axis, length) along which side grasps should close across, or None for top-down ranking (Oscar, 2026-09-28):

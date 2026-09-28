@@ -281,12 +281,13 @@ class PlaceTools:
         defined in srdf
         '''
         rospy.loginfo(f'moving arm to {arm_posture_name}')
-        self.robot.arm.set_named_target(arm_posture_name)
-        # attempt to move it 2 times, (sometimes fails with only 1 time)
-        if not self.robot.arm.go():
-            rospy.logwarn(f'failed to move arm to posture: {arm_posture_name}, will retry one more time in 1 sec')
-            rospy.sleep(1.0)
-            self.robot.arm.go()
+        # with the MTC cable guard on, the named-pose move is planned and cable-checked before it runs (#121)
+        from grasplan.mtc_pick_place import guarded_named_move
+        guard = None
+        if getattr(self, 'mtc', None) is not None:
+            self.mtc.update_cable_guard()
+            guard = self.mtc.cable_guard
+        return guarded_named_move(self.robot.arm, arm_posture_name, guard)
 
     def place_obj_action_callback(self, goal):
         success = False
@@ -352,7 +353,7 @@ class PlaceTools:
             rospy.logwarn(f'place poses stay in random order, no transform to {reach_frame}: {error}')
             return
         ordered, dropped = order_by_reach(
-            place_poses.objects, (base.x, base.y), rospy.get_param('~place_max_reach', 0.0)
+            place_poses.objects, (base.x, base.y), rospy.get_param('~place_max_reach', 0.8)
         )
         place_poses.objects = ordered
         nearest = math.hypot(ordered[0].pose.position.x - base.x, ordered[0].pose.position.y - base.y)
