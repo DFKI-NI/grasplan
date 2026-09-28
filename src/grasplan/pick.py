@@ -384,6 +384,8 @@ class PickTools:
             type(self.grasp_planner).__name__,
             action_name,
         )
+        if rospy.get_param('~open_set_topdown_test_only', False):  # testing #148: skip AnyGrasp, read on every pick
+            return self.pick_topdown_without_anygrasp(goal, 'AnyGrasp skipped (~open_set_topdown_test_only)')
         if not self.anygrasp_generate_action_client.wait_for_server(rospy.Duration(self.anygrasp_server_timeout)):
             message = f'AnyGrasp generate action server {action_name} is unavailable'
             rospy.logerr(message)
