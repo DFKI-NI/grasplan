@@ -66,6 +66,7 @@ from grasplan.tools.common import objectToPick, connect_move_groups, roscpp_init
 from grasplan.tools.action_client_helper import ActionClientHelper
 from grasplan.tools.gripper_envelope import fingertip_envelope, lowest_point_offset
 from grasplan.tools.topdown_grasps import clamp_box_to_support, topdown_grasps
+from grasplan.tools.cable_rank import joint_path, order_by_predicted_stretch
 from visualization_msgs.msg import Marker, MarkerArray
 
 ACTION_STATES = {value: name for name, value in vars(GoalStatus).items() if name.isupper() and isinstance(value, int)}
@@ -1261,29 +1262,53 @@ class PickTools:
         '''
         External grasps whose grasp pose has an IK solution (compute_ik, seeded with the current state, no collision
         check: the fingers touch the object box there, which MTC allows), best first, at most
-        external_grasp_max_attempts of them. Unfiltered when compute_ik is unavailable.
+        external_grasp_max_attempts of them. Unfiltered when compute_ik is unavailable. With the MTC cable guard on,
+        the grasps whose IK solution the guard's cable model predicts to pass come first (#151, ranking only). The IK
+        solutions of the offered grasps are handed to MTC (mtc.grasp_ik_states), which plans each grasp to exactly
+        that joint state instead of solving IK again, so the ranked branch is the one planned.
         '''
         started = time.time()
         offered = len(grasps)
+        if self.mtc is not None:
+            self.mtc.grasp_ik_states = {}
         if self.external_grasp_ik_prefilter and grasps:
             ik = rospy.ServiceProxy('compute_ik', GetPositionIK, persistent=True)
             try:
                 ik.wait_for_service(2.0)
                 state = self.robot.get_current_state()
-                reachable = []
+                reachable, solutions, colliding = [], [], []
+                # with the strict contact order (#151) MTC's grasp IK rejects solutions that collide with the object,
+                # so the ranked (and pinned) solution must be collision-free too; grasps whose only solution collides
+                # (e.g. with the octomap, which MTC may touch) stay offered, after the others and not pinned
+                strict = bool(getattr(self.mtc, 'strict_contact_order', False)) if self.mtc is not None else False
                 for grasp in grasps:
-                    request = GetPositionIKRequest()
-                    request.ik_request.group_name = self.arm_group_name
-                    request.ik_request.robot_state = state
-                    request.ik_request.avoid_collisions = False
-                    request.ik_request.ik_link_name = self.robot.arm.get_end_effector_link()
-                    request.ik_request.pose_stamped = grasp.grasp_pose
-                    request.ik_request.timeout = rospy.Duration(0.1)
-                    if ik(request).error_code.val == MoveItErrorCodes.SUCCESS:
+                    response = None
+                    for avoid_collisions in ((True, False) if strict else (False,)):
+                        request = GetPositionIKRequest()
+                        request.ik_request.group_name = self.arm_group_name
+                        request.ik_request.robot_state = state
+                        request.ik_request.avoid_collisions = avoid_collisions
+                        request.ik_request.ik_link_name = self.robot.arm.get_end_effector_link()
+                        request.ik_request.pose_stamped = grasp.grasp_pose
+                        request.ik_request.timeout = rospy.Duration(0.1)
+                        response = ik(request)
+                        if response.error_code.val == MoveItErrorCodes.SUCCESS:
+                            break
+                    if response.error_code.val != MoveItErrorCodes.SUCCESS:
+                        continue
+                    if strict and not avoid_collisions:
+                        colliding.append(grasp)
+                    else:
                         reachable.append(grasp)
-                rospy.loginfo(f'IK pre-filter: {len(reachable)} of {offered} grasps reachable '
-                              f'({time.time() - started:.1f} s)')
-                grasps = reachable
+                        solutions.append(response.solution.joint_state)
+                rospy.loginfo(f'IK pre-filter: {len(reachable) + len(colliding)} of {offered} grasps reachable'
+                              + (f', {len(colliding)} of them only with a colliding IK solution' if strict else '')
+                              + f' ({time.time() - started:.1f} s)')
+                grasps = self.rank_by_predicted_cable_stretch(reachable, solutions, state.joint_state) + colliding
+                if self.mtc is not None:
+                    by_id = {grasp.id: solution for grasp, solution in zip(reachable, solutions)}
+                    offered_ids = [g.id for g in grasps[: self.external_grasp_max_attempts or len(grasps)]]
+                    self.mtc.grasp_ik_states = {i: by_id[i] for i in offered_ids if i in by_id}
             except (rospy.ROSException, rospy.ServiceException) as e:
                 rospy.logwarn(f'IK pre-filter skipped, compute_ik unavailable: {e}')
             finally:
@@ -1292,6 +1317,39 @@ class PickTools:
             rospy.loginfo(f'offering the best {self.external_grasp_max_attempts} of {len(grasps)} grasps')
             grasps = grasps[: self.external_grasp_max_attempts]
         return grasps
+
+    def rank_by_predicted_cable_stretch(self, grasps, joint_states, start=None):
+        '''
+        grasps (best first) with their IK joint states -> the grasps the MTC cable guard's model predicts to pass
+        (max stretch <= ~mtc_cable_max_stretch) first, each group in its order (#151). The prediction is the worst
+        stretch along the joint-linear path from start (the current sensor_msgs/JointState) to the IK state, a cheap
+        stand-in for MTC's path, which is planned to that same state (grasp_ik_states). Its trajectory check rejected
+        the side grasps of a standing Pringles can one by one (night09-13): offer the likely ones first. Unchanged
+        when the guard is off or its model is unavailable.
+        '''
+        if self.mtc is None or not grasps:
+            return grasps
+        self.mtc.update_cable_guard()
+        guard = self.mtc.cable_guard
+        if guard is None:
+            return grasps
+        stretches = []
+        start_q = dict(zip(start.name, start.position)) if start is not None else None
+        for joint_state in joint_states:
+            goal_q = dict(zip(joint_state.name, joint_state.position))
+            try:
+                stretches.append(max(guard.model.evaluate(q).max_stretch for q in joint_path(start_q, goal_q)))
+            except Exception as e:  # noqa: BLE001 - no prediction keeps the grasp where it is
+                rospy.logwarn(f'cable ranking: no prediction for a grasp: {e}')
+                stretches.append(None)
+        ordered, passing = order_by_predicted_stretch(grasps, stretches, guard.max_stretch)
+        known = sorted(s for s in stretches if s is not None)
+        rospy.loginfo(
+            f'cable ranking: {passing} of {len(grasps)} reachable grasps predicted to pass the cable guard '
+            f'(<= {guard.max_stretch:+.3f} on the way to the grasp; best {known[0]:+.3f}, worst {known[-1]:+.3f})'
+            if known else f'cable ranking: no prediction for {len(grasps)} grasps'
+        )
+        return ordered
 
     def _pick_with_mtc(self, object_to_pick, grasps, support_surface_name):
         '''
@@ -1306,7 +1364,11 @@ class PickTools:
         goal.support_surface_name = support_surface_name
         goal.allowed_planning_time = self.planning_time
         rospy.loginfo(f'planning pick of {goal.target_name} with MTC, {len(grasps)} grasps')
-        pickup_result = self.mtc.pickup(goal)
+        try:
+            pickup_result = self.mtc.pickup(goal)
+        finally:
+            # consumed: a later pick may reuse the same grasp ids for another object
+            self.mtc.grasp_ik_states = {}
         result = pickup_result.error_code.val
         if result == MoveItErrorCodes.SUCCESS:
             executed = pickup_result.grasp
