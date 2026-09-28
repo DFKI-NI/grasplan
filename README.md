@@ -23,10 +23,13 @@ The fallback is configured by these private parameters on `pick_object_node`:
 - `anygrasp_handles_execution` (default `false`): when `false`, AnyGrasp only generates candidates and Grasplan executes them through MoveIt; set it to `true` to retain AnyGrasp-owned execution
 - `anygrasp_server_timeout` (default `2.0` seconds)
 - `anygrasp_result_timeout` (default `300.0` seconds; `0` waits indefinitely)
-- `anygrasp_arm_pose` (default `anygrasp`): SRDF arm pose from which AnyGrasp sees the object
 - `anygrasp_view_service` (default `/mobipick/grasp_view`): a `grasplan/ViewObject` service that moves the
-  camera to a view of the object suited to AnyGrasp (e.g. the whole object within the depth range); when it is
-  unavailable or fails, the arm goes to `anygrasp_arm_pose`; empty disables it
+  camera to a view of the object suited to AnyGrasp (sampled around its committed pose, the whole object within the
+  depth range); when it is unavailable or fails (e.g. no committed pose: perceive the object first) the pick fails
+- `anygrasp_named_view_fallback` (default `false`): `true` restores the old fallback to `anygrasp_arm_pose`
+  (default `anygrasp`, an SRDF arm pose) when the view service is unavailable or fails
+- `open_set_pick_start_pose` (default `transport`): after the grasp view, open-set picks move the arm to this SRDF
+  pose (guarded named move) and plan the grasp from there instead of from the view; empty plans from the view
 - `external_grasp_ik_prefilter` (default `true`): before planning, drop AnyGrasp grasps whose grasp pose has no
   IK solution (`compute_ik`, 0.1 s each, no collision check); `external_grasp_max_attempts` (default `12`, `0` =
   all): then offer only the best N to the planner. A standing Pringles can once cost ~2 min of MTC on 50 grasps.

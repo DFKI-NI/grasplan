@@ -140,7 +140,8 @@ class PickTools:
         self.anygrasp_result_timeout = rospy.get_param('~anygrasp_result_timeout', 300.0)
         self.anygrasp_arm_pose = rospy.get_param('~anygrasp_arm_pose', 'anygrasp')
         # a grasplan/ViewObject service that moves the camera to a view of the object that suits AnyGrasp (e.g. the
-        # whole object within the depth range); when it is missing or fails the arm goes to anygrasp_arm_pose
+        # whole object within the depth range); when it is missing or fails the pick fails, unless
+        # ~anygrasp_named_view_fallback sends the arm to anygrasp_arm_pose instead (the old behaviour)
         self.anygrasp_view_service = rospy.get_param('~anygrasp_view_service', '/mobipick/grasp_view')
         self.gripper_action_name = rospy.get_param('~gripper_action_name', '/mobipick/gripper_hw')
         self.gripper_action_timeout = rospy.get_param('~gripper_action_timeout', 2.0)
@@ -339,8 +340,8 @@ class PickTools:
             rospy.logerr(message)
             return False, message, False
 
-        if not self.move_to_anygrasp_view(object_name):
-            message = f'failed to move arm to {self.anygrasp_arm_pose!r} before calling AnyGrasp'
+        viewed, message = self.move_to_anygrasp_view(object_name)
+        if not viewed:
             rospy.logerr(message)
             return False, message, False
 
@@ -404,8 +405,8 @@ class PickTools:
             rospy.logerr(message)
             return False, message, False
 
-        if not self.move_to_anygrasp_view(object_name):
-            message = f'failed to move arm to {self.anygrasp_arm_pose!r} before calling AnyGrasp'
+        viewed, message = self.move_to_anygrasp_view(object_name)
+        if not viewed:
             rospy.logerr(message)
             return False, message, False
 
@@ -750,20 +751,33 @@ class PickTools:
 
     def move_to_anygrasp_view(self, object_name):
         '''
-        point the camera at the object for AnyGrasp: the view service when there is one, else anygrasp_arm_pose
+        point the camera at the object for AnyGrasp through the view service (a view sampled around the object's
+        committed pose); returns (success, message). Without a committed pose or the service the pick fails clearly
+        (Oscar 2026-09-28: the sampled view replaced the fixed pose); ~anygrasp_named_view_fallback (default false)
+        restores the old fallback to anygrasp_arm_pose.
         '''
+        fallback = rospy.get_param('~anygrasp_named_view_fallback', False) and self.anygrasp_arm_pose
         if self.anygrasp_view_service:
             try:
                 rospy.wait_for_service(self.anygrasp_view_service, timeout=1.0)
                 response = rospy.ServiceProxy(self.anygrasp_view_service, ViewObject)(object_name=object_name)
                 if response.success:
                     rospy.loginfo(f'AnyGrasp view of {object_name!r}: {response.message}')
-                    return True
-                rospy.logwarn(f'no AnyGrasp view of {object_name!r} ({response.message}), using {self.anygrasp_arm_pose!r}')
+                    return True, response.message
+                if 'no committed pose' in response.message:
+                    reason = f'{object_name} has no committed pose: perceive {object_name} first ({response.message})'
+                else:
+                    reason = f'no grasp view of {object_name}: {response.message}'
             except (rospy.ROSException, rospy.ServiceException) as exc:
-                rospy.logwarn(f'AnyGrasp view service {self.anygrasp_view_service} unavailable ({exc}), '
-                              f'using {self.anygrasp_arm_pose!r}')
-        return self.move_arm_to_posture(self.anygrasp_arm_pose)
+                reason = f'grasp view service {self.anygrasp_view_service} unavailable ({exc})'
+        else:
+            reason = 'no grasp view service configured (~anygrasp_view_service is empty)'
+        if not fallback:
+            return False, reason
+        rospy.logwarn(f'{reason}; using {fallback!r} (~anygrasp_named_view_fallback)')
+        if self.move_arm_to_posture(fallback):
+            return True, f'fixed pose {fallback!r}'
+        return False, f'{reason}; failed to move the arm to {fallback!r}'
 
     def move_arm_to_posture(self, arm_posture_name):
         '''
@@ -970,6 +984,18 @@ class PickTools:
         # move arm to pregrasp in joint space, not really needed, can be removed
         if self.pregrasp_posture_required:
             self.move_arm_to_posture(self.pregrasp_posture)
+        # open-set picks (#151, Oscar 2026-09-28): leave the grasp view for ~open_set_pick_start_pose (transport; empty
+        # = plan from the view as before) with the guarded named move, so MTC plans the grasp from there instead of
+        # swinging the wrist straight from the upside-down view (real T1: wrist_3 272 -> 133 deg at ~85 deg/s into a
+        # protective stop). The IK pre-filter, the cable ranking and the IK pin below read the joints after this move.
+        if external_grasp_candidates is not None:
+            start_pose = rospy.get_param('~open_set_pick_start_pose', 'transport')
+            if start_pose and not self.move_arm_to_posture(start_pose):
+                reason = f'could not move the arm to {start_pose!r} before planning the grasp'
+                rospy.logerr(reason)
+                if self.mtc is not None:
+                    self.mtc.failure_reason = reason
+                return False
 
         # check if user cancelled action
         if self.pick_action_server.is_preempt_requested():
