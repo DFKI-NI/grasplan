@@ -301,9 +301,8 @@ class InsertTools:
         if not override_disentangle_dont_doit:
             # go to intermediate arm poses if needed to disentangle arm cable
             if self.disentangle_required:
-                for arm_pose in self.poses_to_go_before_insert:
-                    rospy.loginfo(f'going to intermediate arm pose {arm_pose} to disentangle cable')
-                    self.place.move_arm_to_posture(arm_pose)
+                # the closed-set untangle detour, or transport for an object picked open-set (PlaceTools.go_before_place)
+                self.place.go_before_place(object_to_be_inserted, self.poses_to_go_before_insert)
 
         action_client = self.place.place_action_client  # same 'place' server, connected once at startup
         rospy.loginfo(f'sending insert command as a place goal to {INSERT_OBJECT_SERVER_NAME} action server')

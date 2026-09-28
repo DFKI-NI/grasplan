@@ -98,6 +98,7 @@ class TestPickStartsFromTransport(unittest.TestCase):
         p.move_ok = True
         p.move_arm_to_posture = lambda name: self.calls.append(('move', name)) or p.move_ok
         p.topdown_fallback_grasps = lambda *a: self.calls.append(('grasps', None)) or []
+        p.open_gripper = lambda: self.calls.append(('open', None)) or True
         # closed-set path
         p.grasp_planner = mock.Mock(make_grasps_msgs=lambda *a: self.calls.append(('closed grasps', None)) or [])
         p.robot = mock.Mock()
@@ -113,12 +114,12 @@ class TestPickStartsFromTransport(unittest.TestCase):
 
     def test_open_set_moves_to_transport_before_the_grasps(self):
         self.assertFalse(self.pick())   # no grasp at all in this stub
-        self.assertEqual(self.calls, [('move', 'transport'), ('grasps', None)])
+        self.assertEqual(self.calls, [('move', 'transport'), ('open', None), ('grasps', None)])
 
     def test_start_pose_switch_off(self):
         self.params['~open_set_pick_start_pose'] = ''
         self.pick()
-        self.assertEqual(self.calls, [('grasps', None)])
+        self.assertEqual(self.calls, [('open', None), ('grasps', None)])
 
     def test_failed_move_stops_the_pick(self):
         self.p.move_ok = False
@@ -131,9 +132,14 @@ class TestPickStartsFromTransport(unittest.TestCase):
         self.pick()
         self.assertIn("could not move the arm to 'transport'", self.p.mtc.failure_reason)
 
+    def test_gripper_open_switch_off(self):
+        self.params['~open_gripper_before_pick'] = False
+        self.pick()
+        self.assertEqual(self.calls, [('move', 'transport'), ('grasps', None)])
+
     def test_closed_set_pick_does_not_move(self):
         self.pick(external=False)
-        self.assertEqual(self.calls, [('closed grasps', None)])
+        self.assertEqual(self.calls, [('open', None), ('closed grasps', None)])
 
 
 if __name__ == '__main__':

@@ -28,6 +28,7 @@ import sys
 import copy
 import importlib
 import math
+import re
 import time
 import traceback
 
@@ -66,16 +67,24 @@ from grasplan.srv import ViewObject
 from grasplan.tools.common import objectToPick, connect_move_groups, roscpp_initialize_named
 from grasplan.tools.action_client_helper import ActionClientHelper
 from grasplan.tools.gripper_envelope import fingertip_envelope, lowest_point_offset
-from grasplan.tools.topdown_grasps import clamp_box_to_support, topdown_grasps
+from grasplan.tools.topdown_grasps import (
+    box_overlap_fraction,
+    clamp_box_to_support,
+    depth_below_support_top,
+    topdown_grasps,
+)
 from grasplan.tools.cable_rank import gate_chunks, joint_path, order_by_predicted_stretch
 from grasplan.grasp_scoring import (
     LOW_OBJECT_MAX_HEIGHT,
     LOW_OBJECT_MAX_TILT_DEG,
+    SIDE_GRASP_SCORE_MULTIPLIER,
     SMALL_OBJECT_MAX_FOOTPRINT,
+    apply_cylinder_side_bonus,
     box_height_and_footprint,
     complete_one_sided_box,
     is_compact_round,
     is_low_object,
+    rank_by_quality,
     tilt_from_vertical_deg,
 )
 from visualization_msgs.msg import Marker, MarkerArray
@@ -448,15 +457,18 @@ class PickTools:
             rospy.logerr(message)
             return self.pick_topdown_without_anygrasp(goal, message)
         anchored_object_name = f'{detection.object.class_id}_{detection.object.instance_id}'
+        hint = self.grasp_type_hint(goal.object_name, detection.object.class_id)
+        candidates = self.side_ranked(detection.grasps, detection.object) if hint == 'side' else detection.grasps
         success = self.pick_object(
             anchored_object_name,
             goal.support_surface_name,
             self.grasp_type,
             goal.ignore_object_list,
-            external_grasp_candidates=detection.grasps,
+            external_grasp_candidates=candidates,
             external_reference_frame=detection.object.header.frame_id,
             external_object=detection.object,
             perceive_object=False,
+            grasp_type_hint=hint,
         )
         message = (
             f'Grasplan picked open-set object {anchored_object_name}'
@@ -534,10 +546,19 @@ class PickTools:
         resp = self.pose_selector_get_all_poses_srv()
         perceived = {f'{o.class_id}_{o.instance_id}' for o in resp.poses.objects} | {external_object_name}
         supports = self.support_boxes(exclude=perceived) if self.clamp_object_boxes_to_support else []
+        target = None   # (pose, size) of the verified open-set target: perceived boxes overlapping it are left out
+        if external_object is not None:
+            target_pose = PoseStamped()
+            target_pose.header.frame_id = external_object.header.frame_id or self.global_reference_frame
+            target_pose.pose = copy.deepcopy(external_object.pose)
+            target_size = [external_object.size.x, external_object.size.y, external_object.size.z]
+            self.complete_one_sided_box(external_object_name, target_pose, target_size)
+            target = (target_pose, target_size)
         if len(resp.poses.objects) > 0:
             for pose_selector_object in resp.poses.objects:
                 # object name
                 object_name = pose_selector_object.class_id + '_' + str(pose_selector_object.instance_id)
+                is_target = False
                 pose_selector_object.instance_id
                 # object pose
                 pose_stamped_msg = PoseStamped()
@@ -553,7 +574,7 @@ class PickTools:
                     object_to_pick_pose = copy.deepcopy(pose_stamped_msg)
                     object_to_pick_bounding_box = copy.deepcopy(object_bounding_box)
                     object_to_pick_id = copy.deepcopy(pose_selector_object.instance_id)
-                    object_found = True
+                    object_found = is_target = True
                     rospy.loginfo(
                         f'found an instance of the object class you want to pick in pose selector: {object_name}'
                     )
@@ -561,7 +582,7 @@ class PickTools:
                     object_to_pick_pose = copy.deepcopy(pose_stamped_msg)
                     object_to_pick_bounding_box = copy.deepcopy(object_bounding_box)
                     object_to_pick_id = copy.deepcopy(pose_selector_object.instance_id)
-                    object_found = True
+                    object_found = is_target = True
                     rospy.loginfo(f'found specific object to be picked in pose selector: {object_name}')
                 # planning scene exceptions
                 if object_name in ignore_object_list:
@@ -570,16 +591,15 @@ class PickTools:
                         self.scene.remove_world_object(object_name)
                 elif object_name == external_object_name:
                     rospy.loginfo(f'{object_name} is added from the external detection, skipping pose selector copy')
+                elif self.overlaps_target(object_name, pose_stamped_msg, object_bounding_box, target, external_object_name):
+                    self.remove_from_scene(object_name)
                 else:
                     rospy.loginfo(f'adding object {object_name} to planning scene')
                     # add all perceived objects to planning scene (one at at time)
-                    self.add_object_box(object_name, pose_stamped_msg, object_bounding_box, supports)
+                    self.add_object_box(object_name, pose_stamped_msg, object_bounding_box, supports,
+                                        keep_implausible=is_target)
         if external_object is not None:
-            object_to_pick_pose = PoseStamped()
-            object_to_pick_pose.header.frame_id = external_object.header.frame_id or self.global_reference_frame
-            object_to_pick_pose.pose = copy.deepcopy(external_object.pose)
-            object_to_pick_bounding_box = [external_object.size.x, external_object.size.y, external_object.size.z]
-            self.complete_one_sided_box(external_object_name, object_to_pick_pose, object_to_pick_bounding_box)
+            object_to_pick_pose, object_to_pick_bounding_box = target
             object_to_pick_id = external_object.instance_id
             object_found = True
             rospy.loginfo(
@@ -587,7 +607,8 @@ class PickTools:
                 f'(frame {object_to_pick_pose.header.frame_id}, '
                 f'size {[round(v, 3) for v in object_to_pick_bounding_box]})'
             )
-            self.add_object_box(external_object_name, object_to_pick_pose, object_to_pick_bounding_box, supports)
+            self.add_object_box(external_object_name, object_to_pick_pose, object_to_pick_bounding_box, supports,
+                                keep_implausible=True)
         if not object_found:
             rospy.logerr(
                 'the specific object you want to pick was not found:'
@@ -660,15 +681,27 @@ class PickTools:
         size[:] = new_size
         p.x, p.y, p.z = x, y, z
 
-    def add_object_box(self, name, pose_stamped, size, supports=None):
+    def add_object_box(self, name, pose_stamped, size, supports=None, keep_implausible=False):
         '''
         add a perceived object box to the planning scene; with ~clamp_object_boxes_to_support its bottom is raised to
         the top of the support box (supports: support_boxes()) it reaches into; only the scene box changes, the pose
-        used for grasping stays as perceived (#148)
+        used for grasping stays as perceived (#148). A box whose bottom is more than ~max_box_sink_into_support (m,
+        default 0.09, 0 = off) inside its support is implausible (real 2026-09-28: a false DOPE bleach_1 11.2 cm deep,
+        raised right onto the tomato soup can; the real klt_1 reached 6.4 cm) and left out, unless keep_implausible
+        (the object being picked). Returns whether the box went into the scene.
         '''
         frame_supports = (supports or {}).get(pose_stamped.header.frame_id, [])
         if frame_supports:
             p, o = pose_stamped.pose.position, pose_stamped.pose.orientation
+            max_sink = rospy.get_param('~max_box_sink_into_support', 0.09)
+            if not keep_implausible and max_sink > 0.0:
+                sink = depth_below_support_top((p.x, p.y, p.z), (o.x, o.y, o.z, o.w), size, frame_supports)
+                if sink > max_sink:
+                    rospy.logwarn(f'{name}: box bottom {sink * 100:.1f} cm inside its support (more than '
+                                  f'{max_sink * 100:.0f} cm): implausible, a false detection? Left out of the planning '
+                                  f'scene')
+                    self.remove_from_scene(name)
+                    return False
             center, clamped, lifted = clamp_box_to_support((p.x, p.y, p.z), (o.x, o.y, o.z, o.w), size, frame_supports)
             if lifted > 0.0:
                 rospy.loginfo(f'{name}: box bottom was {lifted * 100:.1f} cm inside its support, raised to its top')
@@ -676,6 +709,32 @@ class PickTools:
                 pose_stamped.pose.position.z = float(center[2])
                 size = [float(v) for v in clamped]
         self.scene.add_box(name, pose_stamped, size)
+        return True
+
+    def remove_from_scene(self, name):
+        '''remove a world object left from an earlier goal, if the planning scene holds it'''
+        if name in self.scene.get_known_object_names():
+            self.scene.remove_world_object(name)
+
+    def overlaps_target(self, name, pose_stamped, size, target, target_name):
+        '''
+        ~drop_boxes_overlapping_target (default 0.2, 0 = off): a perceived box that shares at least this fraction of
+        the smaller box's volume with the verified open-set target (target: (pose, size) of the object being picked)
+        is a false detection on it and left out of the planning scene (real 2026-09-28: a false DOPE bleach_1 box around
+        the tomato soup can blocked every grasp); neighbours that only touch it stay
+        '''
+        limit = rospy.get_param('~drop_boxes_overlapping_target', 0.2)
+        if limit <= 0.0 or target is None or pose_stamped.header.frame_id != target[0].header.frame_id:
+            return False
+        p, o = pose_stamped.pose.position, pose_stamped.pose.orientation
+        tp, to = target[0].pose.position, target[0].pose.orientation
+        fraction = box_overlap_fraction((p.x, p.y, p.z), (o.x, o.y, o.z, o.w), size,
+                                        (tp.x, tp.y, tp.z), (to.x, to.y, to.z, to.w), target[1])
+        if fraction < limit:
+            return False
+        rospy.logwarn(f'{name}: its box shares {fraction * 100:.0f} % of the smaller volume with the target '
+                      f'{target_name}: a false detection on it? Left out of the planning scene')
+        return True
 
     def clean_scene(self):
         '''
@@ -900,8 +959,11 @@ class PickTools:
         external_reference_frame=None,
         external_object=None,
         perceive_object=None,
+        grasp_type_hint=None,
     ):
         '''
+        grasp_type_hint: open-set only, 'side' | 'top' | None (grasp_type_hint()); 'top' applies the low-object
+        top-grasp rule whatever the box, 'side' never
         1) move arm to a position where the attached camera can see the scene (octomap will be populated)
         2) clear octomap
         3) add table and object to be grasped to planning scene
@@ -996,6 +1058,13 @@ class PickTools:
                 if self.mtc is not None:
                     self.mtc.failure_reason = reason
                 return False
+        # a gripper left closed with nothing in it (real 2026-09-28: a Pringles can lost during a place) has its fingers
+        # inside the target box in every grasp pose the IK pre-filter and MTC check (MTC sends the open posture only at
+        # execution), so every grasp fails as "in collision"; ~open_gripper_before_pick (default true) opens it first
+        if rospy.get_param('~open_gripper_before_pick', True):
+            rospy.loginfo('opening the gripper before planning the pick (nothing is attached)')
+            if not self.open_gripper():
+                rospy.logwarn('could not open the gripper before planning; the grasps may collide with the object')
 
         # check if user cancelled action
         if self.pick_action_server.is_preempt_requested():
@@ -1025,7 +1094,8 @@ class PickTools:
                     self.robot.arm.get_end_effector_link(),
                 )
                 widths = [candidate.width for candidate in external_grasp_candidates]
-                grasps, widths, low = self.top_grasps_for_low_objects(grasps, widths, object_pose, bounding_box)
+                grasps, widths, low = self.top_grasps_for_low_objects(grasps, widths, object_pose, bounding_box,
+                                                                      grasp_type_hint)
                 grasps = self.raise_low_grasps(grasps, support_surface_name, widths, sink=low)
                 grasps = self.reachable_external_grasps(grasps)
             if not grasps:
@@ -1112,8 +1182,9 @@ class PickTools:
                 print_moveit_error(result)  # only print moveit error if result is different than None
         return False
 
-    def top_grasps_for_low_objects(self, grasps, widths, object_pose, bounding_box):
+    def top_grasps_for_low_objects(self, grasps, widths, object_pose, bounding_box, hint=None):
         '''
+        hint (grasp_type_hint()): 'top' treats the object as low whatever its box, 'side' never.
         Oscar (2026-09-28, real strawberry, #151): a very low object is grasped from the top only. Low: its box
         (object_pose orientation, gravity-aligned frame) lower than ~open_set_low_object_max_height, or both horizontal
         sides below ~open_set_small_object_max_footprint (0 = off; a small object without real depth gets a filled-in,
@@ -1122,13 +1193,15 @@ class PickTools:
         top-down grasps when none is left. Returns (grasps, widths, low).
         '''
         max_tilt = rospy.get_param('~open_set_low_object_max_tilt_deg', LOW_OBJECT_MAX_TILT_DEG)
-        if max_tilt <= 0.0 or not grasps or not bounding_box or object_pose is None:
+        if hint == 'top' and max_tilt <= 0.0:
+            max_tilt = LOW_OBJECT_MAX_TILT_DEG   # the hint asks for top grasps even with the size rule off
+        if max_tilt <= 0.0 or not grasps or not bounding_box or object_pose is None or hint == 'side':
             return grasps, widths, False
         o = object_pose.pose.orientation
         rotation = tf.transformations.quaternion_matrix([o.x, o.y, o.z, o.w])[:3, :3].tolist()
         max_height = rospy.get_param('~open_set_low_object_max_height', LOW_OBJECT_MAX_HEIGHT)
         max_footprint = rospy.get_param('~open_set_small_object_max_footprint', SMALL_OBJECT_MAX_FOOTPRINT)
-        if not is_low_object(bounding_box, rotation, max_height, max_footprint):
+        if hint != 'top' and not is_low_object(bounding_box, rotation, max_height, max_footprint):
             return grasps, widths, False
         kept, kept_widths, dropped = [], [], []
         for grasp, width in zip(grasps, widths):
@@ -1141,12 +1214,67 @@ class PickTools:
                 dropped.append(f'{grasp.id} {tilt:.0f}')
         height, footprint = box_height_and_footprint(bounding_box, rotation)
         rospy.loginfo(
-            f'low object ({height * 100:.1f} cm tall, {footprint * 100:.1f} cm wide): top grasps only, {len(kept)} of '
+            f'{"grasp-type hint top" if hint == "top" else "low object"} ({height * 100:.1f} cm tall, '
+            f'{footprint * 100:.1f} cm wide): top grasps only, {len(kept)} of '
             f'{len(grasps)} within {max_tilt:.0f} deg of vertical'
             + (f', dropped (deg off vertical): {", ".join(dropped)}' if dropped else '')
             + ('' if kept else '; the top-down fallback grasps instead')
         )
         return kept, kept_widths, True
+
+    def grasp_type_hint(self, *names):
+        '''
+        the planner's grasp-type hint for an open-set object (Oscar 2026-09-28, LLM hint, written by mobipick_gpt before
+        the pick goal): rosparam <~grasp_type_hints_ns>/<key> (default /mobipick/grasp_type_hints; empty = ignore
+        hints), key = the name lowercased with spaces and dashes as underscores (tomato soup can -> tomato_soup_can);
+        the first of names that has one. Returns 'side', 'top' or None (auto, missing or unknown: geometry decides).
+        '''
+        namespace = rospy.get_param('~grasp_type_hints_ns', '/mobipick/grasp_type_hints')
+        if not namespace:
+            return None
+        for name in names:
+            key = re.sub(r'[\s-]+', '_', str(name).strip().lower())
+            if not key:
+                continue
+            value = str(rospy.get_param(f'{namespace.rstrip("/")}/{key}', '')).strip().lower()
+            if value in ('side', 'top'):
+                rospy.loginfo(f'grasp-type hint for {name!r}: {value} ({namespace.rstrip("/")}/{key})')
+                return value
+            if value and value != 'auto':
+                rospy.logwarn(f'grasp-type hint {value!r} for {name!r} unknown (side, top, auto): geometry decides')
+            elif value == 'auto':
+                rospy.loginfo(f'grasp-type hint for {name!r}: auto, geometry decides')
+                return None
+        return None
+
+    def side_ranked(self, candidates, detected_object):
+        '''
+        grasp-type hint side: the candidates re-ranked with the side-grasp bonus (grasp_scoring, as the AnyGrasp server
+        does for a standing cylinder or a round object): quality = nn x bonus for approaching and closing across the
+        vertical axis near the middle of the object's height, best first; candidates, detected_object (its box) in one
+        frame. Unchanged when the box has no size.
+        '''
+        size = [detected_object.size.x, detected_object.size.y, detected_object.size.z]
+        if not candidates or min(size) <= 0.0:
+            return candidates
+        o = detected_object.pose.orientation
+        rotation = tf.transformations.quaternion_matrix([o.x, o.y, o.z, o.w])[:3, :3].tolist()
+        height, _ = box_height_and_footprint(size, rotation)
+        ranked = copy.deepcopy(list(candidates))
+        grasp_axes = []
+        for candidate in ranked:
+            q = candidate.pose.orientation
+            matrix = tf.transformations.quaternion_matrix([q.x, q.y, q.z, q.w])
+            p = candidate.pose.position
+            grasp_axes.append((tuple(matrix[:3, 0]), tuple(matrix[:3, 1]), (p.x, p.y, p.z)))
+        c = detected_object.pose.position
+        apply_cylinder_side_bonus(ranked, grasp_axes, (c.x, c.y, c.z), (0.0, 0.0, 1.0), height,
+                                  rospy.get_param('~grasp_type_hint_side_multiplier', SIDE_GRASP_SCORE_MULTIPLIER))
+        ranked = rank_by_quality(ranked)
+        rospy.loginfo(f'grasp-type hint side: {len(ranked)} grasps re-ranked by the side-grasp bonus across the vertical '
+                      f'axis of the {height * 100:.1f} cm tall box (qualities '
+                      f'{", ".join(f"{g.quality:.3f}" for g in ranked[:5])} ...)')
+        return ranked
 
     def raise_low_grasps(self, grasps, support_surface_name, widths=None, sink=False):
         '''

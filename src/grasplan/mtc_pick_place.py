@@ -580,7 +580,10 @@ class MtcPickPlace:
             # e.g. it slipped out while the arm swung through the observe or untangle poses
             self.failure_reason = f'{goal.attached_object_name} is no longer in the gripper (gripper_has_object false)'
             rospy.logerr(f'mtc: place failed: {self.failure_reason}')
-            self.release_empty_grasp(goal.attached_object_name, None)
+            # open the empty gripper too: left closed, the next pick finds its fingers inside every target box
+            open_posture = goal.place_locations[0].post_place_posture if goal.place_locations else None
+            self.release_empty_grasp(goal.attached_object_name,
+                                     open_posture if open_posture is not None and open_posture.points else None)
             self.executed = True
             result.error_code.val = MoveItErrorCodes.FAILURE
             return result

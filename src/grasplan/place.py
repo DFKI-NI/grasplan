@@ -275,6 +275,37 @@ class PlaceTools:
                 # add all perceived objects to planning scene (one at at time)
                 self.scene.add_box(object_name, pose_stamped_msg, object_bounding_box)
 
+    def picked_open_set(self, object_name):
+        '''
+        whether object_name was picked open-set, decided like the pick node does: its class is not in the pick node's
+        handcoded grasp catalog (rosparam ~pick_grasp_catalog_param, default
+        /mobipick/pick_object_node/handcoded_grasp_planner_transforms); False when that catalog cannot be read
+        '''
+        name = rospy.get_param('~pick_grasp_catalog_param', '/mobipick/pick_object_node/handcoded_grasp_planner_transforms')
+        catalog = rospy.get_param(name, None) if name else None
+        if not isinstance(catalog, (dict, list)):
+            return False
+        return separate_object_class_from_id(object_name)[0] not in catalog
+
+    def go_before_place(self, object_name, poses):
+        '''
+        the arm poses before placing or inserting object_name: the closed-set untangle detour (poses, e.g.
+        untangle_cable_guide_1/2_right, the battle-tested hack against cable entanglement), or for an object picked
+        open-set only ~open_set_place_start_pose (default transport, empty = none), like the open-set pick (Oscar
+        2026-09-28: the fast detour swings shook a picked Pringles can out of the gripper).
+        ~open_set_skip_untangle_detour false keeps the detour for every object.
+        '''
+        if rospy.get_param('~open_set_skip_untangle_detour', True) and self.picked_open_set(object_name):
+            start = rospy.get_param('~open_set_place_start_pose', 'transport')
+            rospy.loginfo(f'{object_name} was picked open-set: no untangle detour'
+                          + (f', moving arm to {start} instead' if start else ''))
+            if start:
+                self.move_arm_to_posture(start)
+            return
+        for arm_pose in poses:
+            rospy.loginfo(f'Going to intermediate arm pose {arm_pose} to disentangle cable')
+            self.move_arm_to_posture(arm_pose)
+
     def move_arm_to_posture(self, arm_posture_name):
         '''
         use moveit commander to send the arm to a predefined arm configuration
@@ -546,9 +577,7 @@ class PlaceTools:
             if not override_disentangle_dont_doit:
                 # go to intermediate arm poses if needed to disentangle arm cable
                 if self.disentangle_required:
-                    for arm_pose in self.poses_to_go_before_place:
-                        rospy.loginfo(f'Going to intermediate arm pose {arm_pose} to disentangle cable')
-                        self.move_arm_to_posture(arm_pose)
+                    self.go_before_place(object_to_be_placed, self.poses_to_go_before_place)
 
             rospy.loginfo(
                 f'Sending goal with batch of {len(batch_poses.objects)} poses to place, '
