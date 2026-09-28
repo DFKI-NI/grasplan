@@ -83,6 +83,10 @@ OCTOMAP_COLLISION_NAME = '<octomap>'
 # -0.126..-0.217 (#121), so the model's 0.0 (tube just taut) let tangling plans through. Revisit after the refit.
 DEFAULT_CABLE_MAX_STRETCH = -0.115
 
+# a close width (m) above this is a per-object width short of fully closed, which ~mtc_grasp_check_squeeze may close
+# on to check the grasp (#188); the klt and materialbox widths (0.0005) count as fully closed
+GRASP_CHECK_SQUEEZE_MIN_WIDTH = 0.005
+
 # what the executor does with each MTC sub trajectory, in the order the leaf stages were added
 ARM, GRIPPER, ATTACH, DETACH, NOOP = 'arm', 'gripper', 'attach', 'detach', 'noop'
 
@@ -487,9 +491,9 @@ class MtcPickPlace:
         # why the last goal failed (for the action status text) and whether it moved anything
         self.failure_reason = ''
         self.executed = False
-        self.check_grasp = rospy.get_param('~mtc_check_grasp', True)
-        self.grasp_check_delay = rospy.get_param('~mtc_grasp_check_delay', 1.0)
-        self.gripper_fact = self.make_gripper_fact() if self.check_grasp else None
+        # ~mtc_check_grasp, ~mtc_grasp_check_delay and ~mtc_grasp_check_squeeze are read at every check, so the check
+        # can be switched off without a restart (#188); the fact is built anyway, it only subscribes to gripper topics
+        self.gripper_fact = self.make_gripper_fact()
         server_timeout = rospy.get_param('~moveit_action_startup_timeout', 60.0)
 
         self.tf_buffer = tf2_ros.Buffer()
@@ -1060,9 +1064,10 @@ class MtcPickPlace:
                     continue
                 code = self.execute_arm(sub.trajectory)
             elif role == GRIPPER:
-                code = self.command_gripper(postures.pop(0))
+                posture = postures.pop(0)
+                code = self.command_gripper(posture)
                 if code == MoveItErrorCodes.SUCCESS and check_grasp and not postures:  # the closing step
-                    if not self.gripper_holds_object('after closing'):
+                    if not self.closed_on_object(posture):
                         self.failure_reason = f'the gripper closed on nothing at {attach[0] if attach else "the object"}'
                         return MoveItErrorCodes.FAILURE
             elif role == ATTACH:
@@ -1103,12 +1108,45 @@ class MtcPickPlace:
             return None
 
     def gripper_holds_object(self, when, delay=None):
+        if not rospy.get_param('~mtc_check_grasp', True):
+            rospy.logwarn_once('mtc: ~mtc_check_grasp is false: picks and places do not check the gripper')
+            return True
         if self.gripper_fact is None:
             return True
-        rospy.sleep(self.grasp_check_delay if delay is None else delay)  # the fingers settle, the fact's effort hold and gOBJ catch up
+        if delay is None:
+            delay = rospy.get_param('~mtc_grasp_check_delay', 1.0)
+        rospy.sleep(delay)  # the fingers settle, the fact's effort hold and gOBJ catch up
         holds = bool(self.gripper_fact.generate_facts())
         rospy.loginfo(f'mtc: gripper_has_object {when}: {holds}')
         return holds
+
+    def closed_on_object(self, close_posture):
+        '''
+        the check after closing. A per-object close width (gripper_distance_values_per_object.yaml, e.g. bleach
+        0.045 m) can be reached with the object between the fingers but without stalling on it: soft plastic gives
+        way, or the object is a little narrower there. The Robotiq then reports "reached the requested position" (gOBJ
+        3) and the fact says empty, like a close on air (#188: the bleach bottle held twice on the real robot, both
+        picks failed as "closed on nothing"). With ~mtc_grasp_check_squeeze such a grasp closes on to fully closed:
+        an object stalls the fingers short of it and the fact confirms it, on air they close fully and the pick fails
+        as before. Default on in the sim (/use_sim_time), off on the real robot until tested there (Oscar 2026-09-28).
+        '''
+        if self.gripper_holds_object('after closing'):
+            return True
+        if not rospy.get_param('~mtc_check_grasp', True) or self.gripper_fact is None:
+            return True
+        width = close_posture.points[-1].positions[0] if close_posture.points else 0.0
+        if width <= GRASP_CHECK_SQUEEZE_MIN_WIDTH:
+            return False  # already sent to fully closed: nothing between the fingers
+        if not rospy.get_param('~mtc_grasp_check_squeeze', rospy.get_param('/use_sim_time', False)):
+            return False
+        rospy.logwarn(f'mtc: the gripper reached its {width:.3f} m close width without an object: closing fully to '
+                      'check whether the object is between the fingers')
+        squeeze = copy.deepcopy(close_posture)
+        squeeze.points = [squeeze.points[-1]]
+        squeeze.points[0].positions = [0.0] + list(squeeze.points[0].positions[1:])
+        if self.command_gripper(squeeze) != MoveItErrorCodes.SUCCESS:
+            return False
+        return self.gripper_holds_object('after closing fully')
 
     def release_empty_grasp(self, object_name, open_posture):
         '''after a failed grasp: the object is not in the hand, so drop it from the scene and open the gripper'''
