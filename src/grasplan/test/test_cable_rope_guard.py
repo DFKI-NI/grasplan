@@ -49,6 +49,16 @@ class TestRopeGuard(unittest.TestCase):
         guard.wrist_3_joint = 'mobipick/ur5_wrist_3_joint'
         guard.max_stretch, guard.max_points, guard.rope_rate = -0.115, 40, 10.0
         cls.guard = guard
+        # the rope of the night sim (wrist rope starting straight down, no wrist_1 housing capsule), whose loop caught
+        # on the tool on PLACE_END -> VIA -> ANYGRASP; the cap-side start and the housing capsule (Oscar's photo at
+        # home, #118) leave no catch there, so this rope keeps the guard's rope rejection under test
+        with open(os.path.join(pkg, 'config', 'cable_model.yaml')) as f:
+            night = yaml.safe_load(f)
+        night['spans']['wrist'].pop('rope_rest_side', None)
+        night['capsules'] = [c for c in night['capsules'] if c['name'] != 'wrist_1_housing']
+        night_cfg = config_from_dict(night)
+        night_cfg.rope.enabled = True
+        cls.night_rope_model = CableModel(urdf, night_cfg)
 
     def check(self, msg, rope):
         self.guard.rope_check = rope
@@ -58,7 +68,11 @@ class TestRopeGuard(unittest.TestCase):
         msg = solution(PLACE_END, VIA, ANYGRASP)
         ok, stretch, span, _ = self.check(msg, rope=False)
         self.assertTrue(ok)                                 # geometry only: passes (the night's situation)
-        ok, stretch, span, q = self.check(msg, rope=True)
+        rope_model, self.guard.rope_model = self.guard.rope_model, self.night_rope_model
+        try:
+            ok, stretch, span, q = self.check(msg, rope=True)
+        finally:
+            self.guard.rope_model = rope_model
         self.assertFalse(ok)
         self.assertIn('rope replay', span)
         self.assertGreater(stretch, 0.02)

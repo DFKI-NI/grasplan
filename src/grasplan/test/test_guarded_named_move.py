@@ -70,6 +70,9 @@ class TestGuardedNamedMove(unittest.TestCase):
     def setUpClass(cls):
         TestRopeGuard.setUpClass()
         cls.guard = TestRopeGuard.guard
+        # the night-sim rope, whose loop catches on PLACE_END -> VIA -> ANYGRASP (the model's own rope starts on the
+        # wrist_1 cap side now and no longer catches there, #118)
+        cls.guard.rope_model = TestRopeGuard.night_rope_model
         cls.guard.rope_check = True
         cls.guard.update_params = lambda: None           # no rospy params in the test
         cls.w3 = math.radians(180.0)
