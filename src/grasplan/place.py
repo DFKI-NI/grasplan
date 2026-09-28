@@ -42,6 +42,7 @@ from grasplan.tools.support_plane_tools import (
 )
 from grasplan.tools.common import separate_object_class_from_id, connect_move_groups, roscpp_initialize_named
 from grasplan.tools.moveit_errors import print_moveit_error
+from grasplan.tools.place_reach import order_by_reach
 from std_srvs.srv import Empty, SetBool, Trigger
 from object_pose_msgs.msg import ObjectList
 import tf2_geometry_msgs
@@ -335,6 +336,32 @@ class PlaceTools:
                 PlaceObjectResult(success=False), f'place failed: {reason}' if reason else 'place failed'
             )
 
+    def order_place_poses_by_reach(self, place_poses: ObjectList):
+        """
+        ~place_prefer_near_arm (#132): try the place poses nearest to the arm base (~place_reach_frame) first, as MTC
+        and MoveIt try them in order; ~place_max_reach > 0 also drops those farther away (unless none is closer).
+        """
+        if not rospy.get_param('~place_prefer_near_arm', True) or not place_poses.objects:
+            return
+        reach_frame = rospy.get_param('~place_reach_frame', 'mobipick/ur5_base_link')
+        try:
+            base = self.tf_buffer.lookup_transform(
+                place_poses.header.frame_id, reach_frame, rospy.Time(0), rospy.Duration(1.0)
+            ).transform.translation
+        except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException) as error:
+            rospy.logwarn(f'place poses stay in random order, no transform to {reach_frame}: {error}')
+            return
+        ordered, dropped = order_by_reach(
+            place_poses.objects, (base.x, base.y), rospy.get_param('~place_max_reach', 0.0)
+        )
+        place_poses.objects = ordered
+        nearest = math.hypot(ordered[0].pose.position.x - base.x, ordered[0].pose.position.y - base.y)
+        farthest = math.hypot(ordered[-1].pose.position.x - base.x, ordered[-1].pose.position.y - base.y)
+        rospy.loginfo(
+            f'place poses ordered nearest to {reach_frame} first: {len(ordered)} poses, {nearest:.2f} to '
+            f'{farthest:.2f} m' + (f', {dropped} beyond ~place_max_reach dropped' if dropped else '')
+        )
+
     def transform_obj_list(self, obj_list: ObjectList, target_frame_id: str) -> ObjectList:
         """Transforms an object list from a source frame to a target frame."""
         if self.tf_buffer.can_transform(obj_list.header.frame_id, target_frame_id, rospy.Time(0)):
@@ -480,6 +507,7 @@ class PlaceTools:
             return False
 
         global_place_poses = self.transform_obj_list(local_place_poses, self.global_reference_frame)
+        self.order_place_poses_by_reach(global_place_poses)
         self.place_poses_pub.publish(global_place_poses)
         attached_object = self.scene.get_attached_objects([object_to_be_placed])[object_to_be_placed].object
         box_size = list(attached_object.primitives[0].dimensions)
