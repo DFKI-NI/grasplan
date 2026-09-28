@@ -117,7 +117,8 @@ def turn_grasp_about_approach(grasp, turn_deg):
 
 def speed_changes_on():
     """~mtc_speed_changes (default true, read per goal): false turns off the untested 2026-09-28 pick speed changes
-    (IK pin, plan-one-first; pick.py's cable gate reads it too) for a real-robot run where they misbehave (#151)"""
+    (IK pin, one solution per candidate without a replan after a cable guard reject; pick.py's cable gate reads it too)
+    for a real-robot run where they misbehave (#151)"""
     return bool(rospy.get_param('~mtc_speed_changes', True))
 
 
@@ -896,34 +897,33 @@ class MtcPickPlace:
 
     def plan(self, task, what):
         '''plan task; sets self.chosen_solution (the cheapest solution, or with the cable guard the cheapest one
-        whose joint path passes the cable check). With the guard, one solution is planned first and more
-        (~mtc_cable_solutions) only when the guard rejects it: asked for 4 at once, MTC searched until its stage timeouts
-        for solutions that mostly do not exist (~9 s per grasp, also for plans that pass; suite 2026-09-28)'''
+        whose joint path passes the cable check). With the guard one solution is planned, and a rejected one is not
+        replanned for more (#151): asked for 4 at once, MTC searched until its stage timeouts for solutions that mostly
+        do not exist (~9 s per grasp, suite 2026-09-28), and asked again after a reject it returned copies of the
+        rejected path (same cost, stretch and worst point; real run A1 2026-09-28: ~9 s lost per grasp). The caller
+        turns a rejected grasp about its approach axis (guard_rejected_q) or tries the next candidate instead.
+        ~mtc_speed_changes false restores the old search for ~mtc_cable_solutions at once.'''
         start = time.monotonic()
         self.chosen_solution = None
         self.guard_rejected_q = None   # joint state (radians) of the least bad solution when the guard rejects all
-        if self.cable_guard is None or self.cable_solutions <= 1:
-            counts = [1]
-        elif speed_changes_on():
-            counts = [1, self.cable_solutions]
+        if self.cable_guard is None or speed_changes_on():
+            count = 1
         else:
-            counts = [self.cable_solutions]   # the old search for all solutions at once
-        least_bad = float('inf')
-        for attempt, count in enumerate(counts):
-            try:
-                task.init()
-                planned = bool(task.plan(count)) and len(task.solutions) > 0
-            except Exception as e:  # MTC raises InitStageError for inconsistent stage setups
-                rospy.logwarn(f'mtc: {what}: {e}')
-                return False
-            elapsed = time.monotonic() - start
-            if not planned:
-                rospy.loginfo(f'mtc: {what} not feasible ({elapsed:.1f} s): {self.describe_failures(task)}')
-                return False
-            if self.cable_guard is None:
-                self.chosen_solution = task.solutions[0]
-                break
-            checks = []
+            count = self.cable_solutions   # the old search for all solutions at once
+        try:
+            task.init()
+            planned = bool(task.plan(count)) and len(task.solutions) > 0
+        except Exception as e:  # MTC raises InitStageError for inconsistent stage setups
+            rospy.logwarn(f'mtc: {what}: {e}')
+            return False
+        elapsed = time.monotonic() - start
+        if not planned:
+            rospy.loginfo(f'mtc: {what} not feasible ({elapsed:.1f} s): {self.describe_failures(task)}')
+            return False
+        if self.cable_guard is None:
+            self.chosen_solution = task.solutions[0]
+        else:
+            least_bad, checks = float('inf'), []
             for index, solution in enumerate(task.solutions):
                 ok, stretch, span, q = self.cable_guard.check(solution.toMsg())
                 if not ok and span != 'wrist_3 window' and stretch < least_bad:
@@ -935,17 +935,12 @@ class MtcPickPlace:
                 where = self.where_in_task(task, self.cable_guard)
                 rospy.loginfo(f'mtc: {what} solution {index} rejected by the cable guard{where}: stretch {stretch:+.3f} '
                               f'> {self.cable_guard.max_stretch:+.3f} in the {span} span at {q}')
-            if self.chosen_solution is not None:
-                self.guard_rejected_q = None
-                rospy.loginfo(f'mtc: {what} cable check passed ({checks[-1]})')
-                break
-            if attempt + 1 < len(counts):
-                rospy.loginfo(f'mtc: {what}: planned {len(task.solutions)} in {elapsed:.1f} s, rejected by the cable '
-                              f'guard; planning up to {counts[attempt + 1]} solutions')
-                continue
-            rospy.loginfo(f'mtc: {what}: all {len(task.solutions)} solutions entangle the arm cable '
-                          f'({"; ".join(checks)})')
-            return False
+            if self.chosen_solution is None:
+                rospy.loginfo(f'mtc: {what}: all {len(task.solutions)} solutions entangle the arm cable '
+                              f'({"; ".join(checks)}) in {elapsed:.1f} s')
+                return False
+            self.guard_rejected_q = None
+            rospy.loginfo(f'mtc: {what} cable check passed ({checks[-1]})')
         elapsed = time.monotonic() - start
         rospy.loginfo(f'mtc: {what} planned in {elapsed:.1f} s (cost {self.chosen_solution.cost:.2f})')
         task.publish(self.chosen_solution)

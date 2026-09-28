@@ -1,4 +1,5 @@
-'''#151 pick speed: with the cable guard MTC plans one solution first and more only when the guard rejects it; the
+'''#151 pick speed: with the cable guard MTC plans one solution and does not replan a rejected one for more (the
+replan returned copies of the rejected path); ~mtc_speed_changes false restores the old search for all at once; the
 IK pin cost term takes MTC's (SubTrajectory, comment) call and reads the IK state from the solution message.
 Fake task and guard (no ROS master, no robot model); needs the Mobipick image for the module imports.'''
 import math
@@ -72,19 +73,21 @@ class TestPlanFirst(unittest.TestCase):
         self.assertEqual(task.calls, [1])
         self.assertEqual(task.published.name, 'a')
 
-    def test_rejected_first_solution_plans_more(self):
+    def test_rejected_first_solution_is_not_replanned(self):
         task = FakeTask([[FakeSolution('a')], [FakeSolution('a'), FakeSolution('b'), FakeSolution('c')]])
         m = planner(FakeGuard(['b']))
-        self.assertTrue(m.plan(task, 'grasp g'))
-        self.assertEqual(task.calls, [1, 4])
-        self.assertEqual(m.chosen_solution.name, 'b')
-        self.assertIsNone(m.guard_rejected_q)
+        self.assertFalse(m.plan(task, 'grasp g'))
+        self.assertEqual(task.calls, [1])
+        self.assertIsNone(m.chosen_solution)
+        self.assertIsNone(task.published)
+        self.assertEqual(m.guard_rejected_q, {'w3': 'a'})   # the caller turns the grasp from this state
 
     def test_all_rejected_keeps_the_least_bad_state(self):
-        task = FakeTask([[FakeSolution('a')], [FakeSolution('a'), FakeSolution('b')]])
-        m = planner(FakeGuard([]))
-        self.assertFalse(m.plan(task, 'grasp g'))
-        self.assertEqual(task.calls, [1, 4])
+        task = FakeTask([[FakeSolution('a'), FakeSolution('b')]])
+        with mock.patch.object(mpp.rospy, 'get_param', lambda name, default=None: False if 'speed' in name else default):
+            m = planner(FakeGuard([]))
+            self.assertFalse(m.plan(task, 'grasp g'))
+        self.assertEqual(task.calls, [4])
         self.assertIsNotNone(m.guard_rejected_q)
 
     def test_one_cable_solution_plans_once(self):
