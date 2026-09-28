@@ -107,7 +107,7 @@ def topdown_orientation(closing_direction):
 
 def topdown_grasps(
     center, orientation, size, support_top, lowest_point_offset, min_fingertip_height, min_tcp_height=0.0,
-    max_width=0.12, min_overlap=0.01,
+    max_width=0.12, min_overlap=0.01, max_depth=0.0,
 ):
     '''
     Straight-down grasps of a box (center, orientation (x, y, z, w), size) standing on a surface whose top is at
@@ -117,7 +117,10 @@ def topdown_grasps(
     fingertip point keeps min_fingertip_height above support_top and the TCP min_tcp_height; a grasp whose
     fingertips would then reach less than min_overlap below the box top would close on air and is skipped.
     lowest_point_offset(orientation, width): lowest fingertip z relative to the TCP while closing down to width
-    (grasplan.tools.gripper_envelope). Returns ([(position, orientation, width)], [reasons for skipped axes]).
+    (grasplan.tools.gripper_envelope). max_depth (m, 0 = off): how far the TCP may go below the box top before the
+    gripper body above the fingers would enter the box (#192: a 23.5 cm Pringles can put the coupling inside its box,
+    every top-down grasp failed at the grasp pose); a taller object gets no grasp.
+    Returns ([(position, orientation, width)], [reasons for skipped axes]).
     '''
     center = np.asarray(center, dtype=float)
     top = center[2] + vertical_half_extent(orientation, size)
@@ -130,6 +133,10 @@ def topdown_grasps(
             q = topdown_orientation(closing)
             lowest = lowest_point_offset(q, extent)
             tcp_z = max(support_top + min_fingertip_height - lowest, support_top + min_tcp_height)
+            if max_depth > 0.0 and top - tcp_z > max_depth:
+                skipped.append(f'the TCP {(top - tcp_z) * 100:.1f} cm below the object top (more than '
+                               f'{max_depth * 100:.1f} cm): the gripper body would enter its box')
+                break
             if tcp_z + lowest > top - min_overlap:
                 skipped.append(
                     f'fingertips {(tcp_z + lowest - support_top) * 100:.1f} cm above the support, object top '
@@ -189,6 +196,25 @@ def depth_below_support_top(center, orientation, size, supports):
             continue
         deepest = max(deepest, support_center[2] + vertical_half_extent(support_orientation, support_size) - bottom)
     return deepest
+
+
+def height_above_support_top(center, orientation, size, supports):
+    '''
+    how far (m) the bottom of a box floats above the top of the support box (supports as for clamp_box_to_support)
+    whose footprint holds its centre, with the centre above the middle of that support (the highest such support);
+    0 when it rests on it or reaches into it, None when no support is under it
+    '''
+    center = np.asarray(center, dtype=float)
+    bottom = center[2] - vertical_half_extent(orientation, size)
+    height = None
+    for support_center, support_orientation, support_size in supports:
+        support_center = np.asarray(support_center, dtype=float)
+        local = quaternion_to_matrix(support_orientation).T @ (center - support_center)
+        if np.any(np.abs(local[:2]) > np.asarray(support_size, dtype=float)[:2] / 2.0) or center[2] < support_center[2]:
+            continue
+        gap = max(0.0, bottom - (support_center[2] + vertical_half_extent(support_orientation, support_size)))
+        height = gap if height is None else min(height, gap)
+    return height
 
 
 def _footprint_prism(center, orientation, size):

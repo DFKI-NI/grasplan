@@ -71,6 +71,7 @@ from grasplan.tools.topdown_grasps import (
     box_overlap_fraction,
     clamp_box_to_support,
     depth_below_support_top,
+    height_above_support_top,
     topdown_grasps,
 )
 from grasplan.tools.cable_rank import gate_chunks, joint_path, order_by_predicted_stretch
@@ -591,7 +592,8 @@ class PickTools:
                         self.scene.remove_world_object(object_name)
                 elif object_name == external_object_name:
                     rospy.loginfo(f'{object_name} is added from the external detection, skipping pose selector copy')
-                elif self.overlaps_target(object_name, pose_stamped_msg, object_bounding_box, target, external_object_name):
+                elif self.overlaps_target(object_name, pose_stamped_msg, object_bounding_box, target, external_object_name,
+                                          supports):
                     self.remove_from_scene(object_name)
                 else:
                     rospy.loginfo(f'adding object {object_name} to planning scene')
@@ -716,24 +718,43 @@ class PickTools:
         if name in self.scene.get_known_object_names():
             self.scene.remove_world_object(name)
 
-    def overlaps_target(self, name, pose_stamped, size, target, target_name):
+    def overlaps_target(self, name, pose_stamped, size, target, target_name, supports=None):
         '''
         ~drop_boxes_overlapping_target (default 0.2, 0 = off): a perceived box that shares at least this fraction of
         the smaller box's volume with the verified open-set target (target: (pose, size) of the object being picked)
         is a false detection on it and left out of the planning scene (real 2026-09-28: a false DOPE bleach_1 box around
-        the tomato soup can blocked every grasp); neighbours that only touch it stay
+        the tomato soup can blocked every grasp); neighbours that only touch it stay.
+        ~drop_floating_boxes_at_target (m, 0 = off): a box that reaches into the target box at all and whose bottom
+        floats more than this above its support (supports: support_boxes()) is left out too: a real object neither
+        hovers nor reaches into another one, and any box inside the target's blocks every lift, as the held object
+        starts in collision with it (#192, real 2026-09-28 20:37: a false DOPE screwdriver_1 box ~12 cm above table_2,
+        1.7 % into the Pringles can box, failed all 12 grasps at the lift). Default 0.03 in the sim (/use_sim_time),
+        off on the real robot until tested there (Oscar 2026-09-28).
         '''
+        if target is None or pose_stamped.header.frame_id != target[0].header.frame_id:
+            return False
         limit = rospy.get_param('~drop_boxes_overlapping_target', 0.2)
-        if limit <= 0.0 or target is None or pose_stamped.header.frame_id != target[0].header.frame_id:
+        float_limit = rospy.get_param('~drop_floating_boxes_at_target',
+                                      0.03 if rospy.get_param('/use_sim_time', False) else 0.0)
+        if limit <= 0.0 and float_limit <= 0.0:
             return False
         p, o = pose_stamped.pose.position, pose_stamped.pose.orientation
         tp, to = target[0].pose.position, target[0].pose.orientation
         fraction = box_overlap_fraction((p.x, p.y, p.z), (o.x, o.y, o.z, o.w), size,
                                         (tp.x, tp.y, tp.z), (to.x, to.y, to.z, to.w), target[1])
-        if fraction < limit:
+        if limit > 0.0 and fraction >= limit:
+            rospy.logwarn(f'{name}: its box shares {fraction * 100:.0f} % of the smaller volume with the target '
+                          f'{target_name}: a false detection on it? Left out of the planning scene')
+            return True
+        if float_limit <= 0.0 or fraction <= 0.0:
             return False
-        rospy.logwarn(f'{name}: its box shares {fraction * 100:.0f} % of the smaller volume with the target '
-                      f'{target_name}: a false detection on it? Left out of the planning scene')
+        height = height_above_support_top((p.x, p.y, p.z), (o.x, o.y, o.z, o.w), size,
+                                          (supports or {}).get(pose_stamped.header.frame_id, []))
+        if height is None or height <= float_limit:
+            return False
+        rospy.logwarn(f'{name}: its box reaches into the target {target_name} ({fraction * 100:.1f} % of the smaller '
+                      f'volume) and floats {height * 100:.1f} cm above its support: a false detection? Left out of the '
+                      f'planning scene')
         return True
 
     def clean_scene(self):
@@ -1425,6 +1446,9 @@ class PickTools:
             rospy.get_param('~open_set_min_grasp_height', 0.0),
             rospy.get_param('~open_set_topdown_max_width', 0.10),
             rospy.get_param('~open_set_topdown_min_overlap', 0.01),
+            # the Robotiq 2F-140 knuckles and base start ~0.14 m above the TCP (URDF, temp_code/finger_reach.py): a
+            # taller object puts them inside its box (#192)
+            rospy.get_param('~open_set_topdown_max_depth', 0.12),
         )
         if skipped:
             rospy.loginfo(f'top-down fallback for {name}: skipped {"; ".join(skipped)}')
@@ -1626,6 +1650,9 @@ class PickTools:
                 stretches.append(None)
         ordered, passing = order_by_predicted_stretch(grasps, stretches, guard.max_stretch)
         self.cable_gate_passing = passing   # the cable gate offers these first (#151)
+        # per grasp (quality order), so a gate that holds back most grasps can be judged from the log (#192)
+        rospy.loginfo('cable ranking per grasp: ' + ', '.join(
+            f'{g.id} q{g.grasp_quality:.2f} ' + ('?' if s is None else f'{s:+.3f}') for g, s in zip(grasps, stretches)))
         known = sorted(s for s in stretches if s is not None)
         rospy.loginfo(
             f'cable ranking: {passing} of {len(grasps)} reachable grasps predicted to pass the cable guard '
