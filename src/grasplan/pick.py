@@ -27,6 +27,7 @@ example on how to pick an object using grasplan and moveit
 import sys
 import copy
 import importlib
+import math
 import time
 import traceback
 
@@ -67,7 +68,16 @@ from grasplan.tools.action_client_helper import ActionClientHelper
 from grasplan.tools.gripper_envelope import fingertip_envelope, lowest_point_offset
 from grasplan.tools.topdown_grasps import clamp_box_to_support, topdown_grasps
 from grasplan.tools.cable_rank import gate_chunks, joint_path, order_by_predicted_stretch
-from grasplan.grasp_scoring import is_compact_round
+from grasplan.grasp_scoring import (
+    LOW_OBJECT_MAX_HEIGHT,
+    LOW_OBJECT_MAX_TILT_DEG,
+    SMALL_OBJECT_MAX_FOOTPRINT,
+    box_height_and_footprint,
+    complete_one_sided_box,
+    is_compact_round,
+    is_low_object,
+    tilt_from_vertical_deg,
+)
 from visualization_msgs.msg import Marker, MarkerArray
 
 ACTION_STATES = {value: name for name, value in vars(GoalStatus).items() if name.isupper() and isinstance(value, int)}
@@ -568,6 +578,7 @@ class PickTools:
             object_to_pick_pose.header.frame_id = external_object.header.frame_id or self.global_reference_frame
             object_to_pick_pose.pose = copy.deepcopy(external_object.pose)
             object_to_pick_bounding_box = [external_object.size.x, external_object.size.y, external_object.size.z]
+            self.complete_one_sided_box(external_object_name, object_to_pick_pose, object_to_pick_bounding_box)
             object_to_pick_id = external_object.instance_id
             object_found = True
             rospy.loginfo(
@@ -618,6 +629,35 @@ class PickTools:
                 orientation = tf.transformations.quaternion_multiply(object_q, primitive_q)
                 boxes.setdefault(obj.header.frame_id, []).append((center, orientation, primitive.dimensions[:3]))
         return boxes
+
+    def complete_one_sided_box(self, name, pose_stamped, size):
+        '''
+        ~open_set_complete_one_sided_boxes (default true): the open-set box comes from one view and holds only the
+        front of the object (real Pringles can 2026-09-28: 7.3 x 3.6 x 24 cm), so a standing elongated box gets its full
+        depth behind the visible face (grasp_scoring.complete_one_sided_box), in the planning scene and for grasping.
+        The line of sight runs from ~open_set_camera_frame to the box centre. pose_stamped and size change in place.
+        '''
+        if not rospy.get_param('~open_set_complete_one_sided_boxes', True):
+            return
+        camera = rospy.get_param('~open_set_camera_frame', 'mobipick/eef_main_cam_depth_optical_frame')
+        frame = pose_stamped.header.frame_id
+        try:
+            self.tf_listener.waitForTransform(frame, camera, rospy.Time(0), rospy.Duration(1.0))
+            (cx, cy, cz), _ = self.tf_listener.lookupTransform(frame, camera, rospy.Time(0))
+        except (tf.Exception, tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException) as e:
+            rospy.logwarn(f'{name}: no {camera} in {frame}, box kept as measured: {e}')
+            return
+        p, o = pose_stamped.pose.position, pose_stamped.pose.orientation
+        rotation = tf.transformations.quaternion_matrix([o.x, o.y, o.z, o.w])[:3, :3].tolist()
+        completed = complete_one_sided_box(size, rotation, (p.x, p.y, p.z), (p.x - cx, p.y - cy, p.z - cz))
+        if completed is None:
+            return
+        new_size, (x, y, z) = completed
+        rospy.loginfo(f'{name}: box {[round(v, 3) for v in size]} holds only the side the camera saw, completed to '
+                      f'{[round(v, 3) for v in new_size]} (centre {math.hypot(x - p.x, y - p.y) * 100:.1f} cm further '
+                      f'from the camera)')
+        size[:] = new_size
+        p.x, p.y, p.z = x, y, z
 
     def add_object_box(self, name, pose_stamped, size, supports=None):
         '''
@@ -958,9 +998,9 @@ class PickTools:
                     external_reference_frame,
                     self.robot.arm.get_end_effector_link(),
                 )
-                grasps = self.raise_low_grasps(
-                    grasps, support_surface_name, [candidate.width for candidate in external_grasp_candidates]
-                )
+                widths = [candidate.width for candidate in external_grasp_candidates]
+                grasps, widths, low = self.top_grasps_for_low_objects(grasps, widths, object_pose, bounding_box)
+                grasps = self.raise_low_grasps(grasps, support_surface_name, widths, sink=low)
                 grasps = self.reachable_external_grasps(grasps)
             if not grasps:
                 rospy.logwarn(f'no open-set grasp of {object_to_pick.get_object_class_and_id_as_string()} keeps the '
@@ -1046,7 +1086,43 @@ class PickTools:
                 print_moveit_error(result)  # only print moveit error if result is different than None
         return False
 
-    def raise_low_grasps(self, grasps, support_surface_name, widths=None):
+    def top_grasps_for_low_objects(self, grasps, widths, object_pose, bounding_box):
+        '''
+        Oscar (2026-09-28, real strawberry, #151): a very low object is grasped from the top only. Low: its box
+        (object_pose orientation, gravity-aligned frame) lower than ~open_set_low_object_max_height, or both horizontal
+        sides below ~open_set_small_object_max_footprint (0 = off; a small object without real depth gets a filled-in,
+        too tall box). Open-set grasps more than ~open_set_low_object_max_tilt_deg off vertical are dropped (0 = rule
+        off); the caller lowers the others to the fingertip clearance (raise_low_grasps sink) and falls back to the
+        top-down grasps when none is left. Returns (grasps, widths, low).
+        '''
+        max_tilt = rospy.get_param('~open_set_low_object_max_tilt_deg', LOW_OBJECT_MAX_TILT_DEG)
+        if max_tilt <= 0.0 or not grasps or not bounding_box or object_pose is None:
+            return grasps, widths, False
+        o = object_pose.pose.orientation
+        rotation = tf.transformations.quaternion_matrix([o.x, o.y, o.z, o.w])[:3, :3].tolist()
+        max_height = rospy.get_param('~open_set_low_object_max_height', LOW_OBJECT_MAX_HEIGHT)
+        max_footprint = rospy.get_param('~open_set_small_object_max_footprint', SMALL_OBJECT_MAX_FOOTPRINT)
+        if not is_low_object(bounding_box, rotation, max_height, max_footprint):
+            return grasps, widths, False
+        kept, kept_widths, dropped = [], [], []
+        for grasp, width in zip(grasps, widths):
+            o = grasp.grasp_pose.pose.orientation
+            tilt = tilt_from_vertical_deg(tf.transformations.quaternion_matrix([o.x, o.y, o.z, o.w])[:3, 0])
+            if tilt <= max_tilt:
+                kept.append(grasp)
+                kept_widths.append(width)
+            else:
+                dropped.append(f'{grasp.id} {tilt:.0f}')
+        height, footprint = box_height_and_footprint(bounding_box, rotation)
+        rospy.loginfo(
+            f'low object ({height * 100:.1f} cm tall, {footprint * 100:.1f} cm wide): top grasps only, {len(kept)} of '
+            f'{len(grasps)} within {max_tilt:.0f} deg of vertical'
+            + (f', dropped (deg off vertical): {", ".join(dropped)}' if dropped else '')
+            + ('' if kept else '; the top-down fallback grasps instead')
+        )
+        return kept, kept_widths, True
+
+    def raise_low_grasps(self, grasps, support_surface_name, widths=None, sink=False):
         '''
         AnyGrasp does not know the Robotiq 140 fingers, so for small objects it proposes grasps whose fingers would
         go into the table (#124 strawberry, #134 banana). Two limits above the top of the support surface (m, 0 =
@@ -1058,7 +1134,9 @@ class PickTools:
         A grasp that is too low is moved back along its approach axis (TCP +x) until both hold, at most
         ~open_set_max_grasp_backoff (m, 0 = no limit): further back the fingers would close on air, so such a grasp
         is dropped, as is a grasp approaching sideways (less than 17 degrees downwards) whose fingertips are too low
-        (backing off does not raise it). Returns the grasps to try.
+        (backing off does not raise it). sink (a low object, top grasps only): a grasp higher than both limits is moved
+        down along its approach to them, like the top-down fallback, so the fingers close around the object rather
+        than on its top (~open_set_low_object_sink, default true). Returns the grasps to try.
         '''
         min_height = rospy.get_param('~open_set_min_grasp_height', 0.0)
         min_fingertip_height = rospy.get_param('~open_set_min_fingertip_height', 0.0)
@@ -1075,7 +1153,8 @@ class PickTools:
             top = max(top, support.pose.position.z + pose.position.z + primitive.dimensions[2] / 2.0)
         envelope = self.fingertip_envelope() if min_fingertip_height > 0.0 else None
         widths = list(widths) if widths is not None else [0.0] * len(grasps)
-        kept, raised, dropped = [], [], []
+        sink = sink and rospy.get_param('~open_set_low_object_sink', True)
+        kept, raised, dropped, lowered = [], [], [], []
         for grasp, width in zip(grasps, widths):
             pose = grasp.grasp_pose.pose
             q = [pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w]
@@ -1083,11 +1162,18 @@ class PickTools:
             if pose.position.z < top - 0.05:
                 kept.append(grasp)
                 continue  # the object is not on this surface (e.g. fell to the floor)
-            missing = top + min_height - pose.position.z if min_height > 0.0 else 0.0
+            # -inf: no TCP limit (a sink then goes by the fingertips only)
+            missing = top + min_height - pose.position.z if min_height > 0.0 else -float('inf')
             if envelope:
                 lowest = pose.position.z + lowest_point_offset(envelope, q, width)
                 missing = max(missing, top + min_fingertip_height - lowest)
             if missing <= 0.0:
+                if sink and -float('inf') < missing < 0.0 and approach[2] <= -0.3:
+                    shift = missing / -approach[2]   # negative: forward along the approach, down
+                    pose.position.x -= shift * approach[0]
+                    pose.position.y -= shift * approach[1]
+                    pose.position.z -= shift * approach[2]
+                    lowered.append(f'{grasp.id} {missing * 100:.1f} cm')
                 kept.append(grasp)
                 continue
             if approach[2] > -0.3:
@@ -1109,6 +1195,10 @@ class PickTools:
             rospy.loginfo(f'raised {len(raised)} of {len(grasps)} grasps (tcp {min_height * 100:.1f} cm, fingertips '
                           f'{min_fingertip_height * 100:.1f} cm above {support_surface_name}, top {top:.3f}): '
                           f'{", ".join(raised)}')
+        if lowered:
+            rospy.loginfo(f'lowered {len(lowered)} of {len(grasps)} top grasps of a low object to the clearance above '
+                          f'{support_surface_name} (tcp {min_height * 100:.1f} cm, fingertips '
+                          f'{min_fingertip_height * 100:.1f} cm, top {top:.3f}): {", ".join(lowered)}')
         if dropped:
             rospy.loginfo(f'dropped {len(dropped)} grasps that cannot keep the fingertips '
                           f'{min_fingertip_height * 100:.1f} cm above {support_surface_name} (sideways, or more than '

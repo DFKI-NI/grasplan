@@ -194,3 +194,74 @@ def side_grasp_axis(size, rotation=None, up=(0.0, 0.0, 1.0)):
     rotation = rotation or ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
     height = sum(abs(sum(up[r] * rotation[r][c] for r in range(3))) * dims[c] for c in range(3))
     return up, height
+
+
+# ---------------------------------------------------------------- low objects: top grasps only (Oscar, 2026-09-28)
+# A real strawberry (#151) was grasped 16 deg off vertical with the fingertips at its top and slipped out in the lift. An
+# object lower than LOW_OBJECT_MAX_HEIGHT is grasped from the top only: within LOW_OBJECT_MAX_TILT_DEG of straight down,
+# as low as the fingertip clearance above the table allows (Oscar: below 5 cm, the strawberry yes, the 6.4 cm apple and
+# the tennis ball keep their side grasps). A small dark object often has no real depth and its box height is filled in
+# (the strawberry's came out 7.2 cm, taller than the apple's), so both horizontal sides below SMALL_OBJECT_MAX_FOOTPRINT
+# count as low too.
+LOW_OBJECT_MAX_HEIGHT = 0.05
+SMALL_OBJECT_MAX_FOOTPRINT = 0.06
+LOW_OBJECT_MAX_TILT_DEG = 10.0
+
+
+def box_height_and_footprint(size, rotation=None, up=(0.0, 0.0, 1.0)):
+    '''(extent along up, longer of the two box sides most perpendicular to up) of a box; size/rotation as for
+    cylinder_axis, up in the frame of rotation'''
+    dims = [float(v) for v in size]
+    rotation = rotation or ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+    up = _unit(up)
+    along = [abs(sum(up[r] * rotation[r][c] for r in range(3))) for c in range(3)]
+    height = sum(a * d for a, d in zip(along, dims))
+    return height, max(dims[c] for c in sorted(range(3), key=lambda c: along[c])[:2])
+
+
+def is_low_object(size, rotation=None, max_height=LOW_OBJECT_MAX_HEIGHT, max_footprint=SMALL_OBJECT_MAX_FOOTPRINT,
+                  up=(0.0, 0.0, 1.0)):
+    '''True for an object to grasp from the top only: lower than max_height, or both horizontal sides below
+    max_footprint (0 = no footprint rule); a box without a size never is'''
+    if len(size) != 3 or min(float(v) for v in size) <= 0.0:
+        return False
+    height, footprint = box_height_and_footprint(size, rotation, up)
+    return height < max_height or footprint < max_footprint
+
+
+def tilt_from_vertical_deg(approach, up=(0.0, 0.0, 1.0)):
+    '''angle (deg) between an approach direction and straight down (-up)'''
+    a, u = _unit(approach), _unit(up)
+    return math.degrees(math.acos(max(-1.0, min(1.0, -sum(x * y for x, y in zip(a, u))))))
+
+
+# ---------------------------------------------------------------- one-sided boxes (2026-09-28, real Pringles can)
+# The grasp view sees only the front of an object: the box of a standing Pringles can came out 7.3 x 3.6 x 24 cm for a
+# ~7.5 cm can, so the planning scene lacked its back half (the ranking uses the fuller committed box, or widens a
+# one-view box itself). A standing elongated box (height at least CYLINDER_MIN_ELONGATION times its wider horizontal
+# side) whose side along the line of sight is the shorter one gets a square footprint, extended away from the camera;
+# flat, lying and wide boxes stay as measured.
+
+
+def complete_one_sided_box(size, rotation, centre, sight, min_elongation=CYLINDER_MIN_ELONGATION):
+    '''
+    (size, centre) of a box seen from one side, completed as above, or None when it stays. size: (x, y, z) side lengths
+    with the box z axis vertical (within STANDING_MAX_TILT_DEG); rotation: 3x3 rows of the box orientation; centre:
+    (x, y, z); sight: direction from the camera to the box in the same frame (its vertical part is ignored).
+    '''
+    dims = [float(v) for v in size]
+    s = _unit((float(sight[0]), float(sight[1]), 0.0))
+    if min(dims) <= 0.0 or s == (0.0, 0.0, 0.0):
+        return None
+    axes = [tuple(float(rotation[r][c]) for r in range(3)) for c in range(3)]
+    if abs(axes[2][2]) < math.cos(math.radians(STANDING_MAX_TILT_DEG)):
+        return None
+    along = [sum(a * b for a, b in zip(axes[c], s)) for c in (0, 1)]
+    depth_axis = 0 if abs(along[0]) >= abs(along[1]) else 1
+    depth, width = dims[depth_axis], dims[1 - depth_axis]
+    if depth >= width or dims[2] < min_elongation * width:
+        return None
+    grow = (width - depth) / 2.0 * (1.0 if along[depth_axis] >= 0.0 else -1.0)
+    completed = list(dims)
+    completed[depth_axis] = width
+    return completed, tuple(float(c) + grow * a for c, a in zip(centre, axes[depth_axis]))
