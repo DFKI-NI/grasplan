@@ -1180,7 +1180,22 @@ class PickTools:
             rospy.logerr('grasp failed')
             if result:  # if result is None it means moveit action server was not found within 2 secs
                 print_moveit_error(result)  # only print moveit error if result is different than None
+            if self.mtc is not None and self.mtc.executed and not self.pick_action_server.is_preempt_requested():
+                self.retract_after_failure('pick')
         return False
+
+    def retract_after_failure(self, what):
+        '''
+        a failed pick that moved the arm leaves it over the table (Oscar 2026-09-28, banana: "after failing it should
+        retract the arm, not leave the arm in the open"): the gripper was opened already, the arm goes back to
+        ~retract_pose_after_failure (default transport, empty = stays) with the guarded named move
+        '''
+        pose = rospy.get_param('~retract_pose_after_failure', 'transport')
+        if not pose:
+            return
+        rospy.loginfo(f'{what} failed after the arm moved: retracting the arm to {pose}')
+        if not self.move_arm_to_posture(pose):
+            rospy.logwarn(f'could not retract the arm to {pose} after the failed {what}')
 
     def top_grasps_for_low_objects(self, grasps, widths, object_pose, bounding_box, hint=None):
         '''

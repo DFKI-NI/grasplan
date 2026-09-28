@@ -744,6 +744,15 @@ class MtcPickPlace:
             allow.allowCollisions(OCTOMAP_COLLISION_NAME, self.gripper_links + [obj], True)
         task.add(allow)
         roles.append(NOOP)
+        if self.allow_octomap_contact and rospy.get_param('~mtc_place_octomap_blocks_transfer', True):
+            # the octomap contact above is for the place pose and the final lowering only (the IK monitors 'allow
+            # object contacts'): the transfer is planned in the scene before the connect, so forbidding it again here
+            # makes 'move to preplace' avoid octomap obstacles with the held object and the gripper, and a pre-place
+            # pose inside one infeasible (real 2026-09-28: a klt smashed into an unknown object on table_3)
+            block = stages.ModifyPlanningScene('octomap blocks the transfer')
+            block.allowCollisions(OCTOMAP_COLLISION_NAME, self.gripper_links + [obj], False)
+            task.add(block)
+            roles.append(NOOP)
 
         task.add(self.connect('move to preplace'))
         roles.append(ARM)

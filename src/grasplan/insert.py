@@ -145,6 +145,9 @@ class InsertTools:
                 break
             if getattr(self.place, 'mtc', None) is not None and self.place.mtc.executed:
                 break  # the arm moved (maybe the gripper already opened): report instead of retrying (#128)
+        if (not success and getattr(self.place, 'mtc', None) is not None and self.place.mtc.executed
+                and not self.insert_action_server.is_preempt_requested()):
+            self.place.retract_after_failure('insert')
         if success:
             self.insert_action_server.set_succeeded(InsertObjectResult(success=True))
         elif self.insert_action_server.is_preempt_requested():

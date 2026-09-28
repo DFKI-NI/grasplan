@@ -275,6 +275,19 @@ class PlaceTools:
                 # add all perceived objects to planning scene (one at at time)
                 self.scene.add_box(object_name, pose_stamped_msg, object_bounding_box)
 
+    def retract_after_failure(self, what):
+        '''
+        a failed place or insert that moved the arm leaves it over the table (Oscar 2026-09-28: "retract the arm, not
+        leave the arm in the open"): back to ~retract_pose_after_failure (default transport, empty = stays) with the
+        guarded named move
+        '''
+        pose = rospy.get_param('~retract_pose_after_failure', 'transport')
+        if not pose:
+            return
+        rospy.loginfo(f'{what} failed after the arm moved: retracting the arm to {pose}')
+        if not self.move_arm_to_posture(pose):
+            rospy.logwarn(f'could not retract the arm to {pose} after the failed {what}')
+
     def picked_open_set(self, object_name):
         '''
         whether object_name was picked open-set, decided like the pick node does: its class is not in the pick node's
@@ -357,6 +370,8 @@ class PlaceTools:
                     break
                 if self.mtc is not None and self.mtc.executed:
                     break  # the arm moved: the caller decides about a retry (#128)
+        if not success and self.mtc is not None and self.mtc.executed and not self.place_action_server.is_preempt_requested():
+            self.retract_after_failure('place')
         if success:
             self.place_action_server.set_succeeded(PlaceObjectResult(success=True))
         elif self.place_action_server.is_preempt_requested():
