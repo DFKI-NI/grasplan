@@ -108,6 +108,16 @@ def transform_to_matrix(transform):
     return matrix
 
 
+
+def place_retreat_passes(relaxed_min_distance, force_straight_up=False):
+    '''
+    (retreat_min_distance or None for the configured one, straight_up) per place pass (#136): the retreat along the
+    gripper axis, straight up, then both with the relaxed minimum distance; each later pass runs only when locations
+    of the earlier ones failed at the retreat. force_straight_up (a test switch) leaves out the axis passes.
+    '''
+    passes = [(None, False), (None, True), (relaxed_min_distance, False), (relaxed_min_distance, True)]
+    return [p for p in passes if p[1]] if force_straight_up else passes
+
 class CableGuard:
     '''
     Arm cable entanglement as constraints on MTC paths (#124), from the cable model of
@@ -319,8 +329,11 @@ class MtcPickPlace:
         except (tf2_ros.TransformException, ValueError) as e:
             rospy.logerr(f'mtc: cannot place {goal.attached_object_name}: {e}')
             return result
-        passes = [(None, False), (None, True), (self.relaxed_retreat_min_distance, False),
-                  (self.relaxed_retreat_min_distance, True)]
+        # testing #136 (read per goal): skip the axis retreat so the straight-up retreat is planned and executed
+        force_straight_up = bool(rospy.get_param('~mtc_test_force_straight_up', False))
+        if force_straight_up:
+            rospy.logwarn('mtc: TEST ~mtc_test_force_straight_up: planning the place locations with a retreat straight up')
+        passes = place_retreat_passes(self.relaxed_retreat_min_distance, force_straight_up)
         for number, (retreat_min_distance, straight_up) in enumerate(passes):
             if number > 0:
                 if not self.retreat_failed:
@@ -339,6 +352,9 @@ class MtcPickPlace:
                 except (tf2_ros.TransformException, ValueError) as e:
                     rospy.logwarn(f'mtc: place location {location.id} skipped: {e}')
                     continue
+                if task is None and force_straight_up:
+                    # its own retreat is already vertical: the axis plan is the straight-up plan
+                    task, roles = self.make_place_task(goal, location, eef_to_object, retreat_min_distance, False)
                 if task is None:
                     self.retreat_failed = True  # same plan as the axis retreat, keep going to the next pass
                     continue
