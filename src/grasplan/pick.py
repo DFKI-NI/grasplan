@@ -96,6 +96,12 @@ ACTION_STATES = {value: name for name, value in vars(GoalStatus).items() if name
 OCTOMAP_COLLISION_NAME = '<octomap>'
 
 
+def pick_from_current_state():
+    '''#198 (d) ~open_set_pick_from_current_state: default on in the sim (/use_sim_time), off on the real robot until
+    tested there (Oscar 2026-09-28)'''
+    return bool(rospy.get_param('~open_set_pick_from_current_state', rospy.get_param('/use_sim_time', False)))
+
+
 class PickTools:
     def __init__(self):
 
@@ -1071,14 +1077,16 @@ class PickTools:
         # = plan from the view as before) with the guarded named move, so MTC plans the grasp from there instead of
         # swinging the wrist straight from the upside-down view (real T1: wrist_3 272 -> 133 deg at ~85 deg/s into a
         # protective stop). The IK pre-filter, the cable ranking and the IK pin below read the joints after this move.
+        # #198 (d) (~open_set_pick_from_current_state): the move waits until the grasps are ranked from the current
+        # state (reachable_external_grasps -> settle_pick_start) and happens only when that state does not suit
+        self.deferred_start_pose, self.stayed_for_pick, self.pick_start_failed = '', '', ''
         if external_grasp_candidates is not None:
             start_pose = rospy.get_param('~open_set_pick_start_pose', 'transport')
-            if start_pose and not self.move_arm_to_posture(start_pose):
-                reason = f'could not move the arm to {start_pose!r} before planning the grasp'
-                rospy.logerr(reason)
-                if self.mtc is not None:
-                    self.mtc.failure_reason = reason
-                return False
+            if start_pose and pick_from_current_state():
+                self.deferred_start_pose = start_pose
+            elif start_pose and not self.move_arm_to_posture(start_pose):
+                self.pick_start_failed = start_pose
+                return self.start_pose_failed()
         # a gripper left closed with nothing in it (real 2026-09-28: a Pringles can lost during a place) has its fingers
         # inside the target box in every grasp pose the IK pre-filter and MTC check (MTC sends the open posture only at
         # execution), so every grasp fails as "in collision"; ~open_gripper_before_pick (default true) opens it first
@@ -1118,7 +1126,10 @@ class PickTools:
                 grasps, widths, low = self.top_grasps_for_low_objects(grasps, widths, object_pose, bounding_box,
                                                                       grasp_type_hint)
                 grasps = self.raise_low_grasps(grasps, support_surface_name, widths, sink=low)
+                candidates = grasps
                 grasps = self.reachable_external_grasps(grasps)
+                if self.pick_start_failed:
+                    return self.start_pose_failed()
             if not grasps:
                 rospy.logwarn(f'no open-set grasp of {object_to_pick.get_object_class_and_id_as_string()} keeps the '
                               f'fingertips clear of {support_surface_name}')
@@ -1145,34 +1156,43 @@ class PickTools:
 
         # try to pick object with moveit
         # result = self._pick_with_moveit_commander(object_to_pick, grasps, support_surface_name)
-        batch = self.external_grasp_batch_size if external_grasp_candidates is not None else 0
-        planning_started = time.time()
-        # cable gate (#151): the grasps predicted to pass the cable guard go first in batches of their own; the rest is
-        # offered only when all of them failed
-        gated = external_grasp_candidates is not None and 0 < self.cable_gate_passing < len(grasps)
-        if (batch > 0 and len(grasps) > batch) or gated:
-            result = None
-            for start, end in gate_chunks(len(grasps), self.cable_gate_passing if gated else 0, batch):
-                chunk = grasps[start:end]
-                if gated and start == self.cable_gate_passing:
-                    rospy.loginfo(f'cable gate: all {start} predicted-pass grasps failed, offering the '
-                                  f'{len(grasps) - start} held back')
-                rospy.loginfo(
-                    f'trying grasps {start + 1}-{start + len(chunk)} of {len(grasps)} (best first, qualities '
-                    f'{", ".join(f"{g.grasp_quality:.3f}" for g in chunk)})'
-                )
-                chunk_started = time.time()
-                result = self._pick_with_action(object_to_pick, chunk, support_surface_name)
-                rospy.loginfo(f'grasps {start + 1}-{start + len(chunk)}: result {result} after '
-                              f'{time.time() - chunk_started:.1f} s ({time.time() - planning_started:.1f} s in total)')
-                if result == MoveItErrorCodes.SUCCESS or result is None:
-                    break
-                if self.mtc is not None and self.mtc.executed:
-                    break  # the arm moved (e.g. closed on nothing): report instead of retrying from a changed state
-                if self.pick_action_server.is_preempt_requested():
+        if self.deferred_start_pose:   # not settled by the ranking (no IK pre-filter, top-down fallback): as before
+            pose, self.deferred_start_pose = self.deferred_start_pose, ''
+            if not self.move_arm_to_posture(pose):
+                self.pick_start_failed = pose
+                return self.start_pose_failed()
+        first = grasps
+        retry = rospy.get_param('~open_set_pick_from_current_state_retry', True)
+        if self.stayed_for_pick and retry and 0 < self.cable_gate_passing < len(grasps):
+            # from the current state only the grasps predicted to pass; the others from the start pose (retry below)
+            first = grasps[: self.cable_gate_passing]
+            rospy.loginfo(f'from the current arm state: the {len(first)} predicted-pass grasps, the other '
+                          f'{len(grasps) - len(first)} from {self.stayed_for_pick} if needed')
+        result = self.offer_grasps(object_to_pick, first, support_surface_name, external_grasp_candidates is not None)
+        if result is False:
+            return False   # preempted
+        # #198 (d): planned from the current state and every grasp failed before the arm moved: once more from the
+        # start pose, like without the switch (~open_set_pick_from_current_state_retry)
+        if (
+            self.stayed_for_pick
+            and result not in (MoveItErrorCodes.SUCCESS, None)
+            and self.arm_did_not_move(result)
+            and not self.pick_action_server.is_preempt_requested()
+            and retry
+        ):
+            pose, self.stayed_for_pick = self.stayed_for_pick, ''
+            rospy.logwarn(f'every grasp failed from the current arm state: moving the arm to {pose} and trying again')
+            if not self.move_arm_to_posture(pose):
+                self.pick_start_failed = pose
+                return self.start_pose_failed()
+            if getattr(self, 'ik_prefilter', None) is not None:   # the same IK solutions, ranked from here
+                grasps = self.limit_offer(self.rank_prefiltered(self.robot.get_current_state().joint_state))
+            else:
+                grasps = self.reachable_external_grasps(candidates)
+            if grasps:
+                result = self.offer_grasps(object_to_pick, grasps, support_surface_name, True)
+                if result is False:
                     return False
-        else:
-            result = self._pick_with_action(object_to_pick, grasps, support_surface_name)
         # every AnyGrasp grasp failed before the arm moved (no IK, blocked lift, ...): try the top-down fallback once
         if (
             external_grasp_candidates is not None
@@ -1396,6 +1416,92 @@ class PickTools:
                           f'{", ".join(dropped)}')
         return kept
 
+    def start_pose_failed(self):
+        '''the arm could not reach the open-set pick start pose: the pick stops, the reason goes to the action text'''
+        reason = f'could not move the arm to {self.pick_start_failed!r} before planning the grasp'
+        rospy.logerr(reason)
+        if self.mtc is not None:
+            self.mtc.failure_reason = reason
+        return False
+
+    def settle_pick_start(self, ranked, reachable, solutions, colliding, start):
+        '''
+        #198 (d): the open-set grasps were ranked from the current arm state (IK seeded there, cable prediction from
+        there). Plan from here, without the move to the start pose, when the first grasp to be tried is predicted to
+        pass the cable gate and turns wrist_3 by at most ~open_set_pick_from_current_max_wrist_3_deg (default 90; the
+        swing from the upside-down grasp view that the start pose avoids was 139 deg, real T1 2026-09-28). Otherwise move
+        to the start pose now and rank again from there, with the same IK solutions. Returns the grasps to offer;
+        [] with self.pick_start_failed set when the move failed.
+        '''
+        if not ranked:
+            return ranked   # nothing reachable: the top-down fallback, if any, is planned from the start pose
+        pose, self.deferred_start_pose = self.deferred_start_pose, ''
+        reason = self.current_state_unsuitable(ranked[0], dict(zip((g.id for g in reachable), solutions)), start)
+        if reason is None:
+            self.stayed_for_pick = pose
+            rospy.loginfo(f'planning the grasp from the current arm state, without the move to {pose}')
+            return ranked
+        rospy.loginfo(f'moving the arm to {pose} before planning the grasp: {reason}')
+        if not self.move_arm_to_posture(pose):
+            self.pick_start_failed = pose
+            return []
+        state = self.robot.get_current_state()
+        return self.rank_by_predicted_cable_stretch(reachable, solutions, state.joint_state) + colliding
+
+    def current_state_unsuitable(self, first, solutions_by_id, start):
+        '''why the current arm state is no start for the first grasp (settle_pick_start), None when it is'''
+        solution = solutions_by_id.get(first.id)
+        if solution is None:
+            return f'{first.id} has only an IK solution in collision'
+        guard = self.mtc.cable_guard if self.mtc is not None else None
+        if guard is not None and self.cable_gate_passing < 1:
+            return 'no grasp is predicted to pass the cable guard from here'
+        limit = math.radians(rospy.get_param('~open_set_pick_from_current_max_wrist_3_deg', 90.0))
+        now = dict(zip(start.name, start.position)) if start is not None else {}
+        goal = dict(zip(solution.name, solution.position))
+        wrist_3 = next((name for name in goal if name.endswith('wrist_3_joint')), None)
+        if wrist_3 is None or wrist_3 not in now:
+            return 'wrist_3 unknown'
+        turn = abs(goal[wrist_3] - now[wrist_3])
+        if turn > limit:
+            return f'wrist_3 would turn {math.degrees(turn):.0f} deg (more than {math.degrees(limit):.0f})'
+        return None
+
+    def offer_grasps(self, object_to_pick, grasps, support_surface_name, external):
+        '''
+        plan and execute the ranked grasps: in batches of ~external_grasp_batch_size (external = open-set), the cable
+        gate's predicted-pass grasps first (#151); the MoveIt error code of the last try, False when preempted
+        '''
+        batch = self.external_grasp_batch_size if external else 0
+        planning_started = time.time()
+        # cable gate (#151): the grasps predicted to pass the cable guard go first in batches of their own; the rest is
+        # offered only when all of them failed
+        gated = external and 0 < self.cable_gate_passing < len(grasps)
+        if (batch > 0 and len(grasps) > batch) or gated:
+            result = None
+            for start, end in gate_chunks(len(grasps), self.cable_gate_passing if gated else 0, batch):
+                chunk = grasps[start:end]
+                if gated and start == self.cable_gate_passing:
+                    rospy.loginfo(f'cable gate: all {start} predicted-pass grasps failed, offering the '
+                                  f'{len(grasps) - start} held back')
+                rospy.loginfo(
+                    f'trying grasps {start + 1}-{start + len(chunk)} of {len(grasps)} (best first, qualities '
+                    f'{", ".join(f"{g.grasp_quality:.3f}" for g in chunk)})'
+                )
+                chunk_started = time.time()
+                result = self._pick_with_action(object_to_pick, chunk, support_surface_name)
+                rospy.loginfo(f'grasps {start + 1}-{start + len(chunk)}: result {result} after '
+                              f'{time.time() - chunk_started:.1f} s ({time.time() - planning_started:.1f} s in total)')
+                if result == MoveItErrorCodes.SUCCESS or result is None:
+                    break
+                if self.mtc is not None and self.mtc.executed:
+                    break  # the arm moved (e.g. closed on nothing): report instead of retrying from a changed state
+                if self.pick_action_server.is_preempt_requested():
+                    return False   # preempted
+        else:
+            result = self._pick_with_action(object_to_pick, grasps, support_surface_name)
+        return result
+
     def arm_did_not_move(self, result):
         '''whether a failed pick left the arm where it was: MTC knows, MoveIt's pickup only when planning failed'''
         if self.mtc is not None:
@@ -1571,6 +1677,7 @@ class PickTools:
         '''
         started = time.time()
         offered = len(grasps)
+        self.ik_prefilter = None   # (reachable, solutions, colliding), re-ranked by a retry without a new IK
         if self.mtc is not None:
             self.mtc.grasp_ik_states = {}
         if self.external_grasp_ik_prefilter and grasps:
@@ -1578,6 +1685,7 @@ class PickTools:
             try:
                 ik.wait_for_service(2.0)
                 state = self.robot.get_current_state()
+                seed = self.ik_seed_state(state)
                 reachable, solutions, colliding = [], [], []
                 # with the strict contact order (#151) MTC's grasp IK rejects solutions that collide with the object,
                 # so the ranked (and pinned) solution must be collision-free too; grasps whose only solution collides
@@ -1588,7 +1696,7 @@ class PickTools:
                     for avoid_collisions in ((True, False) if strict else (False,)):
                         request = GetPositionIKRequest()
                         request.ik_request.group_name = self.arm_group_name
-                        request.ik_request.robot_state = state
+                        request.ik_request.robot_state = seed
                         request.ik_request.avoid_collisions = avoid_collisions
                         request.ik_request.ik_link_name = self.robot.arm.get_end_effector_link()
                         request.ik_request.pose_stamped = grasp.grasp_pose
@@ -1606,15 +1714,32 @@ class PickTools:
                 rospy.loginfo(f'IK pre-filter: {len(reachable) + len(colliding)} of {offered} grasps reachable'
                               + (f', {len(colliding)} of them only with a colliding IK solution' if strict else '')
                               + f' ({time.time() - started:.1f} s)')
-                grasps = self.rank_by_predicted_cable_stretch(reachable, solutions, state.joint_state) + colliding
-                if self.mtc is not None:
-                    by_id = {grasp.id: solution for grasp, solution in zip(reachable, solutions)}
-                    offered_ids = [g.id for g in grasps[: self.external_grasp_max_attempts or len(grasps)]]
-                    self.mtc.grasp_ik_states = {i: by_id[i] for i in offered_ids if i in by_id}
+                self.ik_prefilter = (reachable, solutions, colliding)
+                grasps = self.rank_prefiltered(state.joint_state, settle=True)
             except (rospy.ROSException, rospy.ServiceException) as e:
                 rospy.logwarn(f'IK pre-filter skipped, compute_ik unavailable: {e}')
             finally:
                 ik.close()
+        return self.limit_offer(grasps)
+
+    def rank_prefiltered(self, start, settle=False):
+        '''
+        the IK pre-filter's grasps ranked by the cable stretch predicted from start (sensor_msgs/JointState), the
+        ranked IK solutions pinned in MTC; settle: decide first whether the pick starts from here (#198 (d),
+        settle_pick_start). Also used by the retry from the start pose, which needs no new IK.
+        '''
+        reachable, solutions, colliding = self.ik_prefilter
+        grasps = self.rank_by_predicted_cable_stretch(reachable, solutions, start) + colliding
+        if settle and getattr(self, 'deferred_start_pose', ''):
+            grasps = self.settle_pick_start(grasps, reachable, solutions, colliding, start)
+        if self.mtc is not None:
+            by_id = {grasp.id: solution for grasp, solution in zip(reachable, solutions)}
+            offered_ids = [g.id for g in grasps[: self.external_grasp_max_attempts or len(grasps)]]
+            self.mtc.grasp_ik_states = {i: by_id[i] for i in offered_ids if i in by_id}
+        return grasps
+
+    def limit_offer(self, grasps):
+        '''at most ~external_grasp_max_attempts grasps; the cable gate count follows'''
         if 0 < self.external_grasp_max_attempts < len(grasps):
             rospy.loginfo(f'offering the best {self.external_grasp_max_attempts} of {len(grasps)} grasps')
             grasps = grasps[: self.external_grasp_max_attempts]
@@ -1623,6 +1748,29 @@ class PickTools:
             rospy.loginfo(f'cable gate: {self.cable_gate_passing} predicted-pass offered first, '
                           f'{len(grasps) - self.cable_gate_passing} held back')
         return grasps
+
+    def ik_seed_state(self, state):
+        '''
+        the robot state that seeds the IK pre-filter: the current one, or, while the move to the open-set start pose
+        waits (#198 (d)), the current one with the arm at that pose, so the grasps get the same IK branches as when
+        the arm had moved there first (sim 2026-09-29: seeded at the upside-down grasp view, the Pringles branches
+        failed the cable guard in the shoulder span, seeded at transport they planned at once)
+        '''
+        pose = getattr(self, 'deferred_start_pose', '')
+        if not pose:
+            return state
+        try:
+            values = self.robot.arm.get_named_target_values(pose)
+        except Exception as e:  # noqa: BLE001 - an unknown pose keeps the current state as the seed
+            rospy.logwarn(f'IK seed: no joint values of {pose!r} ({e}), seeding with the current state')
+            return state
+        seed = copy.deepcopy(state)
+        names, positions = list(seed.joint_state.name), list(seed.joint_state.position)
+        for name, value in values.items():
+            if name in names:
+                positions[names.index(name)] = value
+        seed.joint_state.position = positions
+        return seed
 
     def rank_by_predicted_cable_stretch(self, grasps, joint_states, start=None):
         '''
