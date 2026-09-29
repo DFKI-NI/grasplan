@@ -69,6 +69,11 @@ from typing import List
 from std_msgs.msg import Header
 
 
+def release_clearance_by_height():
+    '''#202: read the release-height flag per place; the code default is off.'''
+    return bool(rospy.get_param('~open_set_place_clearance_by_height', False))
+
+
 def place_within_reach():
     '''#217 ~place_sample_within_reach: default on in the sim (/use_sim_time), off on the real robot until tested there'''
     return bool(rospy.get_param('~place_sample_within_reach', rospy.get_param('/use_sim_time', False)))
@@ -348,6 +353,25 @@ class PlaceTools:
         if place_within_reach() and max_reach > 0.0 and fallback > max_reach:
             return [max_reach, fallback]
         return [max_reach]
+
+    def open_set_release_clearance(self, held_name):
+        '''
+        #202 part (2) (~open_set_place_clearance_by_height, off unless enabled): how far above the support an open-set
+        object is released. A tall one (box height >= ~open_set_place_tall_ratio (2.0) x its smaller footprint side, e.g.
+        the Pringles can 25.8 / 9.2 cm) ~open_set_place_clearance_tall (0.01: it tipped from 2 cm, released 0.5 cm it
+        stood 4/4), the others ~open_set_place_clearance_flat (0.04: claude-b1ef's series, 6/6 places without the
+        lowering aborts that 3 of 10 had at 0.02). Off, or without a box of the held object: ~open_set_place_clearance.
+        '''
+        if not release_clearance_by_height():
+            return self.open_set_place_clearance
+        attached = self.scene.get_attached_objects([held_name]).get(held_name)
+        if attached is None or not attached.object.primitives or len(attached.object.primitives[0].dimensions) < 3:
+            return self.open_set_place_clearance
+        size = list(attached.object.primitives[0].dimensions)[:3]
+        tall = size[2] >= rospy.get_param('~open_set_place_tall_ratio', 2.0) * min(size[0], size[1])
+        if tall:
+            return float(rospy.get_param('~open_set_place_clearance_tall', 0.01))
+        return float(rospy.get_param('~open_set_place_clearance_flat', 0.04))
 
     def reach_disk(self, support_object, max_reach=None):
         '''
@@ -709,14 +733,15 @@ class PlaceTools:
         open_set_options = {}
         if object_class_tbp not in OBJECT_HEIGHTS:
             steps = max(1, self.open_set_place_yaw_steps)
+            clearance = self.open_set_release_clearance(object_to_be_placed)
             open_set_options = {
                 'yaw_range': 2.0 * math.pi,
                 'yaws': [2.0 * math.pi * step / steps for step in range(steps)],
-                'height_offset': self.open_set_place_clearance,
+                'height_offset': clearance,
             }
             rospy.loginfo(
                 f'{object_class_tbp} is an open-set object: {steps} yaws around the full circle, '
-                f'released {self.open_set_place_clearance * 100:.1f} cm above {support_object}'
+                f'released {clearance * 100:.1f} cm above {support_object}'
             )
         # #217: drawn within ~place_max_reach; when none of them has a free footprint, drawn again within
         # ~place_max_reach_fallback (the comfortable re-pick distance of #132 is no hard limit, MTC decides the reach)
