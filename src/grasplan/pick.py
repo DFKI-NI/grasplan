@@ -96,6 +96,15 @@ ACTION_STATES = {value: name for name, value in vars(GoalStatus).items() if name
 OCTOMAP_COLLISION_NAME = '<octomap>'
 
 
+def external_grasp_ik_timeout():
+    '''#198 (f) ~external_grasp_ik_timeout (s): the compute_ik timeout per call of the open-set IK pre-filter. TRAC-IK in
+    Distance mode always spends its whole timeout (then returns the solution closest to the seed), so 0.1 s x up to 2
+    calls x ~46 grasps cost 3.4-5.3 s per pick (claude-7e2a, #198 23:53; 12.3 s for 66 grasps in the sim 2026-09-29).
+    Default 0.01 in the sim (/use_sim_time), 0.1 on the real robot until tested there (Oscar 2026-09-28)'''
+    default = 0.01 if rospy.get_param('/use_sim_time', False) else 0.1
+    return max(0.001, float(rospy.get_param('~external_grasp_ik_timeout', default)))
+
+
 def pick_from_current_state():
     '''#198 (d) ~open_set_pick_from_current_state: default on in the sim (/use_sim_time), off on the real robot until
     tested there (Oscar 2026-09-28)'''
@@ -1691,6 +1700,7 @@ class PickTools:
                 # so the ranked (and pinned) solution must be collision-free too; grasps whose only solution collides
                 # (e.g. with the octomap, which MTC may touch) stay offered, after the others and not pinned
                 strict = bool(getattr(self.mtc, 'strict_contact_order', False)) if self.mtc is not None else False
+                ik_timeout = external_grasp_ik_timeout()
                 for grasp in grasps:
                     response = None
                     for avoid_collisions in ((True, False) if strict else (False,)):
@@ -1700,7 +1710,7 @@ class PickTools:
                         request.ik_request.avoid_collisions = avoid_collisions
                         request.ik_request.ik_link_name = self.robot.arm.get_end_effector_link()
                         request.ik_request.pose_stamped = grasp.grasp_pose
-                        request.ik_request.timeout = rospy.Duration(0.1)
+                        request.ik_request.timeout = rospy.Duration(ik_timeout)
                         response = ik(request)
                         if response.error_code.val == MoveItErrorCodes.SUCCESS:
                             break
@@ -1711,7 +1721,8 @@ class PickTools:
                     else:
                         reachable.append(grasp)
                         solutions.append(response.solution.joint_state)
-                rospy.loginfo(f'IK pre-filter: {len(reachable) + len(colliding)} of {offered} grasps reachable'
+                rospy.loginfo(f'IK pre-filter ({ik_timeout * 1000:.0f} ms per call): '
+                              f'{len(reachable) + len(colliding)} of {offered} grasps reachable'
                               + (f', {len(colliding)} of them only with a colliding IK solution' if strict else '')
                               + f' ({time.time() - started:.1f} s)')
                 self.ik_prefilter = (reachable, solutions, colliding)
