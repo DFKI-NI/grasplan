@@ -77,6 +77,7 @@ from shape_msgs.msg import SolidPrimitive
 from moveit.task_constructor import core, stages
 
 from grasplan.tools.octomap_probe import count_in_box, occupied_leaves
+from grasplan.tools.common import robot_prefix
 
 # the name MoveIt gives the octomap inside the planning scene (planning_scene::PlanningScene::OCTOMAP_NS)
 OCTOMAP_COLLISION_NAME = '<octomap>'
@@ -220,6 +221,7 @@ class CableGuard:
         )
         with open(config) as f:
             self.cfg = config_from_dict(yaml.safe_load(f))
+        self.cfg.tf_prefix = robot_prefix() + '/'   # #226: this robot's links (mobipick/, mobipick2/, ...)
         self.model = CableModel(rospy.get_param('robot_description'), self.cfg)
         wrist_3 = [wj for span in self.cfg.spans for wj in span.joints if wj.joint == 'ur5_wrist_3_joint']
         self.wrist_3_neutral = wrist_3[0].neutral if wrist_3 else math.pi - 0.25
@@ -484,7 +486,7 @@ class MtcPickPlace:
         # the open-set octomap has voxels on the target itself; like the pick pipeline workaround in pick.py the
         # gripper and the held object may touch it, the rest of the robot may not
         self.allow_octomap_contact = rospy.get_param('~allow_octomap_contact_during_pick', True)
-        self.gripper_action_name = rospy.get_param('~gripper_action_name', '/mobipick/gripper_hw')
+        self.gripper_action_name = rospy.get_param('~gripper_action_name', f'/{robot_prefix()}/gripper_hw')
         self.gripper_action_timeout = rospy.get_param('~mtc_gripper_action_timeout', 10.0)
         self.relaxed_retreat_min_distance = rospy.get_param('~mtc_relaxed_retreat_min_distance', 0.05)
         self.retreat_failed = False

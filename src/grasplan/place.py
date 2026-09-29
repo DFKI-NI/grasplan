@@ -41,7 +41,7 @@ from grasplan.tools.support_plane_tools import (
     make_plane_marker_msg,
     OBJECT_HEIGHTS,
 )
-from grasplan.tools.common import separate_object_class_from_id, connect_move_groups, roscpp_initialize_named
+from grasplan.tools.common import separate_object_class_from_id, connect_move_groups, roscpp_initialize_named, robot_prefix
 from grasplan.tools.moveit_errors import print_moveit_error
 from grasplan.tools.place_reach import order_by_reach, order_free_first
 from grasplan.tools.topdown_grasps import depth_below_support_top, height_above_support_top, rests_on_other
@@ -384,7 +384,7 @@ class PlaceTools:
             max_reach = rospy.get_param('~place_max_reach', 0.8)
         if not place_within_reach() or max_reach <= 0.0:
             return None
-        reach_frame = rospy.get_param('~place_reach_frame', 'mobipick/ur5_base_link')
+        reach_frame = rospy.get_param('~place_reach_frame', f'{robot_prefix()}/ur5_base_link')
         try:
             base = self.tf_buffer.lookup_transform(support_object, reach_frame, rospy.Time(0),
                                                    rospy.Duration(1.0)).transform.translation
@@ -459,7 +459,7 @@ class PlaceTools:
         handcoded grasp catalog (rosparam ~pick_grasp_catalog_param, default
         /mobipick/pick_object_node/handcoded_grasp_planner_transforms); False when that catalog cannot be read
         '''
-        name = rospy.get_param('~pick_grasp_catalog_param', '/mobipick/pick_object_node/handcoded_grasp_planner_transforms')
+        name = rospy.get_param('~pick_grasp_catalog_param', f'/{robot_prefix()}/pick_object_node/handcoded_grasp_planner_transforms')
         catalog = rospy.get_param(name, None) if name else None
         if not isinstance(catalog, (dict, list)):
             return False
@@ -597,7 +597,7 @@ class PlaceTools:
         """
         if not rospy.get_param('~place_prefer_near_arm', True) or not place_poses.objects:
             return
-        reach_frame = rospy.get_param('~place_reach_frame', 'mobipick/ur5_base_link')
+        reach_frame = rospy.get_param('~place_reach_frame', f'{robot_prefix()}/ur5_base_link')
         try:
             base = self.tf_buffer.lookup_transform(
                 place_poses.header.frame_id, reach_frame, rospy.Time(0), rospy.Duration(1.0)
@@ -649,7 +649,7 @@ class PlaceTools:
         # One query for all objects: a query per object took about 1 s each over Wi-Fi to the real robot
         for obj_name, obj in planning_scene.get_objects().items():
             tf = TransformStamped(
-                header=Header(frame_id="map"),
+                header=Header(frame_id=self.global_reference_frame),   # #226: mobipick2/map for a second robot
                 child_frame_id=obj_name,
                 transform=Transform(
                     translation=Vector3(x=obj.pose.position.x, y=obj.pose.position.y, z=obj.pose.position.z),
@@ -1072,11 +1072,11 @@ class PlaceTools:
         # The approach motion
         # GripperTranslation pre_place_approach
         # TODO after tables demo: make robot place from the left as well by parameterizing this value
-        place_msg.pre_place_approach = self.make_gripper_translation_msg('mobipick/base_link', 0.2, vector_z=-1.0)
+        place_msg.pre_place_approach = self.make_gripper_translation_msg(f'{robot_prefix()}/base_link', 0.2, vector_z=-1.0)
 
         # The retreat motion
         # GripperTranslation post_place_retreat
-        place_msg.post_place_retreat = self.make_gripper_translation_msg('mobipick/gripper_tcp', 0.25, vector_x=-1.0)
+        place_msg.post_place_retreat = self.make_gripper_translation_msg(f'{robot_prefix()}/gripper_tcp', 0.25, vector_x=-1.0)
 
         # an optional list of obstacles that we have semantic information about
         # and that can be touched/pushed/moved in the course of grasping

@@ -64,7 +64,7 @@ from grasplan.msg import (
     PickObjectResult,
 )
 from grasplan.srv import ViewObject
-from grasplan.tools.common import objectToPick, connect_move_groups, roscpp_initialize_named
+from grasplan.tools.common import objectToPick, connect_move_groups, roscpp_initialize_named, robot_prefix
 from grasplan.tools.action_client_helper import ActionClientHelper
 from grasplan.tools.gripper_envelope import fingertip_envelope, lowest_point_offset
 from grasplan.tools.topdown_grasps import (
@@ -168,7 +168,7 @@ class PickTools:
         # whole object within the depth range); when it is missing or fails the pick fails, unless
         # ~anygrasp_named_view_fallback sends the arm to anygrasp_arm_pose instead (the old behaviour)
         self.anygrasp_view_service = rospy.get_param('~anygrasp_view_service', '/mobipick/grasp_view')
-        self.gripper_action_name = rospy.get_param('~gripper_action_name', '/mobipick/gripper_hw')
+        self.gripper_action_name = rospy.get_param('~gripper_action_name', f'/{robot_prefix()}/gripper_hw')
         self.gripper_action_timeout = rospy.get_param('~gripper_action_timeout', 2.0)
         # MoveIt's pickup/place action servers live in move_group, which on the real robot runs on the
         # robot PC; connecting to it from another machine can take seconds, so the client is created
@@ -678,7 +678,7 @@ class PickTools:
         '''
         if not rospy.get_param('~open_set_complete_one_sided_boxes', True):
             return
-        camera = rospy.get_param('~open_set_camera_frame', 'mobipick/eef_main_cam_depth_optical_frame')
+        camera = rospy.get_param('~open_set_camera_frame', f'{robot_prefix()}/eef_main_cam_depth_optical_frame')
         frame = pose_stamped.header.frame_id
         try:
             self.tf_listener.waitForTransform(frame, camera, rospy.Time(0), rospy.Duration(1.0))
@@ -1294,7 +1294,7 @@ class PickTools:
         hints), key = the name lowercased with spaces and dashes as underscores (tomato soup can -> tomato_soup_can);
         the first of names that has one. Returns 'side', 'top' or None (auto, missing or unknown: geometry decides).
         '''
-        namespace = rospy.get_param('~grasp_type_hints_ns', '/mobipick/grasp_type_hints')
+        namespace = rospy.get_param('~grasp_type_hints_ns', f'/{robot_prefix()}/grasp_type_hints')
         if not namespace:
             return None
         for name in names:

@@ -19,6 +19,15 @@
 # SOFTWARE.
 
 
+def robot_prefix(fallback='mobipick'):
+    """The robot's name for per-robot defaults (#226, several Mobipicks in one sim): ~robot_prefix if set, else the
+    node's namespace (the grasplan nodes run in the robot namespace, ns="mobipick"), else ``fallback``. Frames are
+    '<prefix>/gripper_tcp', robot names '/<prefix>/gripper_hw'; a single robot keeps 'mobipick'."""
+    import rospy
+
+    name = str(rospy.get_param('~robot_prefix', '') or rospy.get_namespace()).strip('/')
+    return name.split('/')[0] if name else fallback
+
 def connect_move_groups(robot, group_names, wait_for_servers):
     '''
     Construct the MoveGroupCommander of each group with a custom wait for the move_group action servers and
