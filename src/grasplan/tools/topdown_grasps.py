@@ -217,6 +217,25 @@ def height_above_support_top(center, orientation, size, supports):
     return height
 
 
+def rests_on_other(center, orientation, size, others, tolerance=0.03):
+    '''
+    whether a box stands on or in one of the other boxes (others: [(center, orientation, size)]): its centre lies over
+    that box's footprint and its bottom between that box's bottom and tolerance above its top (an object in a klt, one
+    stacked on another). Such a box may float above the table.
+    '''
+    center = np.asarray(center, dtype=float)
+    bottom = center[2] - vertical_half_extent(orientation, size)
+    for other_center, other_orientation, other_size in others:
+        other_center = np.asarray(other_center, dtype=float)
+        local = quaternion_to_matrix(other_orientation).T @ (center - other_center)
+        if np.any(np.abs(local[:2]) > np.asarray(other_size, dtype=float)[:2] / 2.0):
+            continue
+        half = vertical_half_extent(other_orientation, other_size)
+        if other_center[2] - half - 1e-3 <= bottom <= other_center[2] + half + tolerance:
+            return True
+    return False
+
+
 def _footprint_prism(center, orientation, size):
     '''(convex hull of the box corners in xy, counter-clockwise; min z; max z)'''
     rotation = quaternion_to_matrix(orientation)

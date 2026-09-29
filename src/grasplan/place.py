@@ -27,6 +27,7 @@ example on how to place an object using grasplan and moveit
 import math
 import sys
 import copy
+import tf.transformations
 import tf2_ros
 import rospy
 import actionlib
@@ -43,6 +44,8 @@ from grasplan.tools.support_plane_tools import (
 from grasplan.tools.common import separate_object_class_from_id, connect_move_groups, roscpp_initialize_named
 from grasplan.tools.moveit_errors import print_moveit_error
 from grasplan.tools.place_reach import order_by_reach
+from grasplan.tools.topdown_grasps import depth_below_support_top, height_above_support_top, rests_on_other
+from shape_msgs.msg import SolidPrimitive
 from std_srvs.srv import Empty, SetBool, Trigger
 from object_pose_msgs.msg import ObjectList
 import tf2_geometry_msgs
@@ -64,6 +67,12 @@ from grasplan.tools.action_client_helper import ActionClientHelper
 from visualization_msgs.msg import Marker, MarkerArray
 from typing import List
 from std_msgs.msg import Header
+
+
+def drop_implausible_place_boxes():
+    '''#202 ~place_drop_implausible_boxes: default on in the sim (/use_sim_time), off on the real robot until tested
+    there (Oscar 2026-09-28)'''
+    return bool(rospy.get_param('~place_drop_implausible_boxes', rospy.get_param('/use_sim_time', False)))
 
 
 def detour_only_when_needed():
@@ -263,6 +272,10 @@ class PlaceTools:
     def add_objs_to_planning_scene(self):
         # query all poses available in pose selector
         resp = self.get_all_poses_pick_pose_selector_srv()
+        # #202 (~place_drop_implausible_boxes): the pick's plausibility rules for perceived boxes, here too
+        drop = drop_implausible_place_boxes()
+        boxes = [(o.class_id + '_' + str(o.instance_id), o) for o in resp.poses.objects]
+        supports = self.scene_support_boxes(exclude={name for name, _ in boxes}) if drop and boxes else {}
         if len(resp.poses.objects) > 0:
             for pose_selector_object in resp.poses.objects:
                 # object name
@@ -278,8 +291,67 @@ class PlaceTools:
                 object_bounding_box.append(pose_selector_object.size.x)
                 object_bounding_box.append(pose_selector_object.size.y)
                 object_bounding_box.append(pose_selector_object.size.z)
+                if drop and not self.plausible_box(object_name, pose_selector_object, supports, boxes):
+                    if object_name in self.scene.get_known_object_names():
+                        self.scene.remove_world_object(object_name)
+                    continue
                 # add all perceived objects to planning scene (one at at time)
                 self.scene.add_box(object_name, pose_stamped_msg, object_bounding_box)
+
+    def plausible_box(self, name, obj, supports, boxes):
+        '''
+        whether a perceived box (pose selector object, map frame) may go into the place scene: not more than
+        ~max_box_sink_into_support (default 0.09) inside its support, and not floating more than
+        ~max_box_float_above_support (default 0.03) above it unless it rests on or in another perceived box (an object in
+        a klt). The pick node leaves such boxes out of its scene already (#151, #192); in the place scene the false
+        screwdriver_1 box of 2026-09-28 (13 cm above table_2) blocked the spots near the pick, the Pringles can went to
+        the table corner and tipped off (#202).
+        '''
+        p, o = obj.pose.position, obj.pose.orientation
+        center, orientation, size = (p.x, p.y, p.z), (o.x, o.y, o.z, o.w), (obj.size.x, obj.size.y, obj.size.z)
+        frame_supports = supports.get(self.global_reference_frame, [])
+        if not frame_supports:
+            return True
+        max_sink = rospy.get_param('~max_box_sink_into_support', 0.09)
+        sink = depth_below_support_top(center, orientation, size, frame_supports)
+        if max_sink > 0.0 and sink > max_sink:
+            rospy.logwarn(f'{name}: box bottom {sink * 100:.1f} cm inside its support: implausible, left out of the '
+                          f'place scene')
+            return False
+        max_float = rospy.get_param('~max_box_float_above_support', 0.03)
+        height = height_above_support_top(center, orientation, size, frame_supports)
+        if max_float > 0.0 and height is not None and height > max_float:
+            others = [((b.pose.position.x, b.pose.position.y, b.pose.position.z),
+                       (b.pose.orientation.x, b.pose.orientation.y, b.pose.orientation.z, b.pose.orientation.w),
+                       (b.size.x, b.size.y, b.size.z)) for n, b in boxes if n != name]
+            if not rests_on_other(center, orientation, size, others):
+                rospy.logwarn(f'{name}: box floats {height * 100:.1f} cm above its support and rests on no other box: '
+                              f'a false detection? Left out of the place scene')
+                return False
+        return True
+
+    def scene_support_boxes(self, exclude=()):
+        '''
+        {frame: [(center, orientation, size)]} of the table-sized (>= 30 cm wide) boxes of the planning scene that are
+        not perceived objects (as pick.py support_boxes, from the scene only: the tables are in move_group's scene)
+        '''
+        boxes = {}
+        for name, obj in self.scene.get_objects().items():
+            if name in exclude:
+                continue
+            for primitive, pose in zip(obj.primitives, obj.primitive_poses):
+                if primitive.type != SolidPrimitive.BOX or min(primitive.dimensions[:2]) < 0.3:
+                    continue
+                p = obj.pose.position
+                object_q, primitive_q = (
+                    [q.x, q.y, q.z, q.w] if (q.x, q.y, q.z, q.w) != (0.0, 0.0, 0.0, 0.0) else [0.0, 0.0, 0.0, 1.0]
+                    for q in (obj.pose.orientation, pose.orientation)
+                )  # an unset quaternion (all 0) means identity
+                rotation = tf.transformations.quaternion_matrix(object_q)[:3, :3]
+                center = [p.x, p.y, p.z] + rotation @ [pose.position.x, pose.position.y, pose.position.z]
+                orientation = tf.transformations.quaternion_multiply(object_q, primitive_q)
+                boxes.setdefault(obj.header.frame_id, []).append((center, orientation, primitive.dimensions[:3]))
+        return boxes
 
     def retract_after_failure(self, what):
         '''
