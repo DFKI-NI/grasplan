@@ -188,6 +188,20 @@ def well_separated(x_y_list, candidate_x, candidate_y, min_dist=0.2):
     return False
 
 
+def sample_in_plane(plane, within=None, tries=200):
+    '''
+    (x, y) uniformly in the axis-aligned plane (4 points as from adjust_plane); with within (cx, cy, r) also inside that
+    disk (#217: the arm's reach, so no draw is wasted on spots the reach ordering drops), falling back to the plane when
+    tries draws found no such point (the disk misses the plane)
+    '''
+    for _ in range(tries if within is not None else 1):
+        x = round(random.uniform(plane[0].x, plane[1].x), 4)
+        y = round(random.uniform(plane[0].y, plane[3].y), 4)
+        if within is None or math.hypot(x - within[0], y - within[1]) <= within[2]:
+            return x, y
+    return x, y
+
+
 def gen_place_poses_from_plane(
     place_action_server,
     object_class: str,
@@ -201,6 +215,7 @@ def gen_place_poses_from_plane(
     yaw_range: float = math.pi,
     yaws: Optional[List[float]] = None,
     height_offset: float = 0.001,
+    within: Optional[tuple] = None,
 ):
     '''
     random sample poses within a plane and populate object list msg with the result
@@ -235,8 +250,7 @@ def gen_place_poses_from_plane(
             if place_action_server.is_preempt_requested():
                 rospy.logwarn('Preemption requested. Abort place poses generation.')
                 return object_list_msg
-            candidate_x = round(random.uniform(plane[0].x, plane[1].x), 4)
-            candidate_y = round(random.uniform(plane[0].y, plane[3].y), 4)
+            candidate_x, candidate_y = sample_in_plane(plane, within)
             if support_object in ignore_min_dist_list:
                 rospy.logwarn(f'ignoring min dist param for object: {object_class}')
                 break

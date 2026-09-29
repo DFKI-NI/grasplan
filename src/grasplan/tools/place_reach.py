@@ -45,3 +45,29 @@ def order_by_reach(objects, base_xy, max_reach=0.0):
         if within:
             return within, len(ordered) - len(within)
     return ordered, 0
+
+
+def footprint_is_free(center, orientation, size, boxes, margin=0.04, headroom=0.15):
+    '''
+    #217: whether the held object's box at a place pose (center, orientation (x, y, z, w), size), grown by margin on each
+    horizontal side and by headroom above it (the gripper around it), clears every box of boxes ([(center, orientation,
+    size)], the perceived objects on the support). Exact for boxes standing on a face (tools.topdown_grasps prisms).
+    '''
+    from grasplan.tools.topdown_grasps import box_overlap_fraction
+    grown = (size[0] + 2.0 * margin, size[1] + 2.0 * margin, size[2] + headroom)
+    lifted = (center[0], center[1], center[2] + headroom / 2.0)
+    return all(box_overlap_fraction(lifted, orientation, grown, c, o, s) <= 0.0 for c, o, s in boxes)
+
+
+def order_free_first(objects, size, boxes, margin=0.04, headroom=0.15):
+    '''
+    objects (items with .pose, the place candidates in the boxes' frame, already in the order to try): the ones whose
+    footprint is free (footprint_is_free) first, each group in its order; returns (ordered, number free). Nothing is
+    dropped: MTC's collision check still decides, the free ones are only tried first.
+    '''
+    free, occupied = [], []
+    for obj in objects:
+        p, o = obj.pose.position, obj.pose.orientation
+        (free if footprint_is_free((p.x, p.y, p.z), (o.x, o.y, o.z, o.w), size, boxes, margin, headroom)
+         else occupied).append(obj)
+    return free + occupied, len(free)

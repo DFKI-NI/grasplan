@@ -43,7 +43,7 @@ from grasplan.tools.support_plane_tools import (
 )
 from grasplan.tools.common import separate_object_class_from_id, connect_move_groups, roscpp_initialize_named
 from grasplan.tools.moveit_errors import print_moveit_error
-from grasplan.tools.place_reach import order_by_reach
+from grasplan.tools.place_reach import order_by_reach, order_free_first
 from grasplan.tools.topdown_grasps import depth_below_support_top, height_above_support_top, rests_on_other
 from shape_msgs.msg import SolidPrimitive
 from std_srvs.srv import Empty, SetBool, Trigger
@@ -67,6 +67,16 @@ from grasplan.tools.action_client_helper import ActionClientHelper
 from visualization_msgs.msg import Marker, MarkerArray
 from typing import List
 from std_msgs.msg import Header
+
+
+def place_within_reach():
+    '''#217 ~place_sample_within_reach: default on in the sim (/use_sim_time), off on the real robot until tested there'''
+    return bool(rospy.get_param('~place_sample_within_reach', rospy.get_param('/use_sim_time', False)))
+
+
+def place_free_footprints_first():
+    '''#217 ~place_free_footprints_first: default on in the sim (/use_sim_time), off on the real robot until tested'''
+    return bool(rospy.get_param('~place_free_footprints_first', rospy.get_param('/use_sim_time', False)))
 
 
 def drop_implausible_place_boxes():
@@ -330,17 +340,70 @@ class PlaceTools:
                 return False
         return True
 
+    def place_reach_radii(self):
+        '''#217: the reach radii to draw place poses within, in order: [~place_max_reach, ~place_max_reach_fallback
+        (default 0.9)] with ~place_sample_within_reach, else [~place_max_reach] (the old single draw)'''
+        max_reach = rospy.get_param('~place_max_reach', 0.8)
+        fallback = rospy.get_param('~place_max_reach_fallback', 0.9)
+        if place_within_reach() and max_reach > 0.0 and fallback > max_reach:
+            return [max_reach, fallback]
+        return [max_reach]
+
+    def reach_disk(self, support_object, max_reach=None):
+        '''
+        #217 (~place_sample_within_reach, sim on / real off): (x, y, max_reach (default ~place_max_reach)) of
+        ~place_reach_frame in the support object's frame, so the place poses are drawn where the reach ordering keeps them
+        (sim 2026-09-29, table 3: 228 of 300 drawn poses were beyond reach, the 72 left all on the drill); None when off
+        or unknown
+        '''
+        if max_reach is None:
+            max_reach = rospy.get_param('~place_max_reach', 0.8)
+        if not place_within_reach() or max_reach <= 0.0:
+            return None
+        reach_frame = rospy.get_param('~place_reach_frame', 'mobipick/ur5_base_link')
+        try:
+            base = self.tf_buffer.lookup_transform(support_object, reach_frame, rospy.Time(0),
+                                                   rospy.Duration(1.0)).transform.translation
+        except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException) as error:
+            rospy.logwarn(f'place poses drawn over the whole plane, no transform to {reach_frame}: {error}')
+            return None
+        return (base.x, base.y, max_reach)
+
+    def order_free_footprints_first(self, place_poses, held_name, support_name):
+        '''
+        #217 (~place_free_footprints_first, sim on / real off): the place candidates whose held-object footprint (grown by
+        ~place_footprint_margin, default 0.04 m, plus the gripper above it) clears every perceived object box on the
+        support come first, the others after them in their order (MTC's collision check still decides)
+        '''
+        if not place_free_footprints_first() or not place_poses.objects:
+            return None
+        attached = self.scene.get_attached_objects([held_name]).get(held_name)
+        if attached is None or not attached.object.primitives:
+            return None
+        boxes = self.scene_boxes(exclude={held_name, support_name}, table_sized=False).get(place_poses.header.frame_id, [])
+        ordered, free = order_free_first(place_poses.objects, list(attached.object.primitives[0].dimensions)[:3], boxes,
+                                         rospy.get_param('~place_footprint_margin', 0.04))
+        place_poses.objects = ordered
+        rospy.loginfo(f'place poses: {free} of {len(ordered)} with a free footprint first ({len(boxes)} object boxes on '
+                      f'or near {support_name})')
+        return free
+
     def scene_support_boxes(self, exclude=()):
         '''
         {frame: [(center, orientation, size)]} of the table-sized (>= 30 cm wide) boxes of the planning scene that are
         not perceived objects (as pick.py support_boxes, from the scene only: the tables are in move_group's scene)
         '''
+        return self.scene_boxes(exclude, table_sized=True)
+
+    def scene_boxes(self, exclude=(), table_sized=True):
+        '''{frame: [(center, orientation, size)]} of the planning scene's boxes: table-sized ones (both horizontal sides
+        >= 30 cm) or the others (the objects)'''
         boxes = {}
         for name, obj in self.scene.get_objects().items():
             if name in exclude:
                 continue
             for primitive, pose in zip(obj.primitives, obj.primitive_poses):
-                if primitive.type != SolidPrimitive.BOX or min(primitive.dimensions[:2]) < 0.3:
+                if primitive.type != SolidPrimitive.BOX or (min(primitive.dimensions[:2]) < 0.3) == table_sized:
                     continue
                 p = obj.pose.position
                 object_q, primitive_q = (
@@ -503,7 +566,7 @@ class PlaceTools:
                 PlaceObjectResult(success=False), f'place failed: {reason}' if reason else 'place failed'
             )
 
-    def order_place_poses_by_reach(self, place_poses: ObjectList):
+    def order_place_poses_by_reach(self, place_poses: ObjectList, max_reach=None):
         """
         ~place_prefer_near_arm (#132): try the place poses nearest to the arm base (~place_reach_frame) first, as MTC
         and MoveIt try them in order; ~place_max_reach > 0 also drops those farther away (unless none is closer).
@@ -518,15 +581,15 @@ class PlaceTools:
         except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException) as error:
             rospy.logwarn(f'place poses stay in random order, no transform to {reach_frame}: {error}')
             return
-        ordered, dropped = order_by_reach(
-            place_poses.objects, (base.x, base.y), rospy.get_param('~place_max_reach', 0.8)
-        )
+        if max_reach is None:
+            max_reach = rospy.get_param('~place_max_reach', 0.8)
+        ordered, dropped = order_by_reach(place_poses.objects, (base.x, base.y), max_reach)
         place_poses.objects = ordered
         nearest = math.hypot(ordered[0].pose.position.x - base.x, ordered[0].pose.position.y - base.y)
         farthest = math.hypot(ordered[-1].pose.position.x - base.x, ordered[-1].pose.position.y - base.y)
         rospy.loginfo(
             f'place poses ordered nearest to {reach_frame} first: {len(ordered)} poses, {nearest:.2f} to '
-            f'{farthest:.2f} m' + (f', {dropped} beyond ~place_max_reach dropped' if dropped else '')
+            f'{farthest:.2f} m' + (f', {dropped} beyond {max_reach:.2f} m (~place_max_reach) dropped' if dropped else '')
         )
 
     def transform_obj_list(self, obj_list: ObjectList, target_frame_id: str) -> ObjectList:
@@ -655,26 +718,36 @@ class PlaceTools:
                 f'{object_class_tbp} is an open-set object: {steps} yaws around the full circle, '
                 f'released {self.open_set_place_clearance * 100:.1f} cm above {support_object}'
             )
-        local_place_poses = gen_place_poses_from_plane(
-            self.place_action_server,
-            object_class_tbp,
-            support_object,
-            plane,
-            self.scene,
-            frame_id=support_object,
-            number_of_poses=number_of_poses,
-            min_dist=self.min_dist,
-            ignore_min_dist_list=self.ignore_min_dist_list,
-            **open_set_options,
-        )
+        # #217: drawn within ~place_max_reach; when none of them has a free footprint, drawn again within
+        # ~place_max_reach_fallback (the comfortable re-pick distance of #132 is no hard limit, MTC decides the reach)
+        radii = self.place_reach_radii()
+        for k, radius in enumerate(radii):
+            local_place_poses = gen_place_poses_from_plane(
+                self.place_action_server,
+                object_class_tbp,
+                support_object,
+                plane,
+                self.scene,
+                frame_id=support_object,
+                number_of_poses=number_of_poses,
+                min_dist=self.min_dist,
+                ignore_min_dist_list=self.ignore_min_dist_list,
+                within=self.reach_disk(support_object, radius),
+                **open_set_options,
+            )
 
-        if self.place_action_server.is_preempt_requested():
-            rospy.logwarn('Preemption requested. Cancelling goal.')
-            action_client.cancel_goal()
-            return False
+            if self.place_action_server.is_preempt_requested():
+                rospy.logwarn('Preemption requested. Cancelling goal.')
+                action_client.cancel_goal()
+                return False
 
-        global_place_poses = self.transform_obj_list(local_place_poses, self.global_reference_frame)
-        self.order_place_poses_by_reach(global_place_poses)
+            global_place_poses = self.transform_obj_list(local_place_poses, self.global_reference_frame)
+            self.order_place_poses_by_reach(global_place_poses, radius)
+            free = self.order_free_footprints_first(global_place_poses, object_to_be_placed, support_object)
+            if free != 0 or k == len(radii) - 1:
+                break
+            rospy.logwarn(f'no place pose within {radius:.2f} m has a free footprint on {support_object}: drawing them '
+                          f'within {radii[k + 1]:.2f} m')
         self.place_poses_pub.publish(global_place_poses)
         attached_object = self.scene.get_attached_objects([object_to_be_placed])[object_to_be_placed].object
         box_size = list(attached_object.primitives[0].dimensions)
