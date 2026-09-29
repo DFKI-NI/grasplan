@@ -486,6 +486,9 @@ class MtcPickPlace:
         self.relaxed_retreat_min_distance = rospy.get_param('~mtc_relaxed_retreat_min_distance', 0.05)
         self.retreat_failed = False
         self.cable_guard = None  # CableGuard, built on the first goal with ~mtc_cable_constraints true
+        # solutions the cable guard rejected since the caller last set it to 0 (place/insert goal: #198 (e) takes the
+        # untangle detour only after such a rejection)
+        self.cable_rejections = 0
         self.cable_solutions = 1
         self.chosen_solution = None
         # why the last goal failed (for the action status text) and whether it moved anything
@@ -949,6 +952,7 @@ class MtcPickPlace:
                     self.chosen_solution = solution
                     break
                 where = self.where_in_task(task, self.cable_guard)
+                self.cable_rejections = getattr(self, 'cable_rejections', 0) + 1
                 rospy.loginfo(f'mtc: {what} solution {index} rejected by the cable guard{where}: stretch {stretch:+.3f} '
                               f'> {self.cable_guard.max_stretch:+.3f} in the {span} span at {q}')
             if self.chosen_solution is None:

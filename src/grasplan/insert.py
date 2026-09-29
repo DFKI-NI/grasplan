@@ -112,6 +112,7 @@ class InsertTools:
         success = False
         if getattr(self.place, 'mtc', None) is not None:
             self.place.mtc.failure_reason, self.place.mtc.executed = '', False  # nothing left over from the previous goal
+        self.place.reset_detour()
         for i in range(2):  # 0, 1 = 2 attemps
             if self.insert_action_server.is_preempt_requested():
                 break
@@ -125,7 +126,8 @@ class InsertTools:
                 if not goal.observe_before_insert:
                     override_disentangle_dont_doit = True
             else:  # second try, generate 360 degree orientations
-                override_disentangle_dont_doit = True
+                # the detour left out of the first try (#198 (e)) only when the cable guard rejected a plan without it
+                override_disentangle_dont_doit = not self.place.detour_needed_after_first_try()
                 override_observe_before_place_dont_doit = True
                 same_orientation_as_support_obj = False
                 # do not disentangle if we dont go to observe arm pose

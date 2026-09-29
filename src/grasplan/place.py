@@ -66,6 +66,12 @@ from typing import List
 from std_msgs.msg import Header
 
 
+def detour_only_when_needed():
+    '''#198 (d/e) ~untangle_detour_only_when_needed: default on in the sim (/use_sim_time), off on the real robot until
+    tested there (Oscar 2026-09-28)'''
+    return bool(rospy.get_param('~untangle_detour_only_when_needed', rospy.get_param('/use_sim_time', False)))
+
+
 class PlaceTools:
     def __init__(self, action_server_required=True):
         self.global_reference_frame = rospy.get_param('~global_reference_frame', 'map')
@@ -315,9 +321,49 @@ class PlaceTools:
             if start:
                 self.move_arm_to_posture(start)
             return
+        # #198 (e) ~untangle_detour_only_when_needed: the first try plans the place from where the arm is, the MTC cable
+        # guard checks it; the detour comes only when that try failed with the guard rejecting a plan
+        # (detour_needed_after_first_try), and at most once per goal
+        state = getattr(self, 'detour_state', '')
+        if state == 'done':
+            return
+        if state != 'forced' and self.detour_deferrable():
+            self.detour_state = 'deferred'
+            rospy.loginfo(f'untangle detour {poses} skipped: taken only if the cable guard rejects the place without it')
+            return
         for arm_pose in poses:
             rospy.loginfo(f'Going to intermediate arm pose {arm_pose} to disentangle cable')
             self.move_arm_to_posture(arm_pose)
+        if state == 'forced':
+            self.detour_state = 'done'
+
+    def detour_deferrable(self):
+        '''whether go_before_place may leave the untangle detour out for now: switch on and an MTC cable guard to judge'''
+        if not detour_only_when_needed() or getattr(self, 'mtc', None) is None:
+            return False
+        self.mtc.update_cable_guard()
+        return self.mtc.cable_guard is not None
+
+    def reset_detour(self):
+        '''a new place or insert goal: no detour decision yet, no cable guard rejection counted'''
+        self.detour_state = ''
+        if getattr(self, 'mtc', None) is not None:
+            self.mtc.cable_rejections = 0
+
+    def detour_needed_after_first_try(self):
+        '''
+        after a failed first try whose untangle detour was left out (#198 (e)): take it on the next try when the cable
+        guard rejected a plan and the arm has not moved; otherwise it stays out
+        '''
+        if getattr(self, 'detour_state', '') != 'deferred' or getattr(self, 'mtc', None) is None or self.mtc.executed:
+            return False
+        rejections = getattr(self.mtc, 'cable_rejections', 0)
+        if rejections <= 0:
+            rospy.loginfo('first try failed without a cable guard rejection: the untangle detour stays out')
+            return False
+        rospy.loginfo(f'the cable guard rejected {rejections} plan(s) without the untangle detour: taking it now')
+        self.detour_state = 'forced'
+        return True
 
     def move_arm_to_posture(self, arm_posture_name):
         '''
@@ -337,6 +383,7 @@ class PlaceTools:
         success = False
         if self.mtc is not None:
             self.mtc.failure_reason, self.mtc.executed = '', False  # nothing left over from the previous goal
+        self.reset_detour()
         num_poses_list = [5, 25, 50]  # first try 5 poses, then 25, then 50
         override_disentangle_dont_doit = False
         override_observe_before_place_dont_doit = False
@@ -349,7 +396,8 @@ class PlaceTools:
                 override_disentangle_dont_doit = False
                 override_observe_before_place_dont_doit = False
             else:
-                override_disentangle_dont_doit = True
+                # the detour left out of the first try (#198 (e)) only when the cable guard rejected a plan without it
+                override_disentangle_dont_doit = not (i == 1 and self.detour_needed_after_first_try())
                 override_observe_before_place_dont_doit = True
             # do not disentangle if we dont go to observe arm pose, unless configured to
             if not goal.observe_before_place and not self.disentangle_without_observe:
