@@ -73,7 +73,10 @@ from moveit_msgs.msg import (
     PlanningSceneComponents,
 )
 from moveit_msgs.srv import ApplyPlanningScene, GetPlanningScene, GetPlanningSceneRequest
+from shape_msgs.msg import SolidPrimitive
 from moveit.task_constructor import core, stages
+
+from grasplan.tools.octomap_probe import count_in_box, occupied_leaves
 
 # the name MoveIt gives the octomap inside the planning scene (planning_scene::PlanningScene::OCTOMAP_NS)
 OCTOMAP_COLLISION_NAME = '<octomap>'
@@ -599,6 +602,8 @@ class MtcPickPlace:
         except (tf2_ros.TransformException, ValueError) as e:
             rospy.logerr(f'mtc: cannot place {goal.attached_object_name}: {e}')
             return result
+        # place locations whose footprint holds octomap-only obstacles are not offered (see octomap_blocks_place)
+        octomap_check = self.octomap_place_check(goal.attached_object_name)
         # testing #136 (read per goal): skip the axis retreat so the straight-up retreat is planned and executed
         force_straight_up = bool(rospy.get_param('~mtc_test_force_straight_up', False))
         if force_straight_up:
@@ -607,7 +612,16 @@ class MtcPickPlace:
         # per location, nearest first (#132): its later retreat variants are tried before the next location, so a
         # near spot whose axis retreat is blocked is placed with a straight-up retreat instead of the object going to
         # a far spot that plans at once (sim 2026-09-28 night20: tennis ball 27 cm deep into table 2, re-pick no IK)
+        blocked = []
         for index, location in enumerate(goal.place_locations):
+            if octomap_check is not None:
+                hits = self.octomap_blocks_place(octomap_check, location)
+                if hits:
+                    blocked.append(location.id)
+                    rospy.logwarn(f'mtc: place location {location.id} ({index + 1}/{len(goal.place_locations)}) skipped: '
+                                  f'{hits} octomap voxels inside the held {goal.attached_object_name} there (an object '
+                                  f'only the octomap sees)')
+                    continue
             for number, (retreat_min_distance, straight_up) in enumerate(passes):
                 if self.is_preempt_requested():
                     result.error_code.val = MoveItErrorCodes.PREEMPTED
@@ -645,6 +659,8 @@ class MtcPickPlace:
                 return result
         rospy.logerr(f'mtc: none of the {len(goal.place_locations)} place locations could be planned')
         self.failure_reason = f'none of the {len(goal.place_locations)} place locations could be planned'
+        if blocked:
+            self.failure_reason += f' ({len(blocked)} skipped: objects only the octomap sees in the footprint)'
         return result
 
     def turned_grasp_plan(self, goal, grasp):
@@ -875,6 +891,73 @@ class MtcPickPlace:
             v = self.direction_in_planning_frame(direction).vector
             vector = np.array([v.x, v.y, v.z])
         return vector / np.linalg.norm(vector)
+
+    def octomap_place_check(self, object_name):
+        '''
+        ~mtc_place_reject_octomap_occupied (default on in the sim, off on the real robot until tested there): data to reject place locations whose footprint holds
+        something only the octomap sees (real 2026-09-28: a klt placed into objects on table_1 and table_3, because the
+        place pose and the lowering allow octomap contact for the held object): (occupied octomap leaves in the octomap
+        frame, octomap frame, 4x4 box pose relative to the object frame, box half extents with the bottom raised by
+        ~mtc_place_octomap_clearance and the sides grown by ~mtc_place_octomap_margin, default 0.05 m: in the sim a klt
+        placed with a few cm of gap next to a can only the octomap saw brushed and pushed it on the way down, #185).
+        None when off, or without an octomap or a box shape of the held object.
+        '''
+        if not rospy.get_param('~mtc_place_reject_octomap_occupied', rospy.get_param('/use_sim_time', False)):
+            return None
+        try:
+            request = GetPlanningSceneRequest()
+            request.components.components = (PlanningSceneComponents.OCTOMAP
+                                             | PlanningSceneComponents.ROBOT_STATE_ATTACHED_OBJECTS)
+            scene = self.get_planning_scene_srv(request).scene
+        except rospy.ServiceException as e:
+            rospy.logwarn(f'mtc: no octomap for the place check: {e}')
+            return None
+        octomap = scene.world.octomap
+        if not octomap.octomap.data or octomap.octomap.binary:
+            return None   # MoveIt sends the full format; a binary map has no occupancy values
+        box = None
+        for attached in scene.robot_state.attached_collision_objects:
+            obj = attached.object
+            if obj.id == object_name:
+                for primitive, primitive_pose in zip(obj.primitives, obj.primitive_poses):
+                    if primitive.type == SolidPrimitive.BOX:
+                        box = (pose_to_matrix(primitive_pose), np.asarray(primitive.dimensions[:3], dtype=float))
+                        break
+        if box is None:
+            rospy.logwarn(f'mtc: {object_name} has no box shape: place locations are not checked against the octomap')
+            return None
+        leaves = occupied_leaves(octomap.octomap.data, octomap.octomap.resolution,
+                                 rospy.get_param('~mtc_place_octomap_threshold', 0.0))
+        origin = pose_to_matrix(octomap.origin)
+        if not np.allclose(origin, np.eye(4)):
+            leaves = np.c_[(np.c_[leaves[:, :3], np.ones(len(leaves))] @ origin.T)[:, :3], leaves[:, 3]]
+        clearance = rospy.get_param('~mtc_place_octomap_clearance', 0.03)
+        box_pose, dims = box
+        half = dims / 2.0
+        # only voxels higher than clearance above the object's bottom count: the support surface itself is not one
+        raise_bottom = np.eye(4)
+        raise_bottom[2, 3] = clearance / 2.0
+        half = half - np.array([0.0, 0.0, clearance / 2.0])
+        # and voxels up to margin beside it: the held object and the gripper sweep past its final footprint
+        margin = rospy.get_param('~mtc_place_octomap_margin', 0.05)
+        half = half + np.array([margin, margin, 0.0])
+        return leaves, octomap.header.frame_id, box_pose.dot(raise_bottom), half
+
+    def octomap_blocks_place(self, check, location):
+        '''number of occupied octomap leaves inside the held object's box at this place location (0 when fewer than
+        ~mtc_place_octomap_min_voxels, or when the pose cannot be transformed)'''
+        leaves, frame, box_pose, half = check
+        pose = location.place_pose
+        try:
+            frame_to_pose = transform_to_matrix(
+                self.tf_buffer.lookup_transform(frame, pose.header.frame_id or frame, rospy.Time(0), rospy.Duration(1.0))
+            ) if pose.header.frame_id and pose.header.frame_id != frame else np.eye(4)
+        except tf2_ros.TransformException as e:
+            rospy.logwarn(f'mtc: place location {location.id}: no octomap check ({e})')
+            return 0
+        box_in_frame = frame_to_pose.dot(pose_to_matrix(pose.pose)).dot(box_pose)
+        hits = count_in_box(leaves, box_in_frame, half)
+        return hits if hits >= rospy.get_param('~mtc_place_octomap_min_voxels', 2) else 0
 
     def eef_to_attached_object(self, object_name):
         '''4x4 pose of the attached object relative to the end effector link, read from move_group's scene'''
