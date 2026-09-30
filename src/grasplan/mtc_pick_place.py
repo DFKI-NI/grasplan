@@ -78,6 +78,7 @@ from moveit.task_constructor import core, stages
 
 from grasplan.tools.octomap_probe import count_in_box, occupied_leaves
 from grasplan.tools.common import robot_prefix
+from grasplan.tools.touching_boxes import boxes_touch
 
 # the name MoveIt gives the octomap inside the planning scene (planning_scene::PlanningScene::OCTOMAP_NS)
 OCTOMAP_COLLISION_NAME = '<octomap>'
@@ -705,6 +706,11 @@ class MtcPickPlace:
 
     def make_pick_task(self, goal, grasp):
         obj = goal.target_name
+        neighbours = self.touching_neighbours(obj, goal.support_surface_name) if rospy.get_param(
+            '~mtc_lift_tolerate_touching_neighbours', False
+        ) else []
+        if neighbours:
+            rospy.loginfo(f'mtc: lift of {obj} tolerates touching neighbours only: {neighbours}')
         task, roles = self.start_task(f'pick {obj} {grasp.id}')
         touch = self.gripper_links + [obj]
         # the gripper may touch the object only from the grasp pose on (MTC pick demo layout, #151): allowed from the
@@ -747,12 +753,69 @@ class MtcPickPlace:
         attach.attachObject(obj, self.eef_link)
         if goal.support_surface_name:
             attach.allowCollisions(obj, [goal.support_surface_name], True)
+        if neighbours:
+            attach.allowCollisions(obj, neighbours, True)
         grasp_stages.add(attach)
         roles.append(ATTACH)
-        grasp_stages.add(self.move_relative('lift', grasp.post_grasp_retreat))
+        retreat = copy.deepcopy(grasp.post_grasp_retreat)
+        if neighbours:
+            retreat.direction = Vector3Stamped(
+                header=rospy.Header(frame_id=self.planning_frame), vector=Vector3(0.0, 0.0, 1.0)
+            )
+        grasp_stages.add(self.move_relative('lift', retreat))
         roles.append(ARM)
+        if neighbours:
+            block = stages.ModifyPlanningScene('forbid neighbour contacts after lift')
+            block.allowCollisions(obj, neighbours, False)
+            grasp_stages.add(block)
+            roles.append(NOOP)
         task.add(grasp_stages)
         return task, roles
+
+    def touching_neighbours(self, object_name, support_name):
+        """World boxes already touching the target, with a 1 cm uncertainty margin.
+
+        The support surface has its existing contact allowance. Unknown shapes
+        and TF failures are not granted a new allowance.
+        """
+        request = GetPlanningSceneRequest()
+        request.components.components = PlanningSceneComponents.WORLD_OBJECT_GEOMETRY
+        try:
+            world = self.get_planning_scene_srv(request).scene.world
+        except rospy.ServiceException as error:
+            rospy.logwarn(f'mtc: cannot inspect touching neighbours of {object_name}: {error}')
+            return []
+
+        def boxes(collision_object):
+            frame = collision_object.header.frame_id or self.planning_frame
+            try:
+                transform = (transform_to_matrix(self.tf_buffer.lookup_transform(
+                    self.planning_frame, frame, rospy.Time(0), rospy.Duration(1.0)
+                )) if frame != self.planning_frame else np.eye(4))
+            except tf2_ros.TransformException as error:
+                rospy.logwarn(f'mtc: cannot inspect {collision_object.id} in {frame}: {error}')
+                return []
+            transform = transform.dot(pose_to_matrix(collision_object.pose))
+            return [
+                (transform.dot(pose_to_matrix(pose)), primitive.dimensions[:3])
+                for primitive, pose in zip(collision_object.primitives, collision_object.primitive_poses)
+                if primitive.type == SolidPrimitive.BOX
+            ]
+
+        objects = {item.id: item for item in world.collision_objects}
+        target = objects.get(object_name)
+        if target is None:
+            rospy.logwarn(f'mtc: {object_name} is absent from the planning scene; no neighbour tolerance')
+            return []
+        target_boxes = boxes(target)
+        if not target_boxes:
+            rospy.logwarn(f'mtc: {object_name} has no box in the planning scene; no neighbour tolerance')
+            return []
+        margin = 0.01
+        return sorted(name for name, candidate in objects.items()
+                      if name not in (object_name, support_name)
+                      and any(boxes_touch(a_pose, a_size, b_pose, b_size, margin)
+                              for a_pose, a_size in target_boxes for b_pose, b_size in boxes(candidate)))
 
     def make_place_task(self, goal, location, eef_to_object, retreat_min_distance=None, straight_up=False):
         '''place task for one location; with straight_up the retreat goes along planning frame +z instead of its
