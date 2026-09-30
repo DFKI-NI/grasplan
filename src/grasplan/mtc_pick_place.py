@@ -1182,6 +1182,7 @@ class MtcPickPlace:
             import rospkg
             import yaml
             from symbolic_fact_generation.gripper_facts_generator import GripperHasObjectGenerator
+            from symbolic_fact_generation.common.lib import retarget_robot_names
 
             config = rospy.get_param('~mtc_gripper_fact_config', '') or os.path.join(
                 rospkg.RosPack().get_path('symbolic_fact_generation'), 'config', 'facts_config.yaml'
@@ -1190,7 +1191,9 @@ class MtcPickPlace:
                 facts = yaml.safe_load(f)
             entries = facts.get('facts', facts) if isinstance(facts, dict) else facts
             params = next(e['gripper_has_object']['params'] for e in entries if 'gripper_has_object' in e)
-            rospy.loginfo(f'mtc: grasp check with gripper_has_object from {config}')
+            robot_name = robot_prefix()
+            params = retarget_robot_names(params, robot_name)
+            rospy.loginfo(f'mtc: grasp check with gripper_has_object from {config} for {robot_name}')
             return GripperHasObjectGenerator('gripper_has_object', *params)
         except Exception as e:
             rospy.logerr(f'mtc: grasp check unavailable, picks are not verified: {e}')
