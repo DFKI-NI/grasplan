@@ -39,6 +39,9 @@ class FakeSub:
 class TestPinnedIkCost(unittest.TestCase):
     def setUp(self):
         self.cost = mpp.pinned_ik_cost(dict(zip(ARM, RANKED)), math.radians(20.0))
+        patcher = mock.patch.object(mpp.rospy, 'loginfo_throttle')   # the throttle needs a node clock
+        self.log = patcher.start()
+        self.addCleanup(patcher.stop)
 
     def test_the_ranked_branch_is_cheapest(self):
         near, far = FakeSub([v + 0.05 for v in RANKED]), FakeSub([v + 0.2 for v in RANKED])
@@ -50,6 +53,11 @@ class TestPinnedIkCost(unittest.TestCase):
         self.assertEqual(self.cost(other, ''), float('inf'))
         self.assertIn('not the ranked IK branch', other.failed)
 
+    def test_a_rejection_is_logged(self):
+        other = FakeSub(RANKED[:4] + [RANKED[4] - 1.0, RANKED[5]])
+        self.cost(other, '')
+        self.assertIn('rejected an IK branch 57 deg', self.log.call_args[0][1])
+
     def test_no_solution_message_means_no_pin(self):
         self.assertEqual(self.cost(NS(toMsg=None), ''), 0.0)
 
@@ -60,9 +68,11 @@ class TestMakePickTaskPin(unittest.TestCase):
         Stage.setCostTerm = lambda self, fn: costs.append(fn)
         try:
             state = JointState(name=ARM, position=RANKED)
-            with mock.patch.object(mpp.MtcPickPlace, 'grasp_ik_states', {'g': state}, create=True):
+            with mock.patch.object(mpp.MtcPickPlace, 'grasp_ik_states', {'g': state}, create=True), \
+                    mock.patch.object(mpp.rospy, 'loginfo') as log:
                 build()
             self.assertEqual(len(costs), 1)
+            self.assertTrue(any('IK pin attached to grasp g' in c[0][0] for c in log.call_args_list))
             with mock.patch.object(mpp.MtcPickPlace, 'grasp_ik_states', {'other': state}, create=True):
                 build()
             self.assertEqual(len(costs), 1)                 # grasp 'g' has no stored state: plain ComputeIK

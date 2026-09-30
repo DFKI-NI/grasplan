@@ -160,6 +160,9 @@ def pinned_ik_cost(reference, tolerance):
             return 0.0
         if max(diffs) > tolerance:
             sub.markAsFailure(f'not the ranked IK branch (max joint offset {math.degrees(max(diffs)):.0f} deg)')
+            rospy.loginfo_throttle(
+                5.0, f'mtc: grasp IK pin rejected an IK branch {math.degrees(max(diffs)):.0f} deg from the ranked one '
+                     f'(tolerance {math.degrees(tolerance):.0f} deg)')
             return float('inf')
         return float(sum(diffs))
     return cost
@@ -741,6 +744,7 @@ class MtcPickPlace:
             reference = {n: p for n, p in zip(ik_state.name, ik_state.position) if 'ur5_' in n}
             tolerance = math.radians(rospy.get_param('~mtc_pin_grasp_ik_tolerance_deg', 20.0))
             ik.setCostTerm(pinned_ik_cost(reference, tolerance))
+            rospy.loginfo(f'mtc: grasp IK pin attached to grasp {grasp.id} (tolerance {math.degrees(tolerance):.0f} deg)')
         grasp_stages.add(ik)
         roles.append(NOOP)
         allow = stages.ModifyPlanningScene('allow gripper contacts')

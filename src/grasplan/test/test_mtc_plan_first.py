@@ -135,6 +135,9 @@ class FakeSub:
 class TestPinCost(unittest.TestCase):
     def setUp(self):
         self.cost = mpp.pinned_ik_cost(dict(zip(ARM, [-1.5, 3.0])), math.radians(20.0))
+        patcher = mock.patch.object(mpp.rospy, 'loginfo_throttle')   # the throttle needs a node clock
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def test_called_like_mtc_with_a_comment(self):
         sub = FakeSub(ik_message([0.0, 0.0], [-1.5, 3.05]))
