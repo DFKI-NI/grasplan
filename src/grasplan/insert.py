@@ -24,6 +24,7 @@
 example on how to insert an object using grasplan and moveit
 '''
 
+import copy
 import math
 
 import numpy as np
@@ -33,6 +34,7 @@ import tf2_ros
 import tf.transformations as tft
 from grasplan.place import PlaceTools
 from grasplan.tools.common import separate_object_class_from_id, robot_prefix
+from grasplan.tools.cable_rank import gate_chunks, joint_path, order_by_predicted_stretch
 from grasplan.tools.support_plane_tools import (
     gen_insert_poses_from_obj,
     compute_object_height_for_insertion,
@@ -323,6 +325,7 @@ class InsertTools:
         if not heights_ok:
             return False
 
+        self.insert_gate_passing = 0
         place_poses_as_object_list_msg = None
         insert_orientation = self.read_insert_orientation()
         if insert_orientation != 'as_picked':
@@ -370,7 +373,7 @@ class InsertTools:
 
             rospy.loginfo(f'sending place {object_to_be_inserted} goal to {INSERT_OBJECT_SERVER_NAME} action server')
             rospy.loginfo(f'waiting for result from {INSERT_OBJECT_SERVER_NAME} action server')
-            result = self.place.run_place_goal(goal, self.insert_action_server, self.action_client_helper)
+            result = self.run_ranked_insert_goal(goal)
             if result is not None:
                 if self.insert_action_server.is_preempt_requested():
                     return False
@@ -502,7 +505,8 @@ class InsertTools:
                 support_long_axis_yaw=support_yaw,
                 max_yaw_offset=max_yaw_offset,
             )
-        if free_yaw and rospy.get_param('~insert_sort_by_ik', self.insert_sort_by_ik):
+        if free_yaw and (rospy.get_param('~insert_sort_by_ik', self.insert_sort_by_ik)
+                         or rospy.get_param('~insert_cable_gate', False)):
             bodies = self.sort_by_wrist_3_change(bodies, tcp_to_body)
         object_list_msg = ObjectList()
         object_list_msg.header.frame_id = self.place.global_reference_frame
@@ -519,18 +523,45 @@ class InsertTools:
         )
         return object_list_msg
 
+    def run_ranked_insert_goal(self, goal):
+        '''Offer the predicted-pass group before the held-back group; MTC tries each group's locations in order.'''
+        passing = self.insert_gate_passing
+        gated = self.place.mtc is not None and 0 < passing < len(goal.place_locations)
+        if not gated:
+            return self.place.run_place_goal(goal, self.insert_action_server, self.action_client_helper)
+        result = None
+        for start, end in gate_chunks(len(goal.place_locations), passing, 0):
+            if start == passing:
+                rospy.loginfo(f'insert cable gate: all {passing} predicted-pass poses failed; offering '
+                              f'{len(goal.place_locations) - passing} held-back poses')
+            offer = copy.copy(goal)
+            offer.place_locations = goal.place_locations[start:end]
+            result = self.place.run_place_goal(offer, self.insert_action_server, self.action_client_helper)
+            if result is None or self.insert_action_server.is_preempt_requested():
+                break
+            if result.error_code.val == MoveItErrorCodes.SUCCESS or self.place.mtc.executed:
+                break
+        return result
+
     def sort_by_wrist_3_change(self, bodies, tcp_to_body):
         '''
-        object body poses sorted by how far wrist_3 turns from where it is to reach them (collision-aware IK seeded
-        with the current arm state); poses without an IK solution keep their order at the end. MTC samples its own
-        IK solutions, so this predicts the wrist_3 it uses rather than fixing it. Unsorted when IK is unavailable.
+        Object body poses sorted by how far wrist_3 turns from the current state (collision-aware IK). With
+        ~insert_cable_gate and the MTC guard enabled, predict cable stretch along the joint-linear path to each IK
+        state; offer predicted-pass poses before the rest (#219, #151). MTC samples its own IK, so this prediction
+        ranks candidates rather than fixing the solution. Unsorted when IK is unavailable.
         '''
+        self.insert_gate_passing = 0
         try:
             self.compute_ik_srv.wait_for_service(2.0)
         except rospy.ROSException:
             rospy.logwarn(f'{self.compute_ik_srv.resolved_name} not available: insert poses not sorted by wrist_3')
             return bodies
         current_state = self.place.robot.get_current_state()
+        guard = None
+        if rospy.get_param('~insert_cable_gate', False) and self.place.mtc is not None:
+            self.place.mtc.update_cable_guard()
+            guard = self.place.mtc.cable_guard
+        start_q = dict(zip(current_state.joint_state.name, current_state.joint_state.position))
         wrist_3_names = [n for n in current_state.joint_state.name if n.endswith('ur5_wrist_3_joint')]
         if not wrist_3_names:
             return bodies
@@ -553,20 +584,37 @@ class InsertTools:
                 rospy.logwarn(f'compute_ik failed ({e}): insert poses not sorted by wrist_3')
                 return bodies
             key = (1, float(index), None)
+            stretch = None
             if response.error_code.val == MoveItErrorCodes.SUCCESS:
                 names = response.solution.joint_state.name
                 if wrist_3_name in names:
                     wrist_3 = response.solution.joint_state.position[names.index(wrist_3_name)]
                     key = (0, abs(wrist_3 - wrist_3_now), wrist_3)
-            keyed.append((key, body))
+                    if guard is not None:
+                        goal_q = dict(zip(names, response.solution.joint_state.position))
+                        try:
+                            stretch = max(guard.model.evaluate(q).max_stretch for q in joint_path(start_q, goal_q))
+                        except Exception as e:  # no prediction leaves this pose after the predicted-pass group
+                            rospy.logwarn(f'insert cable gate: no prediction for pose {index + 1}: {e}')
+            keyed.append((key, body, stretch, index + 1))
         keyed.sort(key=lambda k: k[0][:2])
-        reachable = [k for k, _ in keyed if k[0] == 0]
+        reachable = [item[0] for item in keyed if item[0][0] == 0]
         first = ', '.join(f'{math.degrees(k[2]):.0f}' for k in reachable[:6])
         rospy.loginfo(
             f'insert poses by wrist_3 change (now {math.degrees(wrist_3_now):.0f} deg): {len(reachable)} of '
             f'{len(bodies)} with IK, wrist_3 {first}{" ..." if len(reachable) > 6 else ""}'
         )
-        return [body for _, body in keyed]
+        if guard is not None:
+            rospy.loginfo('insert cable gate per pose (original order): ' + ', '.join(
+                f'#{index} ' + ('no IK' if key[0] else f'wrist_3 {math.degrees(key[2]):.0f} deg ') +
+                ('?' if stretch is None else f'{stretch:+.3f} ' +
+                 ('pass' if stretch <= guard.max_stretch else 'hold'))
+                for key, _body, stretch, index in sorted(keyed, key=lambda item: item[3])))
+            keyed, self.insert_gate_passing = order_by_predicted_stretch(
+                keyed, [item[2] for item in keyed], guard.max_stretch)
+            rospy.loginfo(f'insert cable gate: {self.insert_gate_passing} of {len(keyed)} poses predicted to pass '
+                          f'(<= {guard.max_stretch:+.3f}); offered first')
+        return [body for _key, body, _stretch, _index in keyed]
 
     def start_insert_node(self):
         rospy.loginfo('ready to insert objects')
