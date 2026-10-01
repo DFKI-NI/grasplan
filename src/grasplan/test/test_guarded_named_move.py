@@ -160,6 +160,27 @@ class TestGuardedNamedMove(unittest.TestCase):
         self.assertTrue(guarded_named_move(arm, 'home', None))
         self.assertEqual(arm.gos, 1)
 
+    def test_the_monitor_hears_each_executed_named_move_before_it_moves(self):
+        # the cable monitor's reset at trajectory start (its flag) needs the announcement before execute
+        events = []
+        arm = FakeArm([trajectory(*CLEAN)])
+        arm.execute = lambda t, wait=True: events.append('execute') or True
+        with mock.patch.object(mpp, 'announce_trajectory_start', lambda source: events.append(source)):
+            self.assertTrue(guarded_named_move(arm, 'anygrasp', self.guard))
+            self.mode = 'log'
+            arm.plans = [trajectory(*CATCH)]
+            self.assertTrue(guarded_named_move(arm, 'anygrasp', self.guard))
+            self.mode = 'off'
+            self.assertTrue(guarded_named_move(arm, 'home', self.guard))   # go(): move_group's own goal counts
+        self.assertEqual(events, ['named move anygrasp', 'execute', 'named move anygrasp', 'execute'])
+
+    def test_a_refused_named_move_announces_nothing(self):
+        events = []
+        arm = FakeArm([trajectory(*CATCH)] * 6)
+        with mock.patch.object(mpp, 'announce_trajectory_start', lambda source: events.append(source)):
+            self.assertFalse(guarded_named_move(arm, 'anygrasp', self.guard))
+        self.assertEqual((events, arm.executed), ([], []))
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -359,6 +359,30 @@ def named_move_guard_mode():
     return mode
 
 
+_trajectory_start_pub = None
+
+
+def announce_trajectory_start(source):
+    '''
+    tell the cable monitor that an executed trajectory starts now (oscar 2026-10-01): one per executed MTC
+    solution (approach, grasp and lift together) and one per named move this module executes. With its careful flag
+    cable_model/reset_at_trajectory_start the monitor starts its chain afresh here, as the guard's replay of the
+    trajectory did (path_check.start_chain); without it nobody listens. Never keeps the arm from moving.
+    '''
+    global _trajectory_start_pub
+    try:
+        from std_msgs.msg import String
+
+        if _trajectory_start_pub is None:
+            _trajectory_start_pub = rospy.Publisher(
+                f'/{robot_prefix()}/cable_model/trajectory_start', String, queue_size=10
+            )
+            rospy.sleep(0.5)  # the monitor connects to a new publisher asynchronously: do not lose the first one
+        _trajectory_start_pub.publish(String(data=source))
+    except Exception as e:  # noqa: BLE001 - the announcement is only for the monitor
+        rospy.logwarn(f'cable trajectory start not announced ({source}): {e}')
+
+
 def _plain_named_move(arm, name):
     '''the old named move: go, one retry after 1 s'''
     if arm.go():
@@ -386,6 +410,7 @@ def _logged_named_move(arm, name, guard):
                           f'{stretch:+.3f} in the {span} span at {q}')
     except Exception as e:   # the log must never keep the arm from moving
         rospy.logwarn(f'moving arm to {name}: cable check failed ({e}), log only')
+    announce_trajectory_start(f'named move {name}')
     return bool(arm.execute(trajectory, wait=True))
 
 
@@ -433,6 +458,7 @@ def guarded_named_move(arm, name, guard, attempts=2, via=None):
                                                 chain_stops=chain_stops)
             if ok:
                 rospy.loginfo(f'moving arm to {name} (cable check passed: stretch {stretch:+.3f}, attempt {attempt})')
+                announce_trajectory_start(f'named move {name}')
                 return bool(arm.execute(trajectory, wait=True))
             reason = f'cable guard: stretch {stretch:+.3f} in the {span} span at {q}'
             rospy.logwarn(f'arm move to {name}: plan {attempt}/{attempts} rejected by the {reason}')
@@ -1304,6 +1330,7 @@ class MtcPickPlace:
             stage_names = [''] * len(postures_before) + self.leaf_stage_names(task)
         except Exception:  # noqa: BLE001 - names only label the failure
             stage_names = []
+        announce_trajectory_start('mtc solution')  # the whole solution is one executed trajectory for the cable monitor
         for step, (role, sub) in enumerate(steps):
             if self.is_preempt_requested():
                 return MoveItErrorCodes.PREEMPTED
