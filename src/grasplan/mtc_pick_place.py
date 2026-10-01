@@ -657,6 +657,7 @@ class MtcPickPlace:
                     self.retreat_failed = self.only_retreat_failed(task)
                     continue
                 self.executed = True
+                self.log_place_pose(location)
                 code = self.execute(task, roles, [], location.post_place_posture,
                                     detach=goal.attached_object_name)
                 result.error_code.val = code
@@ -922,6 +923,19 @@ class MtcPickPlace:
         return ik
 
     # ------------------------------------------------------------------ frames
+
+    def log_place_pose(self, location):
+        '''log only (#202): where the held object is set down (planning frame, z includes the release clearance), so a
+        place that ends with the object on the floor can be tied to a pose, a table edge distance and a yaw'''
+        try:
+            pose = self.to_planning_frame(location.place_pose)
+        except (tf2_ros.TransformException, ValueError):
+            return
+        q = pose.pose.orientation
+        yaw = math.degrees(tft.euler_from_quaternion([q.x, q.y, q.z, q.w])[2])
+        rospy.loginfo(f'mtc: place location {location.id}: object set down at x {pose.pose.position.x:.3f} '
+                      f'y {pose.pose.position.y:.3f} z {pose.pose.position.z:.3f} yaw {yaw:.0f} deg '
+                      f'in {pose.header.frame_id}')
 
     def to_planning_frame(self, pose_stamped):
         if pose_stamped.header.frame_id in ('', self.planning_frame):
