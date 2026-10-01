@@ -111,6 +111,16 @@ def pick_from_current_state():
     return bool(rospy.get_param('~open_set_pick_from_current_state', rospy.get_param('/use_sim_time', False)))
 
 
+def anygrasp_default_names(prefix):
+    '''Default names of the AnyGrasp pick / generate actions and of the grasp view service of the robot named prefix
+    (a single robot: mobipick, as before; a second robot in the same sim: mobipick2, #226).'''
+    return {
+        'grasp': f'/{prefix}/grasp_object',
+        'generate': f'/{prefix}/generate_grasps',
+        'view': f'/{prefix}/grasp_view',
+    }
+
+
 class PickTools:
     def __init__(self):
 
@@ -156,10 +166,10 @@ class PickTools:
         # configure the desired grasp planner to use
         import_file = rospy.get_param('~import_file', 'grasp_planner.simple_pregrasp_planner')
         import_class = rospy.get_param('~import_class', 'SimpleGraspPlanner')
-        self.anygrasp_action_name = rospy.get_param('~anygrasp_action_name', '/mobipick/grasp_object')
-        self.anygrasp_generate_action_name = rospy.get_param(
-            '~anygrasp_generate_action_name', '/mobipick/generate_grasps'
-        )
+        # the AnyGrasp servers and the view service of THIS robot (#226: /mobipick2/... for a second robot)
+        any_names = anygrasp_default_names(robot_prefix())
+        self.anygrasp_action_name = rospy.get_param('~anygrasp_action_name', any_names['grasp'])
+        self.anygrasp_generate_action_name = rospy.get_param('~anygrasp_generate_action_name', any_names['generate'])
         self.anygrasp_handles_execution = rospy.get_param('~anygrasp_handles_execution', False)
         self.anygrasp_server_timeout = rospy.get_param('~anygrasp_server_timeout', 2.0)
         self.anygrasp_result_timeout = rospy.get_param('~anygrasp_result_timeout', 300.0)
@@ -167,7 +177,7 @@ class PickTools:
         # a grasplan/ViewObject service that moves the camera to a view of the object that suits AnyGrasp (e.g. the
         # whole object within the depth range); when it is missing or fails the pick fails, unless
         # ~anygrasp_named_view_fallback sends the arm to anygrasp_arm_pose instead (the old behaviour)
-        self.anygrasp_view_service = rospy.get_param('~anygrasp_view_service', '/mobipick/grasp_view')
+        self.anygrasp_view_service = rospy.get_param('~anygrasp_view_service', any_names['view'])
         self.gripper_action_name = rospy.get_param('~gripper_action_name', f'/{robot_prefix()}/gripper_hw')
         self.gripper_action_timeout = rospy.get_param('~gripper_action_timeout', 2.0)
         # MoveIt's pickup/place action servers live in move_group, which on the real robot runs on the
