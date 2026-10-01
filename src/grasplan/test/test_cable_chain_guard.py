@@ -1,6 +1,6 @@
-'''#121: the MTC cable guard also rejects a plan the sim monitor's rope would stop (rope caught on the tool while the
-geometry stays slack, as in the two 2026-09-28 night sim stops). Fake MTC solution messages, no ROS master; needs the
-Mobipick image and amenable_ws (mobipick_sim_cable_entanglement).'''
+'''#121: the MTC cable guard also rejects a plan the sim monitor's disc chain would stop (the chain caught on the tool
+while the geometry stays slack, as in the two 2026-09-28 night sim stops). Fake MTC solution messages, no ROS master;
+needs the Mobipick image and amenable_ws (mobipick_sim_cable_entanglement).'''
 import math
 import os
 import unittest
@@ -17,6 +17,11 @@ NAMES = [f'mobipick/ur5_{j}_joint' for j in J]
 PLACE_END = [-90.4, -131.3, 140.3, -148.3, -91.0, 83.5]
 VIA = [-90.0, -100.0, 120.0, -100.0, -90.0, 180.0]
 ANYGRASP = [-90, -90, 114.6, -43, 90, 270]
+HOME = [0.0, -149.0, 139.2, -117.5, -90.0, 179.9]   # SRDF home
+# the committed disc chain (2026-10-01) catches on HOME -> PLACE_END (+0.18, geometry -0.24) and stays slack on
+# HOME -> ANYGRASP; the radius rope's catch PLACE_END -> VIA -> ANYGRASP (removed 2026-09-30) is slack for the chain
+CATCH = (HOME, PLACE_END)
+CLEAN = (HOME, ANYGRASP)
 
 
 def solution(*waypoints, seconds=5.0):
@@ -29,7 +34,7 @@ def solution(*waypoints, seconds=5.0):
     return NS(sub_trajectory=[empty, NS(trajectory=NS(joint_trajectory=trajectory))])
 
 
-class TestRopeGuard(unittest.TestCase):
+class TestChainGuard(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         from mobipick_sim_cable_entanglement.cable_model import CableModel, config_from_dict
@@ -42,43 +47,29 @@ class TestRopeGuard(unittest.TestCase):
             urdf = f.read()
         guard = CableGuard.__new__(CableGuard)              # without rospy params / robot_description
         guard.cfg, guard.model = cfg, CableModel(urdf, cfg)
-        rope_cfg = copy.deepcopy(cfg)
-        rope_cfg.rope.enabled = True
-        guard.rope_model = CableModel(urdf, rope_cfg)
+        chain_cfg = copy.deepcopy(cfg)
+        chain_cfg.rope.enabled = True
+        guard.chain_model = CableModel(urdf, chain_cfg)
         guard.wrist_3_neutral, guard.half_window = math.radians(165.7), math.radians(170.0)
         guard.wrist_3_joint = 'mobipick/ur5_wrist_3_joint'
-        guard.max_stretch, guard.max_points, guard.rope_rate = -0.115, 40, 10.0
+        guard.max_stretch, guard.max_points, guard.chain_rate = -0.115, 40, 10.0
         cls.guard = guard
-        # the rope of the night sim (wrist rope starting straight down, no wrist_1 housing capsule), whose loop caught
-        # on the tool on PLACE_END -> VIA -> ANYGRASP; the cap-side start and the housing capsule (Oscar's photo at
-        # home, #118) leave no catch there, so this rope keeps the guard's rope rejection under test
-        with open(os.path.join(pkg, 'config', 'cable_model.yaml')) as f:
-            night = yaml.safe_load(f)
-        night['spans']['wrist'].pop('rope_rest_side', None)
-        night['capsules'] = [c for c in night['capsules'] if c['name'] != 'wrist_1_housing']
-        night_cfg = config_from_dict(night)
-        night_cfg.rope.enabled = True
-        cls.night_rope_model = CableModel(urdf, night_cfg)
 
-    def check(self, msg, rope):
-        self.guard.rope_check = rope
+    def check(self, msg, chain):
+        self.guard.chain_check = chain
         return self.guard.check(msg)
 
-    def test_rope_catch_is_rejected_although_the_geometry_passes(self):
-        msg = solution(PLACE_END, VIA, ANYGRASP)
-        ok, stretch, span, _ = self.check(msg, rope=False)
+    def test_chain_catch_is_rejected_although_the_geometry_passes(self):
+        msg = solution(*CATCH)
+        ok, stretch, span, _ = self.check(msg, chain=False)
         self.assertTrue(ok)                                 # geometry only: passes (the night's situation)
-        rope_model, self.guard.rope_model = self.guard.rope_model, self.night_rope_model
-        try:
-            ok, stretch, span, q = self.check(msg, rope=True)
-        finally:
-            self.guard.rope_model = rope_model
+        ok, stretch, span, q = self.check(msg, chain=True)
         self.assertFalse(ok)
-        self.assertIn('rope replay', span)
+        self.assertIn('chain replay', span)
         self.assertGreater(stretch, 0.02)
 
     def test_worst_point_is_located_in_the_task(self):
-        self.check(solution(PLACE_END, VIA, ANYGRASP), rope=False)
+        self.check(solution(PLACE_END, VIA, ANYGRASP), chain=False)
         sub_index, point_index, points = self.guard.worst_where
         self.assertEqual((sub_index, points), (1, 3))            # the arm sub trajectory, not the empty scene stage
 
@@ -103,7 +94,7 @@ class TestRopeGuard(unittest.TestCase):
         self.assertIn(f'point {point_index + 1}/3', text)
 
     def test_a_clean_path_still_passes(self):
-        ok, _, _, _ = self.check(solution(PLACE_END, ANYGRASP), rope=True)
+        ok, _, _, _ = self.check(solution(*CLEAN), chain=True)
         self.assertTrue(ok)
 
 

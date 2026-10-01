@@ -1,5 +1,5 @@
 '''#121: named-pose arm moves (anygrasp, observe, transport, home) are planned and cable-checked before they run.
-Fake MoveGroupCommander, the real CableGuard with the rope replay (fixture of test_cable_rope_guard); Mobipick image.'''
+Fake MoveGroupCommander, the real CableGuard with the disc chain replay (fixture of test_cable_chain_guard); Mobipick image.'''
 import math
 import unittest
 from unittest import mock
@@ -10,7 +10,7 @@ from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 import grasplan.mtc_pick_place as mpp
 from grasplan.mtc_pick_place import guarded_named_move
-from test_cable_rope_guard import ANYGRASP, NAMES, PLACE_END, VIA, TestRopeGuard
+from test_cable_chain_guard import ANYGRASP, CATCH, CLEAN, NAMES, TestChainGuard
 
 
 def trajectory(*waypoints, seconds=5.0):
@@ -48,13 +48,13 @@ class FakeArm:
 
 
 class TestGuardedNamedMove(unittest.TestCase):
-    rope_stops = True   # ~mtc_cable_named_move_rope_stops; the default (False) only logs a rope stop
+    chain_stops = True   # ~mtc_cable_named_move_rope_stops; the default (False) only logs a chain stop
     mode = 'enforce'    # ~mtc_cable_guard_named_moves (None: default from /use_sim_time)
     sim_time = True
 
     def param(self, name, default=None):   # no master
         if 'rope_stops' in name:
-            return self.rope_stops
+            return self.chain_stops
         if 'guard_named_moves' in name:
             return self.mode
         if name == '/use_sim_time':
@@ -68,18 +68,15 @@ class TestGuardedNamedMove(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        TestRopeGuard.setUpClass()
-        cls.guard = TestRopeGuard.guard
-        # the night-sim rope, whose loop catches on PLACE_END -> VIA -> ANYGRASP (the model's own rope starts on the
-        # wrist_1 cap side now and no longer catches there, #118)
-        cls.guard.rope_model = TestRopeGuard.night_rope_model
-        cls.guard.rope_check = True
+        TestChainGuard.setUpClass()
+        cls.guard = TestChainGuard.guard
+        cls.guard.chain_check = True
         cls.guard.update_params = lambda: None           # no rospy params in the test
         cls.w3 = math.radians(180.0)
         mpp._current_joint = lambda joint, timeout=2.0: cls.w3   # no joint_states topic in the test
 
-    def test_rope_catch_plan_is_replaced_by_a_clean_one(self):
-        catch, clean = trajectory(PLACE_END, VIA, ANYGRASP), trajectory(PLACE_END, ANYGRASP)
+    def test_chain_catch_plan_is_replaced_by_a_clean_one(self):
+        catch, clean = trajectory(*CATCH), trajectory(*CLEAN)
         arm = FakeArm([catch, clean])
         self.assertTrue(guarded_named_move(arm, 'anygrasp', self.guard))
         self.assertEqual(arm.executed, [clean])
@@ -88,7 +85,7 @@ class TestGuardedNamedMove(unittest.TestCase):
     def test_start_outside_the_window_plans_without_the_constraint(self):
         type(self).w3 = math.radians(-60.0)
         try:
-            arm = FakeArm([trajectory(PLACE_END, ANYGRASP)])
+            arm = FakeArm([trajectory(*CLEAN)])
             self.assertTrue(guarded_named_move(arm, 'home', self.guard))
             self.assertEqual(arm.constraints, [None])      # never set, only cleared
         finally:
@@ -102,21 +99,22 @@ class TestGuardedNamedMove(unittest.TestCase):
         self.assertEqual(len(arm.executed), 1)
 
     def test_goes_via_transport_when_the_direct_plans_catch(self):
-        catch, clean = trajectory(PLACE_END, VIA, ANYGRASP), trajectory(PLACE_END, ANYGRASP)
+        catch, clean = trajectory(*CATCH), trajectory(*CLEAN)
         arm = FakeArm([catch, catch, clean, clean])      # anygrasp x2 refused, transport ok, anygrasp ok
         self.assertTrue(guarded_named_move(arm, 'anygrasp', self.guard))
         self.assertEqual(len(arm.executed), 2)
 
     def test_nothing_moves_when_every_plan_catches(self):
-        arm = FakeArm([trajectory(PLACE_END, VIA, ANYGRASP)] * 6)
+        arm = FakeArm([trajectory(*CATCH)] * 6)
         self.assertFalse(guarded_named_move(arm, 'anygrasp', self.guard))
         self.assertEqual(arm.executed, [])
         self.assertEqual(arm.gos, 0)
 
-    def test_rope_stop_only_logs_by_default(self):
-        # suite 2026-09-28: the rope check refused a re-pick the unguarded code does fine; log only unless asked for
-        self.rope_stops = False
-        catch = trajectory(PLACE_END, VIA, ANYGRASP)
+    def test_chain_stop_only_logs_by_default(self):
+        # suite 2026-09-28: the rope check (now the chain) refused a re-pick the unguarded code does fine; log only
+        # unless asked for
+        self.chain_stops = False
+        catch = trajectory(*CATCH)
         arm = FakeArm([catch])
         with mock.patch.object(mpp.rospy, 'logwarn') as warn:
             self.assertTrue(guarded_named_move(arm, 'anygrasp', self.guard))
@@ -126,7 +124,7 @@ class TestGuardedNamedMove(unittest.TestCase):
     def test_log_mode_moves_the_refused_plan_and_only_warns(self):
         # real robot (Oscar 2026-09-28): no refusal, no replan, no via transport, no wrist_3 constraint
         self.mode = 'log'
-        catch = trajectory(PLACE_END, VIA, ANYGRASP)
+        catch = trajectory(*CATCH)
         arm = FakeArm([catch, catch])
         with mock.patch.object(mpp.rospy, 'logwarn') as warn:
             self.assertTrue(guarded_named_move(arm, 'anygrasp', self.guard))
@@ -142,7 +140,7 @@ class TestGuardedNamedMove(unittest.TestCase):
 
     def test_off_mode_is_the_old_go(self):
         self.mode = 'off'
-        arm = FakeArm([trajectory(PLACE_END, VIA, ANYGRASP)])
+        arm = FakeArm([trajectory(*CATCH)])
         self.assertTrue(guarded_named_move(arm, 'home', self.guard))
         self.assertEqual((arm.gos, arm.executed), (1, []))
 

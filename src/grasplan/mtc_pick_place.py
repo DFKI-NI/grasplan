@@ -211,7 +211,7 @@ class CableGuard:
       wrist span (where the tube takes the short way around the joint), so no motion adds a turn of winding. The
       model alone cannot see extra turns once the wrist_3 housing no longer holds the tube, hence this bound.
     - trajectory check: the stretch s = L_req / L_free - 1 of every span, evaluated along the whole joint path
-      (geometry only, no rope history), must stay below ~mtc_cable_max_stretch (0 = tube just taut; default
+      (geometry only, no chain history), must stay below ~mtc_cable_max_stretch (0 = tube just taut; default
       DEFAULT_CABLE_MAX_STRETCH, a stopgap).
     '''
 
@@ -240,8 +240,10 @@ class CableGuard:
         )
 
     def update_params(self):
-        self.rope_check = bool(rospy.get_param('~mtc_cable_rope_check', True))
-        self.rope_rate = float(rospy.get_param('~mtc_cable_rope_rate', 10.0))
+        # the disc chain replay (the monitor's chain, #228); the parameter names keep the word rope from the removed
+        # radius rope so launch files and profiles stay valid
+        self.chain_check = bool(rospy.get_param('~mtc_cable_rope_check', True))
+        self.chain_rate = float(rospy.get_param('~mtc_cable_rope_rate', 10.0))
         self.max_stretch = rospy.get_param('~mtc_cable_max_stretch', DEFAULT_CABLE_MAX_STRETCH)
         self.half_window = math.radians(rospy.get_param('~mtc_cable_wrist_3_half_window_deg', 170.0))
         self.max_points = int(rospy.get_param('~mtc_cable_points_per_trajectory', 40))
@@ -264,10 +266,10 @@ class CableGuard:
         )
         return constraints
 
-    def check(self, solution_msg, max_stretch=None, rope_stops=True):
+    def check(self, solution_msg, max_stretch=None, chain_stops=True):
         '''(ok, worst stretch, worst span, worst joint angles in degrees) along all sub trajectories; max_stretch
         overrides the planning margin ~mtc_cable_max_stretch (named-pose moves use the monitor's stop threshold);
-        rope_stops False only logs a rope replay stop instead of rejecting the path'''
+        chain_stops False only logs a chain replay stop instead of rejecting the path'''
         limit = self.max_stretch if max_stretch is None else max_stretch
         worst, worst_span, worst_q = -float('inf'), '', {}
         self.worst_q_rad = None   # the state turn_for_slack() starts from; never one of an earlier solution
@@ -292,27 +294,27 @@ class CableGuard:
                     worst_q = {k.split('/')[-1]: round(math.degrees(v), 1) for k, v in q.items()}
                     self.worst_q_rad = dict(q)   # for turn_for_slack()
                     self.worst_where = (sub_index, point_index, len(points))
-        if worst < limit and getattr(self, 'rope_check', False):
-            verdict = self.rope_verdict(solution_msg)
-            if verdict is not None and verdict.stop and not rope_stops:
-                rospy.logwarn(f'mtc cable guard: the rope replay would stop this path ({verdict.span}, '
-                              f'{verdict.limiting}, {verdict.max_stretch:+.3f}), not rejected: rope check is log only')
+        if worst < limit and getattr(self, 'chain_check', False):
+            verdict = self.chain_verdict(solution_msg)
+            if verdict is not None and verdict.stop and not chain_stops:
+                rospy.logwarn(f'mtc cable guard: the chain replay would stop this path ({verdict.span}, '
+                              f'{verdict.limiting}, {verdict.max_stretch:+.3f}), not rejected: chain check is log only')
             elif verdict is not None and verdict.stop:
-                # the sim monitor would stop this path: its rope catches on the tool, which the geometry cannot see
-                self.worst_q_rad = dict(verdict.q)   # a turn must fix the rope's worst point, not the geometry's
-                return False, verdict.max_stretch, f'{verdict.span} ({verdict.limiting}, rope replay)', {
+                # the sim monitor would stop this path: its chain catches on the tool, which the geometry cannot see
+                self.worst_q_rad = dict(verdict.q)   # a turn must fix the chain's worst point, not the geometry's
+                return False, verdict.max_stretch, f'{verdict.span} ({verdict.limiting}, chain replay)', {
                     k.split('/')[-1]: round(math.degrees(v), 1) for k, v in verdict.q.items()}
         return worst < limit, worst, worst_span, worst_q
 
-    def rope_verdict(self, solution_msg):
-        '''the cable monitor's decision (rope with history, same model and thresholds) along the whole joint path of
-        the solution, from a freshly settled rope at its start (mobipick_sim_cable_entanglement.path_check, #121)'''
+    def chain_verdict(self, solution_msg):
+        '''the cable monitor's decision (disc chain with history, same model and thresholds) along the whole joint
+        path of the solution, from a freshly settled chain at its start (mobipick_sim_cable_entanglement.path_check, #121)'''
         from mobipick_sim_cable_entanglement.cable_model import CableModel
         from mobipick_sim_cable_entanglement.path_check import rope_replay
-        if getattr(self, 'rope_model', None) is None:
+        if getattr(self, 'chain_model', None) is None:
             cfg = copy.deepcopy(self.cfg)
             cfg.rope.enabled = True
-            self.rope_model = CableModel(rospy.get_param('robot_description'), cfg)
+            self.chain_model = CableModel(rospy.get_param('robot_description'), cfg)
         samples, offset = [], 0.0
         for sub in solution_msg.sub_trajectory:
             trajectory = sub.trajectory.joint_trajectory
@@ -322,9 +324,9 @@ class CableGuard:
                 samples.append((offset + point.time_from_start.to_sec(), dict(zip(trajectory.joint_names, point.positions))))
             offset = samples[-1][0] + 1e-3
         start = time.monotonic()
-        verdict = rope_replay(self.rope_model, samples, self.rope_rate)
+        verdict = rope_replay(self.chain_model, samples, self.chain_rate)
         if verdict is not None:
-            rospy.loginfo(f'mtc cable guard: rope replay of {verdict.updates} ticks in {time.monotonic() - start:.1f} s: '
+            rospy.loginfo(f'mtc cable guard: chain replay of {verdict.updates} ticks in {time.monotonic() - start:.1f} s: '
                           f'max stretch {verdict.max_stretch:+.3f} ({verdict.limiting}), stop {verdict.stop}')
         return verdict
 
@@ -367,7 +369,7 @@ def _plain_named_move(arm, name):
 
 def _logged_named_move(arm, name, guard):
     '''plan the named move without the wrist_3 constraint like arm.go() does, log what the guard (stop_stretch and
-    rope replay) would say, and execute that same plan whatever it says; no plan: the old go with its retry'''
+    chain replay) would say, and execute that same plan whatever it says; no plan: the old go with its retry'''
     planned = arm.plan()
     success, trajectory = (planned[0], planned[1]) if isinstance(planned, tuple) else (True, planned)
     if not success or not trajectory.joint_trajectory.points:
@@ -375,7 +377,7 @@ def _logged_named_move(arm, name, guard):
     try:
         guard.update_params()
         ok, stretch, span, q = guard.check(_SolutionView([trajectory]), max_stretch=guard.stop_stretch(),
-                                           rope_stops=True)
+                                           chain_stops=True)
         if ok:
             rospy.loginfo(f'moving arm to {name} (cable check passed: stretch {stretch:+.3f}, log only)')
         else:
@@ -389,13 +391,13 @@ def _logged_named_move(arm, name, guard):
 def guarded_named_move(arm, name, guard, attempts=2, via=None):
     '''
     Move a MoveGroupCommander arm to the SRDF pose name like arm.go(), but plan first and let the MTC cable guard
-    (geometry and the monitor's rope replay, #121) check the joint path before anything moves: the 2026-09-28 sim
+    (geometry and the monitor's chain replay, #121) check the joint path before anything moves: the 2026-09-28 sim
     stop at 02:03 came from such an unguarded move (to the anygrasp pose). The check uses the monitor's own stop
-    criterion (decision.stop_stretch, rope stop), not the MTC planning margin ~mtc_cable_max_stretch, which refused the
+    criterion (decision.stop_stretch, chain stop), not the MTC planning margin ~mtc_cable_max_stretch, which refused the
     standard anygrasp view (-0.09) after a place (night19). A rejected plan is replanned (the planner is randomized) up
     to attempts times, then the move goes via ~mtc_cable_named_move_via (default [transport]); if that fails too,
     nothing more moves and False is returned with the reason logged. guard None: the old behaviour (go, one retry).
-    A rope replay stop only logs unless ~mtc_cable_named_move_rope_stops is true: it refused a re-pick the unguarded
+    A chain replay stop only logs unless ~mtc_cable_named_move_rope_stops is true: it refused a re-pick the unguarded
     code does fine (suite 2026-09-28, #121). ~mtc_cable_guard_named_moves (see named_move_guard_mode) can make the
     whole guard log only: the arm then moves as without it and the checks are only logged.
     '''
@@ -406,7 +408,7 @@ def guarded_named_move(arm, name, guard, attempts=2, via=None):
     if mode == 'off':
         return _plain_named_move(arm, name)
     guard.update_params()
-    rope_stops = bool(rospy.get_param('~mtc_cable_named_move_rope_stops', False))
+    chain_stops = bool(rospy.get_param('~mtc_cable_named_move_rope_stops', False))
     w3 = _current_joint(guard.wrist_3_joint)
     lo, hi = guard.wrist_3_neutral - guard.half_window, guard.wrist_3_neutral + guard.half_window
     if w3 is not None and lo <= w3 <= hi:
@@ -424,10 +426,10 @@ def guarded_named_move(arm, name, guard, attempts=2, via=None):
             if not success or not trajectory.joint_trajectory.points:
                 reason = 'no plan'
                 continue
-            # the monitor's own stop criterion (stop_stretch, rope stop), not the MTC planning margin: the standard
+            # the monitor's own stop criterion (stop_stretch, chain stop), not the MTC planning margin: the standard
             # poses (anygrasp view at about -0.09) would otherwise be refused after a place (night19)
             ok, stretch, span, q = guard.check(_SolutionView([trajectory]), max_stretch=guard.stop_stretch(),
-                                                rope_stops=rope_stops)
+                                                chain_stops=chain_stops)
             if ok:
                 rospy.loginfo(f'moving arm to {name} (cable check passed: stretch {stretch:+.3f}, attempt {attempt})')
                 return bool(arm.execute(trajectory, wait=True))
