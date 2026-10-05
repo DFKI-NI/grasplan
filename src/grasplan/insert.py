@@ -110,8 +110,22 @@ class InsertTools:
         # give some time for publishers and Subscribers to register
         rospy.sleep(0.2)
 
+    def fail(self, reason):
+        '''Log why the insert cannot go on and keep it for the action's status text; returns False'''
+        rospy.logerr(reason)
+        self.insert_failure_reason = reason
+        return False
+
+    def failure_text(self):
+        '''Why the last insert failed: a check before MTC, else MTC's reason, else empty'''
+        reason = getattr(self, 'insert_failure_reason', '')
+        if not reason and getattr(self.place, 'mtc', None) is not None:
+            reason = self.place.mtc.failure_reason
+        return reason
+
     def insert_obj_action_callback(self, goal):
         success = False
+        self.insert_failure_reason = ''   # why a check before MTC stopped the insert
         if getattr(self.place, 'mtc', None) is not None:
             self.place.mtc.failure_reason, self.place.mtc.executed = '', False  # nothing left over from the previous goal
         self.place.reset_detour()
@@ -158,7 +172,7 @@ class InsertTools:
             rospy.logwarn("Preemption requested during insert goal processing.")
             self.insert_action_server.set_preempted()
         else:
-            reason = self.place.mtc.failure_reason if getattr(self.place, 'mtc', None) is not None else ''
+            reason = self.failure_text()
             self.insert_action_server.set_aborted(
                 InsertObjectResult(success=False), f'insert failed: {reason}' if reason else 'insert failed'
             )
@@ -200,11 +214,10 @@ class InsertTools:
         rospy.loginfo(f'getting object {support_object.get_object_class_and_id_as_string()} position')
         # query pose selector
         resp = self.pick_pose_selector_class_query_srv(support_object.obj_class)
+        name = support_object.get_object_class_and_id_as_string()
         if len(resp.poses) == 0:
-            rospy.logerr(
-                f'Object of class {support_object.obj_class} was not perceived, therefore its pose is not available'
-                ' and cannot be picked'
-            )
+            self.fail(f'cannot insert into {name}: no {support_object.obj_class} is in the pose selector (it was not '
+                      'perceived, or perceived with low confidence so its pose was not committed); perceive it first')
             return None
         # at least one object of the same class as the object we want to pick was perceived, continue
         for pose in resp.poses:
@@ -213,10 +226,9 @@ class InsertTools:
                     f'success at getting support object pose: {support_object.get_object_class_and_id_as_string()}'
                 )
                 return pose  # of type object_pose_msgs/ObjectPose.msg
-        rospy.logerr(
-            f'At least one object of the class {support_object.obj_class} was perceived but is not the one you want,'
-            f' with id: {support_object.id}'
-        )
+        others = ', '.join(sorted(f'{support_object.obj_class}_{pose.instance_id}' for pose in resp.poses))
+        self.fail(f'cannot insert into {name}: it is not in the pose selector, which holds {others} of that class; '
+                  'perceive it again or insert into one that is there')
         return None
 
     def get_object_heights_for_insertion(
@@ -234,9 +246,9 @@ class InsertTools:
         if object_class_tbi not in OBJECT_HEIGHTS:
             attached_object = self.place.scene.get_attached_objects([object_to_be_inserted]).get(object_to_be_inserted)
             if attached_object is None or len(attached_object.object.primitives) == 0:
-                rospy.logerr(
-                    f'{object_to_be_inserted} is not in the insertion height table and has no collision primitive'
-                    ' attached to the gripper, cannot compute its height'
+                self.fail(
+                    f'cannot insert {object_to_be_inserted}: its height is unknown (not in the insertion height table '
+                    'and no collision box is attached to the gripper for it)'
                 )
                 return False, None, None
             object_tbi_height = attached_object.object.primitives[0].dimensions[2]
@@ -246,9 +258,9 @@ class InsertTools:
         if support_object.obj_class not in OBJECT_HEIGHTS:
             support_obj_height = support_object_pose.size.z
             if support_obj_height <= 0.0:
-                rospy.logerr(
-                    f'{support_object.get_object_class_and_id_as_string()} is not in the insertion height table and'
-                    ' the pose selector reports no size for it, cannot compute its height'
+                self.fail(
+                    f'cannot insert into {support_object.get_object_class_and_id_as_string()}: its height is unknown '
+                    '(not in the insertion height table and the pose selector reports no size for it)'
                 )
                 return False, None, None
             rospy.loginfo(
@@ -277,9 +289,11 @@ class InsertTools:
 
         support_object = objectToPick(support_object_name_as_string)
 
+        self.insert_failure_reason = ''   # only this attempt's check counts
         if len(self.place.scene.get_attached_objects().keys()) == 0:
-            rospy.logerr("the robot is not currently holding any object, can't insert")
-            return False
+            return self.fail(f'cannot insert into {support_object.get_object_class_and_id_as_string()}: no object is '
+                             'attached to the gripper in the planning scene, so the insert has nothing to plan with '
+                             '(the object may have been dropped, or the pick never attached it)')
 
         # deduce object_to_be_inserted by querying which object the gripper currently has attached to its gripper
         object_to_be_inserted = list(self.place.scene.get_attached_objects().keys())[0]
@@ -347,8 +361,8 @@ class InsertTools:
                 same_orientation_as_support_obj=same_orientation_as_support_obj,
             )
         if len(place_poses_as_object_list_msg.objects) == 0:
-            rospy.logerr(f'no insert pose for {object_to_be_inserted} in {support_object_name_as_string}')
-            return False
+            return self.fail(f'cannot insert {object_to_be_inserted} into {support_object_name_as_string}: no insert '
+                             'pose could be generated for it')
         # send places poses to place pose selector for visualization purposes
         self.insert_poses_pub.publish(place_poses_as_object_list_msg)
 

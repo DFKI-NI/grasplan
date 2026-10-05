@@ -538,8 +538,22 @@ class PlaceTools:
             guard = self.mtc.cable_guard
         return guarded_named_move(self.robot.arm, arm_posture_name, guard)
 
+    def fail(self, reason):
+        '''Log why the place cannot go on and keep it for the action's status text; returns False'''
+        rospy.logerr(reason)
+        self.place_failure_reason = reason
+        return False
+
+    def failure_text(self):
+        '''Why the last place failed: a check before MTC, else MTC's reason, else empty'''
+        reason = getattr(self, 'place_failure_reason', '')
+        if not reason and getattr(self, 'mtc', None) is not None:
+            reason = self.mtc.failure_reason
+        return reason
+
     def place_obj_action_callback(self, goal):
         success = False
+        self.place_failure_reason = ''   # why a check before MTC stopped the place
         if self.mtc is not None:
             self.mtc.failure_reason, self.mtc.executed = '', False  # nothing left over from the previous goal
         self.reset_detour()
@@ -585,7 +599,7 @@ class PlaceTools:
             rospy.logwarn("Preemption requested during place goal processing.")
             self.place_action_server.set_preempted()
         else:
-            reason = self.mtc.failure_reason if self.mtc is not None else ''
+            reason = self.failure_text()
             self.place_action_server.set_aborted(
                 PlaceObjectResult(success=False), f'place failed: {reason}' if reason else 'place failed'
             )
@@ -684,10 +698,12 @@ class PlaceTools:
         PLACE_OBJECT_SERVER_NAME = 'place'
         assert isinstance(observe_before_place, bool)
         rospy.loginfo(f'Received request to place object on {support_object}')
+        self.place_failure_reason = ''   # only this attempt's check counts
 
         if len(self.scene.get_attached_objects().keys()) == 0:
-            rospy.logerr("The robot is not currently holding any object, can't place")
-            return False
+            return self.fail(f'cannot place on {support_object}: no object is attached to the gripper in the planning '
+                             'scene, so the place has nothing to plan with (the object may have been dropped, or the '
+                             'pick never attached it)')
 
         # deduce object_to_be_placed by querying which object the gripper currently has attached to its gripper
         object_to_be_placed = list(self.scene.get_attached_objects().keys())[0]

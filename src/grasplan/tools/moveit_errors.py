@@ -72,3 +72,71 @@ def print_moveit_error(error_code):
     print_moveit_error_helper(error_code, MoveItErrorCodes.COMMUNICATION_FAILURE, 'COMMUNICATION_FAILURE')
 
     print_moveit_error_helper(error_code, MoveItErrorCodes.NO_IK_SOLUTION, 'NO_IK_SOLUTION')
+
+
+# what a MoveIt error code means, in words the planner agent can repeat; codes not listed get their name only
+MOVEIT_CODE_CAUSES = {
+    'PLANNING_FAILED': 'no motion plan was found',
+    'INVALID_MOTION_PLAN': 'the motion plan was invalid',
+    'MOTION_PLAN_INVALIDATED_BY_ENVIRONMENT_CHANGE': 'the planning scene changed while the motion ran',
+    'CONTROL_FAILED': 'the arm controller aborted the motion (a stop, a collision, or the arm left its path tolerance)',
+    'UNABLE_TO_AQUIRE_SENSOR_DATA': 'no sensor data was available',
+    'TIMED_OUT': 'the motion did not finish in time',
+    'PREEMPTED': 'the motion was stopped before its end (cancelled or stopped)',
+    'START_STATE_IN_COLLISION': 'the arm starts in collision',
+    'GOAL_IN_COLLISION': 'the goal pose is in collision',
+    'NO_IK_SOLUTION': 'the arm cannot reach the pose (no IK solution)',
+    'FAILURE': 'a step of the motion failed',
+}
+
+# ur_dashboard_msgs/SafetyMode values that stop the arm, in words
+_STOPPING_SAFETY_MODES = {
+    'PROTECTIVE_STOP': 'protective stop',
+    'SAFEGUARD_STOP': 'safeguard stop',
+    'SYSTEM_EMERGENCY_STOP': 'emergency stop',
+    'ROBOT_EMERGENCY_STOP': 'emergency stop',
+    'VIOLATION': 'safety violation stop',
+    'FAULT': 'safety fault stop',
+    'AUTOMATIC_MODE_SAFEGUARD_STOP': 'safeguard stop',
+    'SYSTEM_THREE_POSITION_ENABLING_STOP': 'enabling-device stop',
+}
+
+
+def moveit_code_name(code):
+    '''the MoveItErrorCodes constant name of code, e.g. "CONTROL_FAILED"; "code <n>" when unknown'''
+    for name, value in vars(MoveItErrorCodes).items():
+        if name.isupper() and value == code:
+            return name
+    return f'code {code}'
+
+
+def moveit_code_text(code):
+    '''"CONTROL_FAILED (-4): the arm controller aborted the motion (...)" for a failure string'''
+    name = moveit_code_name(code)
+    cause = MOVEIT_CODE_CAUSES.get(name)
+    label = f'{name} ({code})' if not name.startswith('code ') else f'MoveIt error code {code}'
+    return f'{label}: {cause}' if cause else label
+
+
+def arm_stop_text(service='ur_hardware_interface/dashboard/get_safety_mode', timeout=0.5):
+    '''
+    "; the arm is in a protective stop (UR safety mode PROTECTIVE_STOP)" while the UR safety mode stops the arm,
+    else ''. Asked after a failed motion so the planner hears about a stop (the sim cable monitor presses one) in
+    the failure itself and not only from a later event. Never raises: no dashboard (unknown state) gives '' and a log.
+    '''
+    try:
+        from ur_dashboard_msgs.msg import SafetyMode
+        from ur_dashboard_msgs.srv import GetSafetyMode
+    except ImportError as error:
+        rospy.logwarn(f'arm safety mode not checked: {error}')
+        return ''
+    try:
+        rospy.wait_for_service(service, timeout)
+        mode = rospy.ServiceProxy(service, GetSafetyMode)().safety_mode.mode
+    except (rospy.ROSException, rospy.ServiceException) as error:
+        rospy.logwarn(f'arm safety mode not checked ({service}): {error}')
+        return ''
+    for name, words in _STOPPING_SAFETY_MODES.items():
+        if getattr(SafetyMode, name, None) == mode:
+            return f'; the arm is in a {words} (UR safety mode {name})'
+    return ''

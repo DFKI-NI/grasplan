@@ -310,6 +310,7 @@ class PickTools:
             self.pick_action_server.set_preempted()
             return
 
+        self.pick_failure_reason = ''   # why a check before MTC stopped the pick
         if self.mtc is not None:
             self.mtc.failure_reason, self.mtc.executed = '', False  # nothing left over from the previous goal
 
@@ -320,8 +321,8 @@ class PickTools:
                 goal.object_name, goal.support_surface_name, self.grasp_type, goal.ignore_object_list
             )
             status_text = 'Grasplan pick succeeded' if success else 'Grasplan pick failed'
-            if not success and self.mtc is not None and self.mtc.failure_reason:
-                status_text += f': {self.mtc.failure_reason}'
+            if not success and self.failure_text():
+                status_text += f': {self.failure_text()}'
             preempted = False
         else:
             if self.anygrasp_handles_execution:
@@ -494,8 +495,8 @@ class PickTools:
             if success
             else f'Grasplan failed to pick open-set object {anchored_object_name}'
         )
-        if not success and self.mtc is not None and self.mtc.failure_reason:
-            message += f': {self.mtc.failure_reason}'
+        if not success and self.failure_text():
+            message += f': {self.failure_text()}'
         return success, message, False
 
     def pick_topdown_without_anygrasp(self, goal, anygrasp_message):
@@ -518,8 +519,8 @@ class PickTools:
         if success:
             return True, f'Grasplan picked open-set object {goal.object_name} with the top-down fallback', False
         message = f'{anygrasp_message}; the top-down fallback failed too'
-        if self.mtc is not None and self.mtc.failure_reason:
-            message += f': {self.mtc.failure_reason}'
+        if self.failure_text():
+            message += f': {self.failure_text()}'
         return False, message, False
 
     def graspTypeCB(self, msg):
@@ -551,9 +552,10 @@ class PickTools:
             # query pose selector
             resp = self.pose_selector_class_query_srv(object_to_pick.obj_class)
             if len(resp.poses) == 0:
-                rospy.logerr(
-                    f'Object of class {object_to_pick.obj_class} was not perceived, therefore its pose is not available'
-                    ' and cannot be picked'
+                self.fail(
+                    f'cannot pick {object_to_pick.get_object_class_and_id_as_string()}: no {object_to_pick.obj_class} '
+                    'is in the pose selector (it was not perceived, or perceived with low confidence so its pose was '
+                    'not committed); perceive it with high confidence first'
                 )
                 return None, None, None
         # at least one object of the same class as the object we want to pick was perceived, continue
@@ -630,9 +632,12 @@ class PickTools:
             self.add_object_box(external_object_name, object_to_pick_pose, object_to_pick_bounding_box, supports,
                                 keep_implausible=True)
         if not object_found:
-            rospy.logerr(
-                'the specific object you want to pick was not found:'
-                f' {object_to_pick.get_object_class_and_id_as_string()}'
+            same_class = sorted(f'{o.class_id}_{o.instance_id}' for o in resp.poses.objects
+                                if o.class_id == object_to_pick.obj_class)
+            self.fail(
+                f'cannot pick {object_to_pick.get_object_class_and_id_as_string()}: it is not in the pose selector'
+                + (f', which holds {", ".join(same_class)} of that class' if same_class else '')
+                + '; perceive it again or pick one that is there'
             )
             return None, None, None
         return (
@@ -1007,12 +1012,14 @@ class PickTools:
         5) call pick moveit functionality
         '''
         rospy.loginfo(f'attempting to pick object : {object_name_as_string}')
+        self.pick_failure_reason = ''   # only this attempt's check counts (the AnyGrasp pick may try twice)
         if len(ignore_object_list) > 0:
             rospy.logwarn(f'the following objects: {ignore_object_list} will be ignored from the planning scene')
 
         if not self.detach_all_objects_flag and len(self.scene.get_attached_objects().keys()) > 0:
-            rospy.logerr('cannot pick object, another object is currently attached to the gripper already')
-            return False
+            held = ', '.join(sorted(self.scene.get_attached_objects().keys()))
+            return self.fail(f'cannot pick {object_name_as_string}: the gripper already holds {held} (attached in the '
+                             'planning scene); place or insert it first')
 
         object_to_pick = objectToPick(object_name_as_string)
 
@@ -1366,6 +1373,19 @@ class PickTools:
                           f'{max_backoff * 100:.1f} cm back): '
                           f'{", ".join(dropped)}')
         return kept
+
+    def fail(self, reason):
+        '''Log why the pick cannot go on and keep it for the action's status text; returns False'''
+        rospy.logerr(reason)
+        self.pick_failure_reason = reason
+        return False
+
+    def failure_text(self):
+        '''Why the last pick failed: a check before MTC, else MTC's reason, else empty'''
+        reason = getattr(self, 'pick_failure_reason', '')
+        if not reason and getattr(self, 'mtc', None) is not None:
+            reason = self.mtc.failure_reason
+        return reason
 
     def start_pose_failed(self):
         '''the arm could not reach the open-set pick start pose: the pick stops, the reason goes to the action text'''

@@ -79,6 +79,7 @@ from moveit.task_constructor import core, stages
 from grasplan.tools.octomap_probe import count_in_box, occupied_leaves
 from grasplan.tools.common import robot_prefix
 from grasplan.tools.touching_boxes import boxes_touch
+from grasplan.tools.moveit_errors import arm_stop_text, moveit_code_text
 
 # the name MoveIt gives the octomap inside the planning scene (planning_scene::PlanningScene::OCTOMAP_NS)
 OCTOMAP_COLLISION_NAME = '<octomap>'
@@ -545,20 +546,24 @@ class MtcPickPlace:
         result = PickupResult()
         result.error_code.val = MoveItErrorCodes.PLANNING_FAILED
         self.failure_reason, self.executed = '', False
+        self.unplanned = []   # why each grasp could not be planned, for the failure reason
         self.update_cable_guard()
         touch = self.gripper_links + [goal.target_name]
         for index, grasp in enumerate(goal.possible_grasps):
             if self.is_preempt_requested():
                 result.error_code.val = MoveItErrorCodes.PREEMPTED
                 return result
+            self.last_plan_failure = ''
             try:
                 task, roles = self.make_pick_task(goal, grasp)
             except (tf2_ros.TransformException, ValueError) as e:
                 rospy.logwarn(f'mtc: grasp {grasp.id} skipped: {e}')
+                self.unplanned.append(f'could not be set up ({e})')
                 continue
             if not self.plan(task, f'grasp {grasp.id} ({index + 1}/{len(goal.possible_grasps)})'):
                 grasp, task, roles = self.turned_grasp_plan(goal, grasp)
                 if grasp is None:
+                    self.unplanned.append(getattr(self, 'last_plan_failure', '') or 'not planned')
                     continue
             # the pre grasp posture (open) is not a stage, it is sent before the first arm motion
             self.executed = True
@@ -574,10 +579,12 @@ class MtcPickPlace:
             if code == MoveItErrorCodes.SUCCESS:
                 result.grasp = grasp
             elif not self.failure_reason:
-                self.failure_reason = f'executing grasp {grasp.id} failed with MoveIt error code {code}'
+                self.failure_reason = f'executing grasp {grasp.id} failed: {self.execution_text(code)}'
             return result  # something moved: never try another grasp from a changed state
-        self.failure_reason = f'none of the {len(goal.possible_grasps)} grasps could be planned'
-        rospy.logerr(f'mtc: none of the {len(goal.possible_grasps)} grasps of {goal.target_name} could be planned')
+        self.failure_reason = (f'none of the {len(goal.possible_grasps)} grasps could be planned'
+                               + self.unplanned_breakdown())
+        rospy.logerr(f'mtc: none of the {len(goal.possible_grasps)} grasps of {goal.target_name} could be planned'
+                     f'{self.unplanned_breakdown()}')
         return result
 
     def place(self, goal):
@@ -593,6 +600,7 @@ class MtcPickPlace:
         result = PlaceResult()
         result.error_code.val = MoveItErrorCodes.PLANNING_FAILED
         self.failure_reason, self.executed = '', False
+        self.unplanned = []   # why each place location could not be planned, for the failure reason
         self.update_cable_guard()
         if not self.gripper_holds_object('before placing', delay=0.2):
             # e.g. it slipped out while the arm swung through the observe or untangle poses
@@ -622,6 +630,7 @@ class MtcPickPlace:
         # a far spot that plans at once (sim 2026-09-28 night20: tennis ball 27 cm deep into table 2, re-pick no IK)
         blocked = []
         for index, location in enumerate(goal.place_locations):
+            self.last_plan_failure = ''
             if octomap_check is not None:
                 hits = self.octomap_blocks_place(octomap_check, location)
                 if hits:
@@ -646,6 +655,7 @@ class MtcPickPlace:
                     task, roles = self.make_place_task(goal, location, eef_to_object, retreat_min_distance, straight_up)
                 except (tf2_ros.TransformException, ValueError) as e:
                     rospy.logwarn(f'mtc: place location {location.id} skipped: {e}')
+                    self.last_plan_failure = f'could not be set up ({e})'
                     break
                 if task is None and force_straight_up:
                     # its own retreat is already vertical: the axis plan is the straight-up plan
@@ -664,10 +674,12 @@ class MtcPickPlace:
                 if code == MoveItErrorCodes.SUCCESS:
                     result.place_location = location
                 else:
-                    self.failure_reason = f'executing place location {location.id} failed with MoveIt error code {code}'
+                    self.failure_reason = f'executing place location {location.id} failed: {self.execution_text(code)}'
                 return result
+            self.unplanned.append(getattr(self, 'last_plan_failure', '') or 'not planned')
         rospy.logerr(f'mtc: none of the {len(goal.place_locations)} place locations could be planned')
-        self.failure_reason = f'none of the {len(goal.place_locations)} place locations could be planned'
+        self.failure_reason = (f'none of the {len(goal.place_locations)} place locations could be planned'
+                               + self.unplanned_breakdown())
         if blocked:
             self.failure_reason += f' ({len(blocked)} skipped: objects only the octomap sees in the footprint)'
         return result
@@ -1103,10 +1115,12 @@ class MtcPickPlace:
             planned = bool(task.plan(count)) and len(task.solutions) > 0
         except Exception as e:  # MTC raises InitStageError for inconsistent stage setups
             rospy.logwarn(f'mtc: {what}: {e}')
+            self.last_plan_failure = f'could not be set up ({e})'
             return False
         elapsed = time.monotonic() - start
         if not planned:
             rospy.loginfo(f'mtc: {what} not feasible ({elapsed:.1f} s): {self.describe_failures(task)}')
+            self.last_plan_failure = self.first_failure(task)
             return False
         if self.cable_guard is None:
             self.chosen_solution = task.solutions[0]
@@ -1125,6 +1139,7 @@ class MtcPickPlace:
                 rospy.loginfo(f'mtc: {what} solution {index} rejected by the cable guard{where}: stretch {stretch:+.3f} '
                               f'> {self.cable_guard.max_stretch:+.3f} in the {span} span at {q}')
             if self.chosen_solution is None:
+                self.last_plan_failure = f'refused by the cable guard ({span} span)'
                 rospy.loginfo(f'mtc: {what}: all {len(task.solutions)} solutions entangle the arm cable '
                               f'({"; ".join(checks)}) in {elapsed:.1f} s')
                 return False
@@ -1182,6 +1197,59 @@ class MtcPickPlace:
         name = names[sub_index] if sub_index < len(names) else f'sub trajectory {sub_index}'
         return f' (worst point in {name}, point {point_index + 1}/{points})'
 
+    def unplanned_breakdown(self):
+        '''": 15 failed at grasp/compute ik (eef in collision), 3 refused by the cable guard (wrist span)" from
+        self.unplanned, most frequent first; '' when nothing was recorded'''
+        counts = {}
+        for why in getattr(self, 'unplanned', []):
+            counts[why] = counts.get(why, 0) + 1
+        if not counts:
+            return ''
+        return ': ' + ', '.join(f'{n} {why}' for why, n in sorted(counts.items(), key=lambda item: -item[1]))
+
+    @staticmethod
+    def first_failure(task):
+        '''"failed at <stage> (<first failure comment>)" for the first leaf stage (in solution order) that found
+        no solution, else the one with the most failures; "not planned" when MTC kept no failures'''
+        leaves = []
+
+        def visit(stage, prefix):
+            index = 0
+            while True:
+                try:
+                    child = stage[index]
+                except Exception:  # past the last child, or not a container
+                    break
+                index += 1
+                visit(child, prefix + child.name + '/')
+            if index == 0:
+                try:
+                    failures = list(stage.failures)
+                    leaves.append((prefix[:-1], len(stage.solutions), failures))
+                except Exception:  # noqa: BLE001 - a stage without introspection
+                    pass
+
+        index = 0
+        while True:
+            try:
+                stage = task[index]
+            except Exception:
+                break
+            index += 1
+            visit(stage, stage.name + '/')
+        failing = [leaf for leaf in leaves if leaf[2]]
+        if not failing:
+            return 'not planned'
+        name, _, failures = next((leaf for leaf in failing if leaf[1] == 0), max(failing, key=lambda leaf: len(leaf[2])))
+        comment = next((f.comment for f in failures if f.comment), '')
+        if len(comment) > 100:
+            comment = comment[:97] + '...'
+        return f'failed at {name}' + (f' ({comment})' if comment else '')
+
+    def execution_text(self, code):
+        '''Why the executed solution failed: what execute() recorded, else the MoveIt code in words'''
+        return getattr(self, 'execution_failure', '') or moveit_code_text(code)
+
     @staticmethod
     def describe_failures(task):
         '''solutions and failures of every stage, with the first failure comment, e.g. "approach 0 ok / 3 failed
@@ -1220,8 +1288,11 @@ class MtcPickPlace:
         postures_before are gripper postures (trajectory_msgs/JointTrajectory, opening in metres) sent before
         anything else, stage_posture is the one for the GRIPPER stage
         '''
+        self.execution_failure = ''   # set by the step that fails
         sub_trajectories = list(self.chosen_solution.toMsg().sub_trajectory)
         if len(sub_trajectories) != len(roles):
+            self.execution_failure = (f'the planned solution has {len(sub_trajectories)} motions where '
+                                      f'{len(roles)} were expected, so it was not executed')
             rospy.logerr(
                 f'mtc: solution has {len(sub_trajectories)} sub trajectories, expected {len(roles)} '
                 f'({roles}); not executing'
@@ -1229,7 +1300,11 @@ class MtcPickPlace:
             return MoveItErrorCodes.FAILURE
         postures = list(postures_before) + [stage_posture]
         steps = [(GRIPPER, None)] * len(postures_before) + list(zip(roles, sub_trajectories))
-        for role, sub in steps:
+        try:
+            stage_names = [''] * len(postures_before) + self.leaf_stage_names(task)
+        except Exception:  # noqa: BLE001 - names only label the failure
+            stage_names = []
+        for step, (role, sub) in enumerate(steps):
             if self.is_preempt_requested():
                 return MoveItErrorCodes.PREEMPTED
             if role == ARM:
@@ -1253,6 +1328,8 @@ class MtcPickPlace:
                     return MoveItErrorCodes.FAILURE
                 continue
             if code != MoveItErrorCodes.SUCCESS:
+                if self.execution_failure and step < len(stage_names) and stage_names[step]:
+                    self.execution_failure += f' (stage {stage_names[step]})'
                 return code
         return MoveItErrorCodes.SUCCESS
 
@@ -1346,13 +1423,15 @@ class MtcPickPlace:
                 return MoveItErrorCodes.PREEMPTED
         code = self.execute_client.get_result().error_code.val
         if code != MoveItErrorCodes.SUCCESS:
-            rospy.logerr(f'mtc: arm trajectory execution failed with MoveIt error code {code}')
+            self.execution_failure = f'the arm motion failed with {moveit_code_text(code)}{arm_stop_text()}'
+            rospy.logerr(f'mtc: arm trajectory execution failed: {self.execution_failure}')
         return code
 
     def command_gripper(self, posture):
         '''send the single point posture of a Grasp/PlaceLocation (opening in metres) to the GripperCommand server'''
         if not self.gripper_client.wait_for_server(rospy.Duration(2.0)):
-            rospy.logerr(f'mtc: gripper action server {self.gripper_action_name} not available')
+            self.execution_failure = f'the gripper action server {self.gripper_action_name} is not available'
+            rospy.logerr(f'mtc: {self.execution_failure}')
             return MoveItErrorCodes.CONTROL_FAILED
         point = posture.points[-1]
         goal = GripperCommandGoal()
@@ -1362,7 +1441,8 @@ class MtcPickPlace:
         self.gripper_client.send_goal(goal)
         if not self.gripper_client.wait_for_result(rospy.Duration(self.gripper_action_timeout)):
             self.gripper_client.cancel_goal()
-            rospy.logerr('mtc: gripper command timed out')
+            self.execution_failure = f'the gripper did not finish its command within {self.gripper_action_timeout} s'
+            rospy.logerr(f'mtc: {self.execution_failure}')
             return MoveItErrorCodes.TIMED_OUT
         # closing on an object stalls the fingers before the commanded position, which is a successful grasp
         result = self.gripper_client.get_result()
