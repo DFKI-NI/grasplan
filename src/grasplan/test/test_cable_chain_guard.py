@@ -1,6 +1,6 @@
 '''#121: the MTC cable guard also rejects a plan the sim monitor's disc chain would stop (the chain caught on the tool
 while the geometry stays slack, as in the two 2026-09-28 night sim stops). Fake MTC solution messages, no ROS master;
-needs the Mobipick image and mobipick_sim_cable_entanglement.'''
+needs the Mobipick image and mobipick_cable_entanglement.'''
 import math
 import os
 import unittest
@@ -37,10 +37,10 @@ def solution(*waypoints, seconds=5.0):
 class TestChainGuard(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        from mobipick_sim_cable_entanglement.cable_model import CableModel, config_from_dict
+        from mobipick_cable_entanglement.cable_model import CableModel, config_from_dict
         import copy
         import rospkg
-        pkg = rospkg.RosPack().get_path('mobipick_sim_cable_entanglement')
+        pkg = rospkg.RosPack().get_path('mobipick_cable_entanglement')
         with open(os.path.join(pkg, 'config', 'cable_model.yaml')) as f:
             cfg = config_from_dict(yaml.safe_load(f))
         with open(os.path.join(pkg, 'test', 'mobipick_sim_robot_description.urdf')) as f:

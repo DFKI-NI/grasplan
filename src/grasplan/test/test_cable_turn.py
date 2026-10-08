@@ -1,5 +1,5 @@
 '''#121: a grasp rejected by the MTC cable guard is replanned turned about its approach axis (the wrist_3 axis).
-Needs the Mobipick image (MoveIt Python bindings) and mobipick_sim_cable_entanglement sourced.'''
+Needs the Mobipick image (MoveIt Python bindings) and mobipick_cable_entanglement sourced.'''
 import math
 import os
 import unittest
@@ -53,10 +53,10 @@ class TestGuardTurn(unittest.TestCase):
     '''CableGuard.turn_for_slack on a joint state the guard rejected in the sim (tennis ball topdown_0, -0.112)'''
 
     def setUp(self):
-        from mobipick_sim_cable_entanglement.cable_model import CableModel, config_from_dict
+        from mobipick_cable_entanglement.cable_model import CableModel, config_from_dict
         import rospkg
         from grasplan.mtc_pick_place import CableGuard
-        pkg = rospkg.RosPack().get_path('mobipick_sim_cable_entanglement')
+        pkg = rospkg.RosPack().get_path('mobipick_cable_entanglement')
         guard = CableGuard.__new__(CableGuard)       # without rospy params
         with open(os.path.join(pkg, 'config', 'cable_model.yaml')) as f:
             guard.cfg = config_from_dict(yaml.safe_load(f))

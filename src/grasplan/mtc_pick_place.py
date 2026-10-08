@@ -39,7 +39,7 @@ the GripperCommand action with the metre values of the goal, attach and detach t
 apply_planning_scene. This also makes the execution preemptible, which the pickup action was not.
 
 Optional arm cable guard (~mtc_cable_constraints, re-read on every goal): the cable model of
-mobipick_sim_cable_entanglement (#118) turns into constraints on the joint path instead of joint limits that
+mobipick_cable_entanglement (#118) turns into constraints on the joint path instead of joint limits that
 reject grasps (#120, #124). Every free motion (Connect) gets a MoveIt path constraint that keeps wrist_3 within
 half a turn of the angle where the tube is least wound (no extra winding), several solutions are planned, and
 the cheapest one whose whole joint path keeps the cable model's stretch below ~mtc_cable_max_stretch is executed.
@@ -205,7 +205,7 @@ def place_retreat_passes(relaxed_min_distance, force_straight_up=False):
 class CableGuard:
     '''
     Arm cable entanglement as constraints on MTC paths (#124), from the cable model of
-    mobipick_sim_cable_entanglement (doc/cable_model.md there, #118):
+    mobipick_cable_entanglement (doc/cable_model.md there, #118):
 
     - path constraint: wrist_3 stays within ~mtc_cable_wrist_3_half_window_deg of the neutral angle of the model's
       wrist span (where the tube takes the short way around the joint), so no motion adds a turn of winding. The
@@ -216,12 +216,12 @@ class CableGuard:
     '''
 
     def __init__(self, joint_prefix):
-        from mobipick_sim_cable_entanglement.cable_model import CableModel, config_from_dict  # separate package
+        from mobipick_cable_entanglement.cable_model import CableModel, config_from_dict  # separate package
         import rospkg
         import yaml
 
         config = rospy.get_param('~mtc_cable_model_config', '') or os.path.join(
-            rospkg.RosPack().get_path('mobipick_sim_cable_entanglement'), 'config', 'cable_model.yaml'
+            rospkg.RosPack().get_path('mobipick_cable_entanglement'), 'config', 'cable_model.yaml'
         )
         with open(config) as f:
             self.cfg = config_from_dict(yaml.safe_load(f))
@@ -308,9 +308,9 @@ class CableGuard:
 
     def chain_verdict(self, solution_msg):
         '''the cable monitor's decision (disc chain with history, same model and thresholds) along the whole joint
-        path of the solution, from a freshly settled chain at its start (mobipick_sim_cable_entanglement.path_check, #121)'''
-        from mobipick_sim_cable_entanglement.cable_model import CableModel
-        from mobipick_sim_cable_entanglement.path_check import rope_replay
+        path of the solution, from a freshly settled chain at its start (mobipick_cable_entanglement.path_check, #121)'''
+        from mobipick_cable_entanglement.cable_model import CableModel
+        from mobipick_cable_entanglement.path_check import rope_replay
         if getattr(self, 'chain_model', None) is None:
             cfg = copy.deepcopy(self.cfg)
             cfg.rope.enabled = True
@@ -334,7 +334,7 @@ class CableGuard:
         '''(turn in degrees, predicted stretch) about the grasp approach axis (= the wrist_3 axis) that gives the most
         slack at the rejected joint state q (radians): any angle within +-60 deg or the 180 deg flip for a round
         object, only the flip otherwise; None when no turn is predicted to pass (#121)'''
-        from mobipick_sim_cable_entanglement.slack import FLIP_ONLY, ROUND_TURNS, best_wrist_3_turn
+        from mobipick_cable_entanglement.slack import FLIP_ONLY, ROUND_TURNS, best_wrist_3_turn
         return best_wrist_3_turn(
             self.model, q, self.max_stretch,
             (self.wrist_3_neutral - self.half_window, self.wrist_3_neutral + self.half_window),
