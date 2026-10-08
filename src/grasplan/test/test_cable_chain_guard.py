@@ -1,6 +1,6 @@
 '''#121: the MTC cable guard also rejects a plan the sim monitor's disc chain would stop (the chain caught on the tool
 while the geometry stays slack, as in the two 2026-09-28 night sim stops). Fake MTC solution messages, no ROS master;
-needs the Mobipick image and amenable_ws (mobipick_sim_cable_entanglement).'''
+needs the Mobipick image and mobipick_sim_cable_entanglement.'''
 import math
 import os
 import unittest

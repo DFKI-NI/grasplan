@@ -216,7 +216,7 @@ class CableGuard:
     '''
 
     def __init__(self, joint_prefix):
-        from mobipick_sim_cable_entanglement.cable_model import CableModel, config_from_dict  # amenable_ws
+        from mobipick_sim_cable_entanglement.cable_model import CableModel, config_from_dict  # separate package
         import rospkg
         import yaml
 
@@ -1075,7 +1075,7 @@ class MtcPickPlace:
                 prefix = self.eef_link.rsplit('/', 1)[0] + '/' if '/' in self.eef_link else ''
                 try:
                     self._cable_guard_cache = CableGuard(prefix)
-                except Exception as e:  # the model package lives in amenable_ws, it may be missing
+                except Exception as e:  # the model package is separate, it may be missing
                     rospy.logerr(f'mtc: cable guard requested but not available, planning without it: {e}')
                     return
             self.cable_guard = self._cable_guard_cache
