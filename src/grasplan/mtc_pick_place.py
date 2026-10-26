@@ -38,7 +38,7 @@ executed here: arm segments through move_group's execute_trajectory action, the 
 the GripperCommand action with the metre values of the goal, attach and detach through
 apply_planning_scene. This also makes the execution preemptible, which the pickup action was not.
 
-Optional arm cable guard (~mtc_cable_constraints, re-read on every goal): the cable model of
+Optional arm cable guard (~mtc_cable_plan_check, old name ~mtc_cable_constraints, re-read on every goal): the cable model of
 mobipick_cable_entanglement (#118) turns into constraints on the joint path instead of joint limits that
 reject grasps (#120, #124). Every free motion (Connect) gets a MoveIt path constraint that keeps wrist_3 within
 half a turn of the angle where the tube is least wound (no extra winding), several solutions are planned, and
@@ -496,7 +496,7 @@ class MtcPickPlace:
         self.gripper_action_timeout = rospy.get_param('~mtc_gripper_action_timeout', 10.0)
         self.relaxed_retreat_min_distance = rospy.get_param('~mtc_relaxed_retreat_min_distance', 0.05)
         self.retreat_failed = False
-        self.cable_guard = None  # CableGuard, built on the first goal with ~mtc_cable_constraints true
+        self.cable_guard = None  # CableGuard, built on the first goal with ~mtc_cable_plan_check true
         # solutions the cable guard rejected since the caller last set it to 0 (place/insert goal: #198 (e) takes the
         # untangle detour only after such a rejection)
         self.cable_rejections = 0
@@ -1064,8 +1064,9 @@ class MtcPickPlace:
     # ------------------------------------------------------------------ planning and execution
 
     def update_cable_guard(self):
-        '''(re)read ~mtc_cable_constraints on every goal, so the guard can be switched without a restart'''
-        if not rospy.get_param('~mtc_cable_constraints', False):
+        '''(re)read ~mtc_cable_plan_check on every goal, so the guard can be switched without a restart; the old
+        name ~mtc_cable_constraints still works when the new one is not set'''
+        if not rospy.get_param('~mtc_cable_plan_check', rospy.get_param('~mtc_cable_constraints', False)):
             if self.cable_guard is not None:
                 rospy.loginfo('mtc: cable guard off')
             self.cable_guard = None
