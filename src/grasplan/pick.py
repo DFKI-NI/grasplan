@@ -44,7 +44,7 @@ from std_srvs.srv import Empty, SetBool
 from pose_selector.srv import ClassQuery, PoseDelete, GetPoses
 from geometry_msgs.msg import PoseStamped
 from shape_msgs.msg import SolidPrimitive
-from grasplan.tools.moveit_errors import print_moveit_error
+from grasplan.tools.moveit_errors import motion_failure_text, print_moveit_error
 from moveit_msgs.msg import (
     AllowedCollisionEntry,
     MoveItErrorCodes,
@@ -1150,7 +1150,8 @@ class PickTools:
                               f'fingertips clear of {support_surface_name}')
                 grasps = self.topdown_fallback_grasps(object_to_pick, object_pose, bounding_box, support_surface_name)
                 if not grasps:
-                    return False
+                    return self.fail(f'no grasp of {object_to_pick.get_object_class_and_id_as_string()} keeps the '
+                                     f'fingertips clear of {support_surface_name} and the top-down fallback found none')
 
         # clear octomap from the planning scene if needed
         if self.clear_octomap_flag:
@@ -1236,6 +1237,8 @@ class PickTools:
             rospy.logerr('grasp failed')
             if result:  # if result is None it means moveit action server was not found within 2 secs
                 print_moveit_error(result)  # only print moveit error if result is different than None
+            if not self.failure_text():   # the MTC reason (named code, stop) is the better one when it exists
+                self.fail(motion_failure_text('the pick', result))
             if self.mtc is not None and self.mtc.executed and not self.pick_action_server.is_preempt_requested():
                 self.retract_after_failure('pick')
         return False

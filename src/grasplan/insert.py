@@ -40,7 +40,7 @@ from grasplan.tools.support_plane_tools import (
     compute_object_height_for_insertion,
     OBJECT_HEIGHTS,
 )
-from grasplan.tools.moveit_errors import print_moveit_error
+from grasplan.tools.moveit_errors import motion_failure_text, print_moveit_error
 from object_pose_msgs.msg import ObjectList
 from moveit_msgs.msg import MoveItErrorCodes
 from moveit_msgs.srv import GetPositionIK, GetPositionIKRequest
@@ -405,10 +405,11 @@ class InsertTools:
                     # clear possible place poses markers in rviz
                     # self.place.clear_place_poses_markers() # leave markers for debugging if failed to insert
                     print_moveit_error(result.error_code.val)
+                    if not self.failure_text():   # the MTC reason is the better one when it exists
+                        self.fail(motion_failure_text('the insert', result.error_code.val))
                 return False
         else:
-            rospy.logerr(f'action server {INSERT_OBJECT_SERVER_NAME} not available (we use it for insertion)')
-            return False
+            return self.fail(f'cannot insert: the action server {INSERT_OBJECT_SERVER_NAME} is not available')
         return False
 
     def gen_comfortable_insert_poses(

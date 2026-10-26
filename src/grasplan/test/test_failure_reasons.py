@@ -35,6 +35,24 @@ class CodeText(unittest.TestCase):
         self.assertEqual(moveit_errors.moveit_code_text(MoveItErrorCodes.INVALID_LINK_NAME), 'INVALID_LINK_NAME (-18)')
 
 
+class MotionFailureText(unittest.TestCase):
+    '''The MoveIt action paths that only printed the code now give a reason'''
+    def test_code_name_cause_and_stop(self):
+        with mock.patch.object(moveit_errors, 'arm_stop_text', return_value='; the arm is in a protective stop'):
+            text = moveit_errors.motion_failure_text('the pick', MoveItErrorCodes.CONTROL_FAILED)
+        self.assertTrue(text.startswith('the pick failed: CONTROL_FAILED (-4): '), text)
+        self.assertTrue(text.endswith('; the arm is in a protective stop'), text)
+
+    def test_no_result_and_cancelled(self):
+        self.assertIn('no result', moveit_errors.motion_failure_text('the place', None))
+        self.assertEqual(moveit_errors.motion_failure_text('the place', False), 'the place was cancelled')
+
+    def test_unknown_code_is_a_number_not_a_blank(self):
+        with mock.patch.object(moveit_errors, 'arm_stop_text', return_value=''):
+            self.assertEqual(moveit_errors.motion_failure_text('the insert', -12345),
+                             'the insert failed: MoveIt error code -12345')
+
+
 class ArmStop(unittest.TestCase):
     def mode(self, value):
         proxy = mock.MagicMock(return_value=NS(safety_mode=NS(mode=value)))
@@ -211,3 +229,14 @@ class PlaceInsertReasons(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class OpenSetNoGrasp(unittest.TestCase):
+    def test_reason_when_no_grasp_survives_and_the_fallback_finds_none(self):
+        p = pick.PickTools.__new__(pick.PickTools)
+        p.mtc = NS(failure_reason='')
+        p.pick_failure_reason = ''
+        with mock.patch.object(pick.rospy, 'logerr'):
+            self.assertFalse(p.fail('no grasp of apple_1 keeps the fingertips clear of table_2 and the top-down '
+                                    'fallback found none'))
+        self.assertIn('keeps the fingertips clear of table_2', p.failure_text())

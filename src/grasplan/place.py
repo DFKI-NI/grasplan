@@ -42,7 +42,7 @@ from grasplan.tools.support_plane_tools import (
     OBJECT_HEIGHTS,
 )
 from grasplan.tools.common import separate_object_class_from_id, connect_move_groups, roscpp_initialize_named, robot_prefix
-from grasplan.tools.moveit_errors import print_moveit_error
+from grasplan.tools.moveit_errors import motion_failure_text, print_moveit_error
 from grasplan.tools.place_reach import order_by_reach, order_free_first
 from grasplan.tools.topdown_grasps import depth_below_support_top, height_above_support_top, rests_on_other
 from shape_msgs.msg import SolidPrimitive
@@ -890,6 +890,8 @@ class PlaceTools:
                 self.place_pose_selector_clear_srv()
                 self.clear_place_poses_markers()
                 print_moveit_error(result.error_code.val)
+                if not self.failure_text():   # the MTC reason is the better one when it exists
+                    self.fail(motion_failure_text('the place', result.error_code.val))
                 if self.mtc is not None and self.mtc.executed:
                     # the arm moved (maybe the gripper already opened): report instead of retrying from a changed state
                     return False

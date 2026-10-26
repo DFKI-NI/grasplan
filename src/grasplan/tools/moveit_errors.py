@@ -118,6 +118,17 @@ def moveit_code_text(code):
     return f'{label}: {cause}' if cause else label
 
 
+def motion_failure_text(what, code):
+    '''"the pick failed: CONTROL_FAILED (-4): ...; the arm is in a protective stop" for the MoveIt action paths
+    that used to only print the code (the stop is asked after the failure, see arm_stop_text); a missing result (None,
+    False: the action server did not answer or the goal was preempted) is worded as that'''
+    if code is None:
+        return f'{what} failed: the MoveIt action server gave no result (not found within 2 s)'
+    if code is False:
+        return f'{what} was cancelled'
+    return f'{what} failed: {moveit_code_text(code)}{arm_stop_text()}'
+
+
 def arm_stop_text(service='ur_hardware_interface/dashboard/get_safety_mode', timeout=0.5):
     '''
     "; the arm is in a protective stop (UR safety mode PROTECTIVE_STOP)" while the UR safety mode stops the arm,
