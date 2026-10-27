@@ -44,6 +44,10 @@ The fallback is configured by these private parameters on `pick_object_node`:
   (namespace `funnel_counts`). `cable_pass` ranks, it removes nothing, so `offered` can hold more grasps; the steps
   with their counts and grasp ids go as JSON to the latched `~grasp_funnel_summary` (std_msgs/String). The retry
   from the start pose is not shown
+- `open_set_box_padding` (default `0.0` m = off): taken off every side of the externally detected target box (each
+  side shorter by twice the value, at least 5 mm, centre kept) before it goes into the planning scene and the grasp
+  geometry; the open-set detector pads every side of the box it reports, so an open fingertip right beside the object
+  would already be inside it
 - `open_set_complete_one_sided_boxes` (default `true`): a standing box at least 1.5x taller than wide whose side along
   the line of sight from `open_set_camera_frame` is the shorter one (one view sees only the front of a can) gets its
   full depth behind the visible face, in the planning scene and for grasping

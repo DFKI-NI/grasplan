@@ -119,6 +119,26 @@ def anygrasp_default_names(prefix):
     }
 
 
+MIN_STRIPPED_SIDE = 0.005   # m: a side never shrinks below this, however small the detection
+
+
+def strip_box_padding(name, size):
+    """
+    ~open_set_box_padding (m, default 0.0 = off, re-read per goal): the open-set detector pads every side of the box it
+    reports (its box_padding), so the box of the target is larger than the object and an open fingertip right beside
+    the object is already inside it. Takes this much off every side of the externally detected target box (each side
+    shorter by twice the value, at least MIN_STRIPPED_SIDE) before it is used for the planning scene and the grasp
+    geometry; the box centre stays. Returns the new size list.
+    """
+    padding = float(rospy.get_param('~open_set_box_padding', 0.0))
+    if padding <= 0.0:
+        return list(size)
+    stripped = [max(float(v) - 2.0 * padding, MIN_STRIPPED_SIDE) for v in size]
+    rospy.loginfo(f'{name}: detector box padding of {padding * 100:.1f} cm taken off every side, size '
+                  f'{[round(float(v), 3) for v in size]} -> {[round(v, 3) for v in stripped]}')
+    return stripped
+
+
 class PickTools:
     def __init__(self):
 
@@ -575,6 +595,7 @@ class PickTools:
             target_pose.header.frame_id = external_object.header.frame_id or self.global_reference_frame
             target_pose.pose = copy.deepcopy(external_object.pose)
             target_size = [external_object.size.x, external_object.size.y, external_object.size.z]
+            target_size = strip_box_padding(external_object_name, target_size)
             self.complete_one_sided_box(external_object_name, target_pose, target_size)
             target = (target_pose, target_size)
         if len(resp.poses.objects) > 0:
