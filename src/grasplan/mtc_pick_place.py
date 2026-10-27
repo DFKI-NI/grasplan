@@ -276,6 +276,7 @@ class CableGuard:
         self.worst_q_rad = None   # the state turn_for_slack() starts from; never one of an earlier solution
         lo, hi = self.wrist_3_neutral - self.half_window, self.wrist_3_neutral + self.half_window
         self.worst_where = None   # (sub trajectory index, point index, points) of the worst point, for the logs
+        self.chain_stopped = False   # rejected by the chain replay alone (the cable replay detour reads it)
         for sub_index, sub in enumerate(solution_msg.sub_trajectory):
             trajectory = sub.trajectory.joint_trajectory
             points = trajectory.points
@@ -303,6 +304,7 @@ class CableGuard:
             elif verdict is not None and verdict.stop:
                 # the sim monitor would stop this path: its chain catches on the tool, which the geometry cannot see
                 self.worst_q_rad = dict(verdict.q)   # a turn must fix the chain's worst point, not the geometry's
+                self.chain_stopped = True
                 return False, verdict.max_stretch, f'{verdict.span} ({verdict.limiting}, chain replay)', {
                     k.split('/')[-1]: round(math.degrees(v), 1) for k, v in verdict.q.items()}
         return worst < limit, worst, worst_span, worst_q
@@ -357,6 +359,19 @@ def named_move_guard_mode():
         rospy.logwarn_once(f'~mtc_cable_guard_named_moves {mode!r} unknown (enforce, log, off): logging only')
         return 'log'
     return mode
+
+
+
+def monitor_resets_at_trajectory_start():
+    '''the cable monitor's careful flag cable_model/reset_at_trajectory_start: it starts its chain afresh at each
+    announced executed trajectory, as the guard's replay of a trajectory does. Only then does a trajectory the guard
+    passed from a fresh chain also pass the monitor; without it the monitor carries its chain from one trajectory to the
+    next (sim 2026-10-27: after the detour leg left the chain nearly taut, the fresh-chain check passed the pick and the
+    monitor stopped it)'''
+    value = rospy.get_param(f'/{robot_prefix()}/cable_model/reset_at_trajectory_start', False)
+    if isinstance(value, str):
+        return value.strip().lower() in ('1', 'true', 'yes', 'on')
+    return bool(value)
 
 
 _trajectory_start_pub = None
@@ -414,7 +429,7 @@ def _logged_named_move(arm, name, guard):
     return bool(arm.execute(trajectory, wait=True))
 
 
-def guarded_named_move(arm, name, guard, attempts=2, via=None):
+def guarded_named_move(arm, name, guard, attempts=2, via=None, chain_stops=None):
     '''
     Move a MoveGroupCommander arm to the SRDF pose name like arm.go(), but plan first and let the MTC cable guard
     (geometry and the monitor's chain replay, #121) check the joint path before anything moves: the 2026-09-28 sim
@@ -425,7 +440,9 @@ def guarded_named_move(arm, name, guard, attempts=2, via=None):
     nothing more moves and False is returned with the reason logged. guard None: the old behaviour (go, one retry).
     A chain replay stop only logs unless ~mtc_cable_named_move_rope_stops is true: it refused a re-pick the unguarded
     code does fine (suite 2026-09-28, #121). ~mtc_cable_guard_named_moves (see named_move_guard_mode) can make the
-    whole guard log only: the arm then moves as without it and the checks are only logged.
+    whole guard log only: the arm then moves as without it and the checks are only logged. chain_stops True or False
+    overrides ~mtc_cable_named_move_rope_stops for this move (the cable replay detour must not take a leg the chain
+    replay would stop).
     '''
     arm.set_named_target(name)
     mode = named_move_guard_mode() if guard is not None else 'off'
@@ -434,7 +451,8 @@ def guarded_named_move(arm, name, guard, attempts=2, via=None):
     if mode == 'off':
         return _plain_named_move(arm, name)
     guard.update_params()
-    chain_stops = bool(rospy.get_param('~mtc_cable_named_move_rope_stops', False))
+    if chain_stops is None:
+        chain_stops = bool(rospy.get_param('~mtc_cable_named_move_rope_stops', False))
     w3 = _current_joint(guard.wrist_3_joint)
     lo, hi = guard.wrist_3_neutral - guard.half_window, guard.wrist_3_neutral + guard.half_window
     if w3 is not None and lo <= w3 <= hi:
@@ -573,6 +591,7 @@ class MtcPickPlace:
         result.error_code.val = MoveItErrorCodes.PLANNING_FAILED
         self.failure_reason, self.executed, self.executed_grasp = '', False, None
         self.unplanned = []   # why each grasp could not be planned, for the failure reason
+        self.chain_rejections = 0   # solutions the chain replay alone rejected in this pickup (cable replay detour)
         self.update_cable_guard()
         touch = self.gripper_links + [goal.target_name]
         for index, grasp in enumerate(goal.possible_grasps):
@@ -1163,6 +1182,8 @@ class MtcPickPlace:
                     break
                 where = self.where_in_task(task, self.cable_guard)
                 self.cable_rejections = getattr(self, 'cable_rejections', 0) + 1
+                if getattr(self.cable_guard, 'chain_stopped', False):
+                    self.chain_rejections = getattr(self, 'chain_rejections', 0) + 1
                 rospy.loginfo(f'mtc: {what} solution {index} rejected by the cable guard{where}: stretch {stretch:+.3f} '
                               f'> {self.cable_guard.max_stretch:+.3f} in the {span} span at {q}')
             if self.chosen_solution is None:

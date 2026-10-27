@@ -121,6 +121,13 @@ class TestGuardedNamedMove(unittest.TestCase):
         self.assertEqual(arm.executed, [catch])
         self.assertTrue(any('log only' in str(c) for c in warn.call_args_list))
 
+    def test_chain_stops_argument_overrides_the_log_only_default(self):
+        # the cable replay detour asks for chain_stops=True: a leg the chain replay would stop is not taken
+        self.chain_stops = False
+        arm = FakeArm([trajectory(*CATCH), trajectory(*CATCH)])
+        self.assertFalse(guarded_named_move(arm, 'untangle_cable_guide_2_right', self.guard, via=[], chain_stops=True))
+        self.assertEqual(arm.executed, [])
+
     def test_log_mode_moves_the_refused_plan_and_only_warns(self):
         # real robot (Oscar 2026-09-28): no refusal, no replan, no via transport, no wrist_3 constraint
         self.mode = 'log'

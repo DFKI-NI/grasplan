@@ -1092,6 +1092,8 @@ class PickTools:
             # earlier pick, whose grasp ids may repeat
             self.mtc.grasp_ik_states = {}
         self.cable_gate_passing = 0
+        self.open_set_pick = external_grasp_candidates is not None   # the cable replay detour is for closed-set picks
+        self.detoured = ''   # the pose the cable replay detour moved the arm to in this pick
 
         self.obj_pose_pub.publish(object_pose)  # publish object pose for visualization purposes
 
@@ -1551,7 +1553,7 @@ class PickTools:
     def arm_did_not_move(self, result):
         '''whether a failed pick left the arm where it was: MTC knows, MoveIt's pickup only when planning failed'''
         if self.mtc is not None:
-            return not self.mtc.executed
+            return not self.mtc.executed and not getattr(self, 'detoured', '')
         return result in (MoveItErrorCodes.PLANNING_FAILED, MoveItErrorCodes.NO_IK_SOLUTION)
 
     def support_top(self, support_surface_name, frame):
@@ -1873,12 +1875,62 @@ class PickTools:
         # grasp_ik_states stays set for every batch of this pick (pick_object resets it for the next pick)
         pickup_result = self.mtc.pickup(goal)
         result = pickup_result.error_code.val
+        detour = self.cable_replay_detour(result) if result != MoveItErrorCodes.SUCCESS else None
+        if detour is not None:
+            self.detoured = detour   # the arm moved: arm_did_not_move() and the failure text must know
+            pickup_result = self.mtc.pickup(goal)
+            result = pickup_result.error_code.val
+            if result != MoveItErrorCodes.SUCCESS and self.mtc.failure_reason:
+                self.mtc.failure_reason = f'after the cable replay detour to {detour}: {self.mtc.failure_reason}'
         if result == MoveItErrorCodes.SUCCESS:
             executed = pickup_result.grasp
             rospy.loginfo(
                 f'mtc executed grasp {executed.id!r} (quality {executed.grasp_quality:.3f}) out of {len(grasps)} offered'
             )
         return result
+
+    def cable_replay_detour(self, result):
+        '''
+        careful flag ~mtc_cable_replay_detour (off in code): when an MTC pick of a closed-set object moved nothing and
+        the cable guard refused at least one solution by its chain replay alone (the monitor's chain catches on the way
+        although the geometry is slack), move the arm to the first pose of ~mtc_cable_replay_detour_poses (default
+        [untangle_cable_guide_2_right]) that the guard passes, chain replay included, as a trajectory of its own; the
+        caller then plans the pick once more from there. Offline the multimeter's pregrasp, refused from home, passed
+        from untangle_cable_guide_2_right only that way, as two trajectories (the sim monitor starts a fresh chain at
+        each one); a detour inside one MTC solution did not help. Never after a cancel, never for open-set picks (they
+        stay free of the untangle detour) and only while the named-move guard enforces (the sim): in log mode (the real
+        robot's default) the leg would move whatever the chain replay says, so there is no detour. Also only while the
+        cable monitor starts its chain afresh at each executed trajectory (cable_model/reset_at_trajectory_start, on in
+        the sim): the pick after the detour is checked from a fresh chain, and a monitor that carries the chain the leg
+        left behind would stop it. Returns the pose the arm went to, else None.
+        '''
+        if not rospy.get_param('~mtc_cable_replay_detour', False) or self.mtc is None or self.mtc.executed:
+            return None
+        if result == MoveItErrorCodes.PREEMPTED or self.pick_action_server.is_preempt_requested():
+            return None
+        guard = self.mtc.cable_guard
+        if guard is None or getattr(self, 'open_set_pick', False) or not getattr(self.mtc, 'chain_rejections', 0):
+            return None
+        from grasplan.mtc_pick_place import (guarded_named_move, monitor_resets_at_trajectory_start,
+                                             named_move_guard_mode)
+        if named_move_guard_mode() != 'enforce':
+            rospy.loginfo('cable replay detour: the chain replay refused the pick, but named moves are not enforced by '
+                          'the cable guard (log mode, the real robot default), so no detour')
+            return None
+        if not monitor_resets_at_trajectory_start():
+            rospy.loginfo('cable replay detour: the chain replay refused the pick, but the cable monitor carries its '
+                          'chain from one trajectory to the next (cable_model/reset_at_trajectory_start off), so the '
+                          'check of the pick after the detour, which starts from a fresh chain, would not match it: '
+                          'no detour')
+            return None
+        for pose in rospy.get_param('~mtc_cable_replay_detour_poses', ['untangle_cable_guide_2_right']):
+            rospy.loginfo(f'cable replay detour: the chain replay refused the pick from here; moving the arm to {pose} '
+                          f'as a separate motion and planning the pick again from there')
+            if guarded_named_move(self.robot.arm, pose, guard, via=[], chain_stops=True):
+                return pose
+        rospy.logwarn('cable replay detour: no detour pose was reachable with the cable check passed, the pick stays '
+                      'refused by the cable guard')
+        return None
 
     def start_pick_node(self):
         # wait for trigger via topic or action lib
