@@ -904,14 +904,24 @@ class PickTools:
 
         open_positions = self.grasp_planner.gripper_open_distance
         open_position = open_positions[0] if isinstance(open_positions, (list, tuple)) else open_positions
+        # the Robotiq action servers (real and sim) refuse a goal whose max_effort is outside 30..100 and the gripper
+        # stays where it is: with the unset 0 the gripper never opened (sim 2026-10-27: fingertips of a half-open
+        # gripper inside the gelatin box at every top grasp), so send the configured gripper effort
+        efforts = self.grasp_planner.gripper_joint_efforts
         goal = GripperCommandGoal()
         goal.command.position = open_position
+        goal.command.max_effort = float(efforts[0] if isinstance(efforts, (list, tuple)) else efforts)
         self.gripper_action_client.send_goal(goal)
         if not self.gripper_action_client.wait_for_result(rospy.Duration(self.gripper_action_timeout)):
             self.gripper_action_client.cancel_goal()
             rospy.logerr('timed out while opening gripper through %s', self.gripper_action_name)
             return False
-        return self.gripper_action_client.get_state() == GoalStatus.SUCCEEDED
+        if self.gripper_action_client.get_state() != GoalStatus.SUCCEEDED:
+            rospy.logerr(f'{self.gripper_action_name} did not open the gripper to {open_position:.3f} m (max effort '
+                         f'{goal.command.max_effort:.0f}): '
+                         f'{self.gripper_action_client.get_goal_status_text() or "no status text"}')
+            return False
+        return True
 
     def move_gripper_to_posture(self, gripper_posture_name):
         '''
