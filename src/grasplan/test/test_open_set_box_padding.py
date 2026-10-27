@@ -36,6 +36,52 @@ class TestStripBoxPadding(unittest.TestCase):
         self.params['~open_set_box_padding'] = 0.01
         self.assertEqual(pick.strip_box_padding('thin_1', [0.015, 0.05, 0.02])[0], pick.MIN_STRIPPED_SIDE)
 
+    def test_reported_padding_used_when_the_flag_is_on(self):
+        self.params['~open_set_strip_reported_padding'] = True
+        for got, want in zip(pick.strip_box_padding('box_1', DETECTED, 0.01), [0.072, 0.088, 0.028]):
+            self.assertAlmostEqual(got, want)
+
+    def test_reported_padding_beats_the_configured_one(self):
+        self.params['~open_set_strip_reported_padding'] = True
+        self.params['~open_set_box_padding'] = 0.02
+        for got, want in zip(pick.strip_box_padding('box_1', DETECTED, 0.005), [0.082, 0.098, 0.038]):
+            self.assertAlmostEqual(got, want)
+
+    def test_reported_padding_ignored_when_the_flag_is_off(self):
+        self.assertEqual(pick.strip_box_padding('box_1', DETECTED, 0.01), DETECTED)
+
+    def test_no_reported_padding_falls_back_to_the_configured_one(self):
+        self.params['~open_set_strip_reported_padding'] = True
+        self.assertEqual(pick.strip_box_padding('box_1', DETECTED, 0.0), DETECTED)
+        self.params['~open_set_box_padding'] = 0.01
+        for got, want in zip(pick.strip_box_padding('box_1', DETECTED, 0.0), [0.072, 0.088, 0.028]):
+            self.assertAlmostEqual(got, want)
+
+    def test_scene_box_stripped_by_the_reported_padding(self):
+        self.params['~open_set_strip_reported_padding'] = True
+        self.params['~open_set_complete_one_sided_boxes'] = False
+        added = self.pick_with_detection(box_padding=0.01)
+        for got, want in zip(added[0][2], [0.072, 0.088, 0.028]):
+            self.assertAlmostEqual(got, want)
+
+    def pick_with_detection(self, box_padding=0.0):
+        added = []
+        p = pick.PickTools.__new__(pick.PickTools)
+        p.scene = mock.Mock(add_box=lambda name, pose, size: added.append((name, pose, size)),
+                            get_known_object_names=lambda: [])
+        p.pose_selector_get_all_poses_srv = lambda: NS(poses=NS(objects=[]))
+        p.clamp_object_boxes_to_support = False
+        p.global_reference_frame = 'map'
+        p.transform_pose = lambda pose, frame: pose
+        p.robot = mock.Mock()
+        target = DetectedObject(class_id='gelatin_box', instance_id=1, box_padding=box_padding)
+        target.header.frame_id = 'map'
+        target.pose.position.x, target.pose.position.y, target.pose.position.z = CENTER
+        target.pose.orientation.w = 1.0
+        target.size.x, target.size.y, target.size.z = DETECTED
+        p.make_object_pose_and_add_objs_to_planning_scene(objectToPick('gelatin_box_1'), external_object=target)
+        return added
+
     def test_scene_and_returned_box_are_stripped_the_centre_stays(self):
         self.params['~open_set_box_padding'] = 0.01
         self.params['~open_set_complete_one_sided_boxes'] = False
