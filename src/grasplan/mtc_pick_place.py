@@ -571,7 +571,7 @@ class MtcPickPlace:
         '''plan and execute a moveit_msgs/PickupGoal with MTC, trying its grasps in order; returns PickupResult'''
         result = PickupResult()
         result.error_code.val = MoveItErrorCodes.PLANNING_FAILED
-        self.failure_reason, self.executed = '', False
+        self.failure_reason, self.executed, self.executed_grasp = '', False, None
         self.unplanned = []   # why each grasp could not be planned, for the failure reason
         self.update_cable_guard()
         touch = self.gripper_links + [goal.target_name]
@@ -593,6 +593,7 @@ class MtcPickPlace:
                     continue
             # the pre grasp posture (open) is not a stage, it is sent before the first arm motion
             self.executed = True
+            self.executed_grasp = grasp   # for the grasp funnel debug output of pick.py
             code = self.execute(task, roles, [grasp.pre_grasp_posture], grasp.grasp_posture,
                                 attach=(goal.target_name, touch), check_grasp=True)
             if code == MoveItErrorCodes.SUCCESS and not self.gripper_holds_object('after the lift'):

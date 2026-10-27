@@ -34,6 +34,16 @@ The fallback is configured by these private parameters on `pick_object_node`:
   = off): an object lower than the first, or with both horizontal sides below the second, is grasped from the top
   only: grasps more than `open_set_low_object_max_tilt_deg` (default `10`, `0` = rule off) off vertical are dropped,
   the others lowered to the fingertip clearance (`open_set_low_object_sink`, default `true`), else the top-down grasps
+- `open_set_grasp_funnel_markers` (default `false`, read once per pick; debug output, no behaviour change): after each
+  open-set filter step the surviving grasps are published as arrows on the latched MarkerArray `~grasp_funnel`, one
+  namespace per step in this order: `candidates`, `low_object_kept`, `clearance_kept`, `ik_reachable` (an IK solution,
+  also one in collision only), `cable_pass` (cable guard on: the leading grasps of `offered` that the cable ranking
+  predicts to pass; MTC tries them first), `offered` (every grasp handed to MTC, at most
+  `external_grasp_max_attempts`: the `cable_pass` ones, then the held-back rest, tried only after all of those failed),
+  `topdown_fallback` (when used), `executed` (the grasp MTC ran), with a count label per step above the object
+  (namespace `funnel_counts`). `cable_pass` ranks, it removes nothing, so `offered` can hold more grasps; the steps
+  with their counts and grasp ids go as JSON to the latched `~grasp_funnel_summary` (std_msgs/String). The retry
+  from the start pose is not shown
 - `open_set_complete_one_sided_boxes` (default `true`): a standing box at least 1.5x taller than wide whose side along
   the line of sight from `open_set_camera_frame` is the shorter one (one view sees only the front of a can) gets its
   full depth behind the visible face, in the planning scene and for grasping

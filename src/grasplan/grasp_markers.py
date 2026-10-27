@@ -35,6 +35,8 @@ The grasp approach direction is the +x axis of the candidate pose (AnyGrasp
 convention): arrows start behind the grasp point and end at it.
 '''
 
+import copy
+
 from geometry_msgs.msg import Point
 from std_msgs.msg import ColorRGBA
 from visualization_msgs.msg import Marker, MarkerArray
@@ -214,6 +216,50 @@ def scored_grasp_markers(
         markers.markers.append(
             text_marker(header, labels_namespace, index, pose, f'#{rank + 1} {final_values[index]:.2f}', ColorRGBA(r=1.0, g=1.0, b=1.0, a=0.9), 0.015)
         )
+    return markers
+
+
+# grasp funnel of an open-set pick (pick.py grasp_funnel): one colour per filter step, unknown steps grey
+FUNNEL_COLOURS = {
+    'candidates': (0.6, 0.6, 0.6),
+    'low_object_kept': (0.2, 0.4, 1.0),
+    'clearance_kept': (0.0, 0.8, 0.9),
+    'ik_reachable': (0.1, 0.8, 0.2),
+    'cable_pass': (1.0, 0.9, 0.0),
+    'offered': (1.0, 0.5, 0.0),
+    'topdown_fallback': (0.7, 0.2, 0.9),
+    'executed': (1.0, 1.0, 1.0),
+}
+FUNNEL_COUNTS_NAMESPACE = 'funnel_counts'
+
+
+def grasp_marker_id(grasp_id, fallback):
+    '''marker id of a grasp id such as anygrasp_12 (12) or topdown_1 (10001), so one grasp keeps its id in every step;
+    fallback when the id has no number'''
+    name, _, number = str(grasp_id).rpartition('_')
+    if not number.isdigit():
+        return fallback
+    return int(number) + (10000 if name == 'topdown' else 0)
+
+
+def funnel_step_markers(header, step, step_index, grasps, label_pose, arrow_length=0.08, shaft_diameter=0.005):
+    '''
+    Markers of one step of the grasp funnel: an arrow per grasp (moveit_msgs/Grasp, poses in header.frame_id) that
+    survived the step, in the namespace named after the step, and a text "<step_index + 1> <step>: <count>" stacked
+    above label_pose (geometry_msgs/PoseStamped, the object) in FUNNEL_COUNTS_NAMESPACE. The executed grasp is drawn
+    thicker and longer.
+    '''
+    rgb = FUNNEL_COLOURS.get(step, (0.6, 0.6, 0.6))
+    colour = ColorRGBA(r=rgb[0], g=rgb[1], b=rgb[2], a=0.9)
+    scale = 1.5 if step == 'executed' else 1.0
+    markers = []
+    for index, grasp in enumerate(grasps):
+        markers.append(arrow_marker(header, step, grasp_marker_id(grasp.id, index), grasp.grasp_pose.pose, colour,
+                                    arrow_length * scale, shaft_diameter * scale * scale))
+    above = copy.deepcopy(label_pose.pose)
+    above.position.z += 0.20 + 0.03 * step_index
+    markers.append(text_marker(label_pose.header, FUNNEL_COUNTS_NAMESPACE, step_index, above,
+                               f'{step_index + 1} {step}: {len(grasps)}', colour, 0.02))
     return markers
 
 

@@ -27,6 +27,7 @@ example on how to pick an object using grasplan and moveit
 import sys
 import copy
 import importlib
+import json
 import math
 import time
 import traceback
@@ -84,6 +85,7 @@ from grasplan.grasp_scoring import (
     is_low_object,
     tilt_from_vertical_deg,
 )
+from grasplan.grasp_markers import delete_all_marker, funnel_step_markers
 from visualization_msgs.msg import Marker, MarkerArray
 
 ACTION_STATES = {value: name for name, value in vars(GoalStatus).items() if name.isupper() and isinstance(value, int)}
@@ -1141,6 +1143,7 @@ class PickTools:
             )
         else:
             grasps = []
+            self.grasp_funnel_start(object_to_pick.get_object_class_and_id_as_string(), object_pose)
             if external_grasp_candidates:
                 grasps = self.grasp_planner.make_grasps_msgs_from_candidates(
                     object_to_pick.get_object_class_and_id_as_string(),
@@ -1148,17 +1151,22 @@ class PickTools:
                     external_reference_frame,
                     self.robot.arm.get_end_effector_link(),
                 )
+                self.grasp_funnel('candidates', grasps)
                 widths = [candidate.width for candidate in external_grasp_candidates]
                 grasps, widths, low = self.top_grasps_for_low_objects(grasps, widths, object_pose, bounding_box)
+                self.grasp_funnel('low_object_kept', grasps)
                 grasps = self.raise_low_grasps(grasps, support_surface_name, widths, sink=low)
+                self.grasp_funnel('clearance_kept', grasps)
                 candidates = grasps
                 grasps = self.reachable_external_grasps(grasps)
+                self.grasp_funnel_ranked(grasps)
                 if self.pick_start_failed:
                     return self.start_pose_failed()
             if not grasps:
                 rospy.logwarn(f'no open-set grasp of {object_to_pick.get_object_class_and_id_as_string()} keeps the '
                               f'fingertips clear of {support_surface_name}')
                 grasps = self.topdown_fallback_grasps(object_to_pick, object_pose, bounding_box, support_surface_name)
+                self.grasp_funnel('topdown_fallback', grasps)
                 if not grasps:
                     return self.fail(f'no grasp of {object_to_pick.get_object_class_and_id_as_string()} keeps the '
                                      f'fingertips clear of {support_surface_name} and the top-down fallback found none')
@@ -1228,8 +1236,11 @@ class PickTools:
             and not self.pick_action_server.is_preempt_requested()
         ):
             fallback = self.topdown_fallback_grasps(object_to_pick, object_pose, bounding_box, support_surface_name)
+            self.grasp_funnel('topdown_fallback', fallback)
             if fallback:
                 result = self._pick_with_action(object_to_pick, fallback, support_surface_name)
+        if self.mtc is not None and self.mtc.executed and getattr(self.mtc, 'executed_grasp', None) is not None:
+            self.grasp_funnel('executed', [self.mtc.executed_grasp])
         # handle moveit pick result
         if result == MoveItErrorCodes.SUCCESS:
             self.ensure_attached(object_to_pick.get_object_class_and_id_as_string())
@@ -1252,6 +1263,57 @@ class PickTools:
             if self.mtc is not None and self.mtc.executed and not self.pick_action_server.is_preempt_requested():
                 self.retract_after_failure('pick')
         return False
+
+    def grasp_funnel_start(self, object_name, object_pose):
+        '''
+        ~open_set_grasp_funnel_markers (debug output, default false, read once per pick): shows how the open-set grasps
+        thin out step by step. Each grasp_funnel call of this pick then publishes the grasps that survived that step as
+        arrows in a namespace named after the step on the latched ~grasp_funnel MarkerArray, together with the earlier
+        steps of the pick and a count label per step above the object, and all steps with their counts and grasp ids
+        as JSON on the latched ~grasp_funnel_summary. Off, nothing is advertised or published. The grasps and their
+        order never change.
+        '''
+        self.funnel = None
+        if object_pose is None or not rospy.get_param('~open_set_grasp_funnel_markers', False):
+            return
+        if getattr(self, 'funnel_publishers', None) is None:
+            self.funnel_publishers = (
+                rospy.Publisher('~grasp_funnel', MarkerArray, queue_size=1, latch=True),
+                rospy.Publisher('~grasp_funnel_summary', String, queue_size=1, latch=True),
+            )
+        markers = MarkerArray()
+        markers.markers.append(delete_all_marker(object_pose.header))   # the previous pick's arrows go
+        self.funnel = {'object': object_name, 'pose': copy.deepcopy(object_pose), 'markers': markers, 'steps': []}
+
+    def grasp_funnel(self, step, grasps):
+        '''publish the grasps that survived step (see grasp_funnel_start); returns grasps unchanged'''
+        funnel = getattr(self, 'funnel', None)
+        if funnel is None:
+            return grasps
+        shown = [grasp for grasp in grasps or [] if grasp is not None]
+        header = shown[0].grasp_pose.header if shown else funnel['pose'].header
+        funnel['markers'].markers.extend(funnel_step_markers(header, step, len(funnel['steps']), shown, funnel['pose']))
+        funnel['steps'].append({'step': step, 'count': len(shown), 'ids': [grasp.id for grasp in shown]})
+        markers_publisher, summary_publisher = self.funnel_publishers
+        markers_publisher.publish(funnel['markers'])
+        summary_publisher.publish(String(data=json.dumps({'object': funnel['object'], 'steps': funnel['steps']})))
+        return grasps
+
+    def grasp_funnel_ranked(self, offered):
+        '''the funnel steps of reachable_external_grasps: ik_reachable (an IK solution, also one in collision only),
+        cable_pass (with the guard on: the leading grasps of offered that the cable ranking predicts to pass, tried
+        first) and offered (every grasp handed to MTC, cut to ~external_grasp_max_attempts: the cable_pass ones, then
+        the held-back rest, tried only after all of those failed). cable_pass ranks and removes nothing, so offered can
+        be larger.'''
+        if getattr(self, 'funnel', None) is None:
+            return
+        prefilter = getattr(self, 'ik_prefilter', None)
+        if prefilter is not None:
+            reachable, _, colliding = prefilter
+            self.grasp_funnel('ik_reachable', reachable + colliding)
+        if getattr(self.mtc, 'cable_guard', None) is not None:
+            self.grasp_funnel('cable_pass', offered[: self.cable_gate_passing])
+        self.grasp_funnel('offered', offered)
 
     def retract_after_failure(self, what):
         '''
