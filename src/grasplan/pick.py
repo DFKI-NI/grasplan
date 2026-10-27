@@ -83,6 +83,8 @@ from grasplan.grasp_scoring import (
     complete_one_sided_box,
     is_compact_round,
     is_low_object,
+    jaw_alignment_turn,
+    jaw_centring_shift,
     tilt_from_vertical_deg,
 )
 from grasplan.grasp_markers import delete_all_marker, funnel_step_markers
@@ -120,6 +122,7 @@ def anygrasp_default_names(prefix):
 
 
 MIN_STRIPPED_SIDE = 0.005   # m: a side never shrinks below this, however small the detection
+ALIGN_JAW_SIDE_CLEARANCE = 0.01   # m between each open pad and a box face it is turned onto (align_jaws_to_box)
 
 
 def strip_box_padding(name, size):
@@ -1178,6 +1181,7 @@ class PickTools:
                 widths = [candidate.width for candidate in external_grasp_candidates]
                 grasps, widths, low = self.top_grasps_for_low_objects(grasps, widths, object_pose, bounding_box)
                 self.grasp_funnel('low_object_kept', grasps)
+                grasps, widths = self.align_jaws_to_box(grasps, widths, object_pose, bounding_box)
                 grasps = self.raise_low_grasps(grasps, support_surface_name, widths, sink=low)
                 self.grasp_funnel('clearance_kept', grasps)
                 candidates = grasps
@@ -1387,6 +1391,62 @@ class PickTools:
             + ('' if kept else '; the top-down fallback grasps instead')
         )
         return kept, kept_widths, True
+
+    def align_jaws_to_box(self, grasps, widths, object_pose, bounding_box):
+        '''
+        ~open_set_align_jaw_to_box (default false, re-read per goal): a jaw across a box diagonal pinches two opposite
+        edges and the object slides out in the lift (sim 2026-10-27, gelatin box). Each near-vertical open-set grasp
+        whose jaw is more than ALIGN_JAW_MIN_OFF_DEG off both horizontal axes of the target box gets a copy turned about
+        its approach so the jaw lies along the nearest axis whose side fits the open gripper (grasp_scoring
+        jaw_alignment_turn), offered right before it; the original stays as the next choice. The copy is also moved
+        along its jaw so the jaw's midline passes through the box centre: turned about an off-centre tcp (AnyGrasp
+        grasps sit up to ~4.5 cm off the centre), the jaws would close beside the box end (sim 2026-10-27: closed to
+        1.45 cm, the box lost); its height and its place along the faces stay. Round boxes keep their grasps (any turn
+        holds the same). Returns (grasps, widths); a copy's width is at least the side it closes on.
+        The funnel markers show the result as the step jaw_aligned (only while the flag is on).
+        '''
+        if not rospy.get_param('~open_set_align_jaw_to_box', False):
+            return grasps, widths
+        if not grasps or not bounding_box or object_pose is None or is_compact_round(bounding_box):
+            return grasps, widths
+        frame = grasps[0].grasp_pose.header.frame_id
+        if frame and object_pose.header.frame_id and object_pose.header.frame_id != frame:
+            object_pose = self.transform_pose(object_pose, frame)
+        o = object_pose.pose.orientation
+        rotation = tf.transformations.quaternion_matrix([o.x, o.y, o.z, o.w])[:3, :3].tolist()
+        c = object_pose.pose.position
+        centre = (c.x, c.y, c.z)
+        open_distance = self.grasp_planner.gripper_open_distance
+        open_distance = open_distance[0] if isinstance(open_distance, (list, tuple)) else open_distance
+        max_span = float(open_distance) - 2.0 * ALIGN_JAW_SIDE_CLEARANCE
+        aligned, aligned_widths, added = [], [], []
+        for grasp, width in zip(grasps, widths):
+            o = grasp.grasp_pose.pose.orientation
+            axes = tf.transformations.quaternion_matrix([o.x, o.y, o.z, o.w])[:3, :3]
+            alignment = jaw_alignment_turn(axes[:, 0], axes[:, 1], bounding_box, rotation, max_span)
+            if alignment is not None:
+                turn, span = alignment
+                twin = copy.deepcopy(grasp)
+                twin.id = f'{grasp.id}_aligned{turn:+.0f}'
+                m = tf.transformations.quaternion_matrix([o.x, o.y, o.z, o.w]).dot(
+                    tf.transformations.rotation_matrix(math.radians(turn), (1, 0, 0)))
+                q = tf.transformations.quaternion_from_matrix(m)
+                p = twin.grasp_pose.pose.orientation
+                p.x, p.y, p.z, p.w = q
+                position = twin.grasp_pose.pose.position
+                shift = jaw_centring_shift(m[:3, 1], (position.x, position.y, position.z), centre)
+                position.x, position.y, position.z = position.x + shift[0], position.y + shift[1], position.z + shift[2]
+                aligned.append(twin)
+                aligned_widths.append(max(float(width), span))
+                added.append(f'{grasp.id} {turn:+.0f} onto {span * 100:.1f} cm, '
+                             f'moved {math.sqrt(sum(v * v for v in shift)) * 100:.1f} cm')
+            aligned.append(grasp)
+            aligned_widths.append(width)
+        rospy.loginfo(f'jaw along the box: {len(added)} of {len(grasps)} grasps get a turned copy offered first'
+                      + (f' (deg about the approach, side closed on, move to the box centre line): {", ".join(added)}'
+                         if added else ''))
+        self.grasp_funnel('jaw_aligned', aligned)
+        return aligned, aligned_widths
 
     def raise_low_grasps(self, grasps, support_surface_name, widths=None, sink=False):
         '''

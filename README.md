@@ -48,6 +48,11 @@ The fallback is configured by these private parameters on `pick_object_node`:
   side shorter by twice the value, at least 5 mm, centre kept) before it goes into the planning scene and the grasp
   geometry; the open-set detector pads every side of the box it reports, so an open fingertip right beside the object
   would already be inside it
+- `open_set_align_jaw_to_box` (default `false`): a near-vertical open-set grasp whose jaw is more than 15 deg off
+  both horizontal axes of the target box (a jaw across the box diagonal pinches two edges and the object slides out in
+  the lift) gets a copy turned about its approach onto the nearest box axis whose side fits the open gripper (1 cm
+  clearance per side) and moved along its jaw so the jaw's midline passes through the box centre, offered right before
+  the original; round boxes are left alone
 - `open_set_complete_one_sided_boxes` (default `true`): a standing box at least 1.5x taller than wide whose side along
   the line of sight from `open_set_camera_frame` is the shorter one (one view sees only the front of a can) gets its
   full depth behind the visible face, in the planning scene and for grasping

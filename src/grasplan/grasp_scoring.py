@@ -265,3 +265,50 @@ def complete_one_sided_box(size, rotation, centre, sight, min_elongation=CYLINDE
     completed = list(dims)
     completed[depth_axis] = width
     return completed, tuple(float(c) + grow * a for c, a in zip(centre, axes[depth_axis]))
+
+
+# ---------------------------------------------------------------- jaw along a box axis (2026-10-27, sim gelatin box)
+# A parallel jaw across a box diagonal touches two opposite edges only: the sim gelatin box (8.9 x 7.3 cm) stalled the
+# gripper at 11.7 cm, its top-face diagonal, and slid out in the lift. Every reachable AnyGrasp grasp of that box was
+# 28-44 deg off the box axes; turned about its approach onto the nearest box axis, the same grasp closes on two faces.
+ALIGN_JAW_MIN_OFF_DEG = 15.0   # a jaw closer than this to a box axis is left as it is
+ALIGN_JAW_MAX_TILT_DEG = 20.0  # only near-vertical grasps: turning those about the approach keeps the jaw horizontal
+
+
+def jaw_alignment_turn(approach, jaw, size, rotation, max_span, min_off_deg=ALIGN_JAW_MIN_OFF_DEG,
+                       max_tilt_deg=ALIGN_JAW_MAX_TILT_DEG, up=(0.0, 0.0, 1.0)):
+    '''
+    (turn_deg, span) that puts a grasp's jaw along the nearest horizontal box axis whose side is at most max_span, or
+    None: the grasp is more than max_tilt_deg off vertical, its jaw is within min_off_deg of a horizontal box axis
+    already, or no side fits. turn_deg is right-handed about the approach (the gripper_tcp x axis, as in
+    mtc_pick_place.turn_grasp_about_approach), in [-90, 90); span is the side the jaw then closes across.
+    approach, jaw: the grasp's x and y axes; size: box side lengths; rotation: 3x3 rows of the box orientation; all in
+    the frame of up.
+    '''
+    dims = [float(v) for v in size]
+    if len(dims) != 3 or min(dims) <= 0.0 or tilt_from_vertical_deg(approach, up) > max_tilt_deg:
+        return None
+    a, j, u = _unit(approach), _unit(jaw), _unit(up)
+    axes = [tuple(float(rotation[r][c]) for r in range(3)) for c in range(3)]
+    horizontal = sorted(range(3), key=lambda c: abs(sum(x * y for x, y in zip(axes[c], u))))[:2]
+    turns = []
+    for c in horizontal:
+        # the box axis in the plane of the jaw's turn, then the signed angle from the jaw to it about the approach
+        along = sum(x * y for x, y in zip(axes[c], a))
+        e = _unit(tuple(x - along * y for x, y in zip(axes[c], a)))
+        cross = (j[1] * e[2] - j[2] * e[1], j[2] * e[0] - j[0] * e[2], j[0] * e[1] - j[1] * e[0])
+        angle = math.degrees(math.atan2(sum(x * y for x, y in zip(cross, a)), sum(x * y for x, y in zip(j, e))))
+        turns.append(((angle + 90.0) % 180.0 - 90.0, dims[c]))   # a jaw is the same line both ways
+    if min(abs(turn) for turn, _ in turns) <= min_off_deg:
+        return None
+    fitting = [(turn, span) for turn, span in turns if span <= max_span]
+    return min(fitting, key=lambda t: abs(t[0])) if fitting else None
+
+
+def jaw_centring_shift(jaw, tcp, centre):
+    '''the move (x, y, z) of a grasp's tcp along its jaw axis that puts the jaw's midline through centre (the box
+    centre), so the closing jaws meet the object around its middle; nothing changes across the jaw or along the
+    approach'''
+    j = _unit(jaw)
+    along = sum(a * (c - t) for a, c, t in zip(j, centre, tcp))
+    return tuple(along * a for a in j)
