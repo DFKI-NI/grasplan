@@ -30,11 +30,6 @@ The fallback is configured by these private parameters on `pick_object_node`:
   (default `anygrasp`, an SRDF arm pose) when the view service is unavailable or fails
 - `open_set_pick_start_pose` (default `transport`): after the grasp view, open-set picks move the arm to this SRDF
   pose (guarded named move) and plan the grasp from there instead of from the view; empty plans from the view
-- `grasp_type_hints_ns` (default `/mobipick/grasp_type_hints`; empty ignores hints): the planner may set
-  `<ns>/<object key>` (the object name lowercased, spaces and dashes as underscores, e.g. `tomato_soup_can`) to
-  `side`, `top` or `auto` before an open-set pick: `side` re-ranks the AnyGrasp grasps with the side-grasp bonus
-  (`grasp_type_hint_side_multiplier`, default 1.5) across the vertical axis, `top` applies the low-object rule below
-  whatever the box, `auto` or nothing lets the geometry decide
 - `open_set_low_object_max_height` (default `0.05` m) and `open_set_small_object_max_footprint` (default `0.06` m, `0`
   = off): an object lower than the first, or with both horizontal sides below the second, is grasped from the top
   only: grasps more than `open_set_low_object_max_tilt_deg` (default `10`, `0` = rule off) off vertical are dropped,

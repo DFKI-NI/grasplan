@@ -28,7 +28,6 @@ import sys
 import copy
 import importlib
 import math
-import re
 import time
 import traceback
 
@@ -78,14 +77,11 @@ from grasplan.tools.cable_rank import gate_chunks, joint_path, order_by_predicte
 from grasplan.grasp_scoring import (
     LOW_OBJECT_MAX_HEIGHT,
     LOW_OBJECT_MAX_TILT_DEG,
-    SIDE_GRASP_SCORE_MULTIPLIER,
     SMALL_OBJECT_MAX_FOOTPRINT,
-    apply_cylinder_side_bonus,
     box_height_and_footprint,
     complete_one_sided_box,
     is_compact_round,
     is_low_object,
-    rank_by_quality,
     tilt_from_vertical_deg,
 )
 from visualization_msgs.msg import Marker, MarkerArray
@@ -483,18 +479,15 @@ class PickTools:
             rospy.logerr(message)
             return self.pick_topdown_without_anygrasp(goal, message)
         anchored_object_name = f'{detection.object.class_id}_{detection.object.instance_id}'
-        hint = self.grasp_type_hint(goal.object_name, detection.object.class_id)
-        candidates = self.side_ranked(detection.grasps, detection.object) if hint == 'side' else detection.grasps
         success = self.pick_object(
             anchored_object_name,
             goal.support_surface_name,
             self.grasp_type,
             goal.ignore_object_list,
-            external_grasp_candidates=candidates,
+            external_grasp_candidates=detection.grasps,
             external_reference_frame=detection.object.header.frame_id,
             external_object=detection.object,
             perceive_object=False,
-            grasp_type_hint=hint,
         )
         message = (
             f'Grasplan picked open-set object {anchored_object_name}'
@@ -1005,11 +998,8 @@ class PickTools:
         external_reference_frame=None,
         external_object=None,
         perceive_object=None,
-        grasp_type_hint=None,
     ):
         '''
-        grasp_type_hint: open-set only, 'side' | 'top' | None (grasp_type_hint()); 'top' applies the low-object
-        top-grasp rule whatever the box, 'side' never
         1) move arm to a position where the attached camera can see the scene (octomap will be populated)
         2) clear octomap
         3) add table and object to be grasped to planning scene
@@ -1142,8 +1132,7 @@ class PickTools:
                     self.robot.arm.get_end_effector_link(),
                 )
                 widths = [candidate.width for candidate in external_grasp_candidates]
-                grasps, widths, low = self.top_grasps_for_low_objects(grasps, widths, object_pose, bounding_box,
-                                                                      grasp_type_hint)
+                grasps, widths, low = self.top_grasps_for_low_objects(grasps, widths, object_pose, bounding_box)
                 grasps = self.raise_low_grasps(grasps, support_surface_name, widths, sink=low)
                 candidates = grasps
                 grasps = self.reachable_external_grasps(grasps)
@@ -1257,9 +1246,8 @@ class PickTools:
         if not self.move_arm_to_posture(pose):
             rospy.logwarn(f'could not retract the arm to {pose} after the failed {what}')
 
-    def top_grasps_for_low_objects(self, grasps, widths, object_pose, bounding_box, hint=None):
+    def top_grasps_for_low_objects(self, grasps, widths, object_pose, bounding_box):
         '''
-        hint (grasp_type_hint()): 'top' treats the object as low whatever its box, 'side' never.
         Oscar (2026-09-28, real strawberry, #151): a very low object is grasped from the top only. Low: its box
         (object_pose orientation, gravity-aligned frame) lower than ~open_set_low_object_max_height, or both horizontal
         sides below ~open_set_small_object_max_footprint (0 = off; a small object without real depth gets a filled-in,
@@ -1268,15 +1256,13 @@ class PickTools:
         top-down grasps when none is left. Returns (grasps, widths, low).
         '''
         max_tilt = rospy.get_param('~open_set_low_object_max_tilt_deg', LOW_OBJECT_MAX_TILT_DEG)
-        if hint == 'top' and max_tilt <= 0.0:
-            max_tilt = LOW_OBJECT_MAX_TILT_DEG   # the hint asks for top grasps even with the size rule off
-        if max_tilt <= 0.0 or not grasps or not bounding_box or object_pose is None or hint == 'side':
+        if max_tilt <= 0.0 or not grasps or not bounding_box or object_pose is None:
             return grasps, widths, False
         o = object_pose.pose.orientation
         rotation = tf.transformations.quaternion_matrix([o.x, o.y, o.z, o.w])[:3, :3].tolist()
         max_height = rospy.get_param('~open_set_low_object_max_height', LOW_OBJECT_MAX_HEIGHT)
         max_footprint = rospy.get_param('~open_set_small_object_max_footprint', SMALL_OBJECT_MAX_FOOTPRINT)
-        if hint != 'top' and not is_low_object(bounding_box, rotation, max_height, max_footprint):
+        if not is_low_object(bounding_box, rotation, max_height, max_footprint):
             return grasps, widths, False
         kept, kept_widths, dropped = [], [], []
         for grasp, width in zip(grasps, widths):
@@ -1289,67 +1275,13 @@ class PickTools:
                 dropped.append(f'{grasp.id} {tilt:.0f}')
         height, footprint = box_height_and_footprint(bounding_box, rotation)
         rospy.loginfo(
-            f'{"grasp-type hint top" if hint == "top" else "low object"} ({height * 100:.1f} cm tall, '
+            f'low object ({height * 100:.1f} cm tall, '
             f'{footprint * 100:.1f} cm wide): top grasps only, {len(kept)} of '
             f'{len(grasps)} within {max_tilt:.0f} deg of vertical'
             + (f', dropped (deg off vertical): {", ".join(dropped)}' if dropped else '')
             + ('' if kept else '; the top-down fallback grasps instead')
         )
         return kept, kept_widths, True
-
-    def grasp_type_hint(self, *names):
-        '''
-        the planner's grasp-type hint for an open-set object (Oscar 2026-09-28, LLM hint, written by mobipick_gpt before
-        the pick goal): rosparam <~grasp_type_hints_ns>/<key> (default /mobipick/grasp_type_hints; empty = ignore
-        hints), key = the name lowercased with spaces and dashes as underscores (tomato soup can -> tomato_soup_can);
-        the first of names that has one. Returns 'side', 'top' or None (auto, missing or unknown: geometry decides).
-        '''
-        namespace = rospy.get_param('~grasp_type_hints_ns', f'/{robot_prefix()}/grasp_type_hints')
-        if not namespace:
-            return None
-        for name in names:
-            key = re.sub(r'[\s-]+', '_', str(name).strip().lower())
-            if not key:
-                continue
-            value = str(rospy.get_param(f'{namespace.rstrip("/")}/{key}', '')).strip().lower()
-            if value in ('side', 'top'):
-                rospy.loginfo(f'grasp-type hint for {name!r}: {value} ({namespace.rstrip("/")}/{key})')
-                return value
-            if value and value != 'auto':
-                rospy.logwarn(f'grasp-type hint {value!r} for {name!r} unknown (side, top, auto): geometry decides')
-            elif value == 'auto':
-                rospy.loginfo(f'grasp-type hint for {name!r}: auto, geometry decides')
-                return None
-        return None
-
-    def side_ranked(self, candidates, detected_object):
-        '''
-        grasp-type hint side: the candidates re-ranked with the side-grasp bonus (grasp_scoring, as the AnyGrasp server
-        does for a standing cylinder or a round object): quality = nn x bonus for approaching and closing across the
-        vertical axis near the middle of the object's height, best first; candidates, detected_object (its box) in one
-        frame. Unchanged when the box has no size.
-        '''
-        size = [detected_object.size.x, detected_object.size.y, detected_object.size.z]
-        if not candidates or min(size) <= 0.0:
-            return candidates
-        o = detected_object.pose.orientation
-        rotation = tf.transformations.quaternion_matrix([o.x, o.y, o.z, o.w])[:3, :3].tolist()
-        height, _ = box_height_and_footprint(size, rotation)
-        ranked = copy.deepcopy(list(candidates))
-        grasp_axes = []
-        for candidate in ranked:
-            q = candidate.pose.orientation
-            matrix = tf.transformations.quaternion_matrix([q.x, q.y, q.z, q.w])
-            p = candidate.pose.position
-            grasp_axes.append((tuple(matrix[:3, 0]), tuple(matrix[:3, 1]), (p.x, p.y, p.z)))
-        c = detected_object.pose.position
-        apply_cylinder_side_bonus(ranked, grasp_axes, (c.x, c.y, c.z), (0.0, 0.0, 1.0), height,
-                                  rospy.get_param('~grasp_type_hint_side_multiplier', SIDE_GRASP_SCORE_MULTIPLIER))
-        ranked = rank_by_quality(ranked)
-        rospy.loginfo(f'grasp-type hint side: {len(ranked)} grasps re-ranked by the side-grasp bonus across the vertical '
-                      f'axis of the {height * 100:.1f} cm tall box (qualities '
-                      f'{", ".join(f"{g.quality:.3f}" for g in ranked[:5])} ...)')
-        return ranked
 
     def raise_low_grasps(self, grasps, support_surface_name, widths=None, sink=False):
         '''

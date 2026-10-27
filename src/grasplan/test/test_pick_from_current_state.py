@@ -108,7 +108,7 @@ class PickFlow(unittest.TestCase):
         p.open_gripper = lambda: self.calls.append(('open', None)) or True
         self.grasp = NS(id='anygrasp_1', grasp_quality=0.7)
         p.grasp_planner = mock.Mock(make_grasps_msgs_from_candidates=lambda *a: [self.grasp])
-        p.top_grasps_for_low_objects = lambda g, w, pose, box, hint: (g, w, False)
+        p.top_grasps_for_low_objects = lambda g, w, pose, box: (g, w, False)
         p.raise_low_grasps = lambda g, surface, w, sink=False: g
         p.robot = mock.Mock()
         p.clear_octomap_flag = False

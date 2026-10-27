@@ -1,8 +1,9 @@
 '''#151 real 2026-09-28 (Oscar via claude-b1ef): a false DOPE bleach_1 box, 11.2 cm deep in table_2 and raised right
 onto the tomato soup can, blocked every grasp. A box more than 9 cm inside its support, or one that shares at least 20 %
-of the smaller volume with the verified open-set target, stays out of the planning scene. And the planner's grasp-type
-hint (rosparam /mobipick/grasp_type_hints/<key>: side | top | auto) steers an open-set pick. Mocks for the scene,
-the pose selector and rosparam (no ROS master); needs the Mobipick image for the module imports.'''
+of the smaller volume with the verified open-set target, stays out of the planning scene. And the grasp type follows the
+perceived geometry only, never an object name. Mocks for the scene, the pose selector and rosparam (no ROS master);
+needs the Mobipick image for the module imports.'''
+import inspect
 import math
 import unittest
 from types import SimpleNamespace as NS
@@ -12,8 +13,7 @@ from geometry_msgs.msg import Pose, PoseStamped
 from moveit_msgs.msg import Grasp
 
 import grasplan.pick as pick
-from grasplan.grasp_markers import make_candidate_scores
-from grasplan.msg import DetectedObject, GraspCandidate
+from grasplan.msg import DetectedObject
 from grasplan.tools.common import objectToPick
 from grasplan.tools.topdown_grasps import box_overlap_fraction, depth_below_support_top
 
@@ -119,63 +119,25 @@ class TestSceneWithAFalseBoxOnTheTarget(Params):
         self.assertEqual(box, list(CAN[2]))
 
 
-def candidate(approach, closing, z, nn):
-    '''a GraspCandidate at height z whose TCP x axis is approach and y axis closing'''
-    x = [float(v) for v in approach]
-    y = [float(v) for v in closing]
-    zaxis = [x[1] * y[2] - x[2] * y[1], x[2] * y[0] - x[0] * y[2], x[0] * y[1] - x[1] * y[0]]
-    m = [[x[0], y[0], zaxis[0], 0], [x[1], y[1], zaxis[1], 0], [x[2], y[2], zaxis[2], 0], [0, 0, 0, 1]]
-    q = pick.tf.transformations.quaternion_from_matrix(m)
-    c = GraspCandidate(quality=nn, width=0.05, scores=make_candidate_scores(nn, nn=nn))
-    c.pose.position.z = z
-    c.pose.orientation.x, c.pose.orientation.y, c.pose.orientation.z, c.pose.orientation.w = q
-    return c
+class TestGraspTypeFromGeometry(Params):
+    """the grasp type comes from the perceived geometry only, never from a name or a rosparam."""
 
+    def test_signature_has_no_name_input(self):
+        self.assertEqual(list(inspect.signature(pick.PickTools.top_grasps_for_low_objects).parameters),
+                         ['self', 'grasps', 'widths', 'object_pose', 'bounding_box'])
 
-class TestGraspTypeHint(Params):
-    def test_hint_keys(self):
-        self.params['/mobipick/grasp_type_hints/tomato_soup_can'] = 'side'
-        self.assertEqual(self.p.grasp_type_hint('Tomato-Soup can'), 'side')
-        self.params['/mobipick/grasp_type_hints/strawberry'] = 'TOP'
-        self.assertEqual(self.p.grasp_type_hint('strawberry'), 'top')
-
-    def test_auto_missing_unknown_or_off_mean_geometry(self):
-        self.params['/mobipick/grasp_type_hints/apple'] = 'auto'
-        self.params['/mobipick/grasp_type_hints/pear'] = 'diagonal'
-        self.assertIsNone(self.p.grasp_type_hint('apple'))
-        self.assertIsNone(self.p.grasp_type_hint('pear'))
-        self.assertIsNone(self.p.grasp_type_hint('banana'))
-        self.params['/mobipick/grasp_type_hints/banana'] = 'top'
-        self.params['~grasp_type_hints_ns'] = ''
-        self.assertIsNone(self.p.grasp_type_hint('banana'))
-
-    def test_second_name_as_fallback(self):
-        self.params['/mobipick/grasp_type_hints/pringles'] = 'side'
-        self.assertEqual(self.p.grasp_type_hint('the can', 'pringles'), 'side')
-
-    def test_side_hint_ranks_a_side_grasp_first(self):
-        top = candidate((0, 0, -1), (0, 1, 0), 0.80, 0.5)
-        side = candidate((0, 1, 0), (1, 0, 0), 0.775, 0.4)   # horizontal approach and closing, middle height
-        obj = DetectedObject()
-        obj.pose = stamped(*CAN[:2]).pose
-        obj.size.x, obj.size.y, obj.size.z = CAN[2]
-        ranked = self.p.side_ranked([top, side], obj)
-        self.assertAlmostEqual(ranked[0].quality, 0.6, places=5)   # 0.4 x 1.5
-        self.assertAlmostEqual(ranked[1].quality, 0.5, places=5)
-        self.assertAlmostEqual(top.quality, 0.5, places=5)          # the caller's list is untouched
-
-    def test_hint_drives_the_top_rule(self):
+    def test_low_object_rule_follows_the_box(self):
         grasps = [Grasp(id='v'), Grasp(id='t30')]
         for g, tilt in zip(grasps, (0.0, 30.0)):
             half = math.radians(90.0 - tilt) / 2.0
             g.grasp_pose.pose.orientation.y, g.grasp_pose.pose.orientation.w = math.sin(half), math.cos(half)
-        apple, strawberry = [0.076, 0.077, 0.064], [0.058, 0.049, 0.072]
         pose = stamped((0, 0, 0.75), I)
-        kept, _, low = self.p.top_grasps_for_low_objects(list(grasps), [0.0, 0.0], pose, apple, 'top')
-        self.assertTrue(low)
+        low, tall = [0.058, 0.049, 0.072], [0.07, 0.07, 0.2]
+        kept, _, is_low = self.p.top_grasps_for_low_objects(list(grasps), [0.0, 0.0], pose, low)
+        self.assertTrue(is_low)                      # the geometry rule: a small footprint is grasped from the top
         self.assertEqual([g.id for g in kept], ['v'])
-        kept, _, low = self.p.top_grasps_for_low_objects(list(grasps), [0.0, 0.0], pose, strawberry, 'side')
-        self.assertFalse(low)
+        kept, _, is_low = self.p.top_grasps_for_low_objects(list(grasps), [0.0, 0.0], pose, tall)
+        self.assertFalse(is_low)                     # a tall object keeps every grasp, whatever the object is called
         self.assertEqual(len(kept), 2)
 
 
