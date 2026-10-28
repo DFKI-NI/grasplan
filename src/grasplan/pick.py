@@ -81,10 +81,11 @@ from grasplan.grasp_scoring import (
     LOW_OBJECT_MAX_TILT_DEG,
     SMALL_OBJECT_MAX_FOOTPRINT,
     box_height_and_footprint,
+    closes_on_narrowest_side,
     complete_one_sided_box,
     is_compact_round,
     is_low_object,
-    jaw_alignment_turn,
+    jaw_alignment_turns,
     jaw_centring_shift,
     tilt_from_vertical_deg,
 )
@@ -1401,7 +1402,7 @@ class PickTools:
     def align_jaws_to_box(self, grasps, widths, object_pose, bounding_box):
         '''
         ~open_set_align_jaw_to_box (default false, re-read per goal): a jaw across a box diagonal pinches two opposite
-        edges and the object slides out in the lift (sim 2026-10-27, gelatin box). Each near-vertical open-set grasp
+        edges and the object slides out in the lift (sim 2026-10-27, a flat box). Each near-vertical open-set grasp
         whose jaw is more than ALIGN_JAW_MIN_OFF_DEG off both horizontal axes of the target box gets a copy turned about
         its approach so the jaw lies along the nearest axis whose side fits the open gripper (grasp_scoring
         jaw_alignment_turn), offered right before it; the original stays as the next choice. The copy is also moved
@@ -1409,6 +1410,14 @@ class PickTools:
         grasps sit up to ~4.5 cm off the centre), the jaws would close beside the box end (sim 2026-10-27: closed to
         1.45 cm, the box lost); its height and its place along the faces stay. Round boxes keep their grasps (any turn
         holds the same). Returns (grasps, widths); a copy's width is at least the side it closes on.
+        ~open_set_align_jaw_narrowest_side (default false, re-read per goal, only with the flag above): the first copy
+        closes across the narrowest horizontal side that fits instead of the nearest one, also for a grasp that already
+        closes across a wider side; the nearest-side copy, when it is another side, comes second, then the original.
+        Then every grasp that closes across that narrowest side (copies and originals alike) moves ahead of all the
+        others, each group in its quality order: MTC tries the grasps in the order given and AnyGrasp's quality would
+        otherwise put a wide-side copy of a better grasp first (sim 2026-10-28: the executed grasp closed across the
+        wider side). The cable ranking after this keeps each of its groups in this order, so a grasp the cable guard
+        is predicted to refuse is still offered after the predicted-pass ones.
         The funnel markers show the result as the step jaw_aligned (only while the flag is on).
         '''
         if not rospy.get_param('~open_set_align_jaw_to_box', False):
@@ -1425,13 +1434,13 @@ class PickTools:
         open_distance = self.grasp_planner.gripper_open_distance
         open_distance = open_distance[0] if isinstance(open_distance, (list, tuple)) else open_distance
         max_span = float(open_distance) - 2.0 * ALIGN_JAW_SIDE_CLEARANCE
+        narrowest = rospy.get_param('~open_set_align_jaw_narrowest_side', False)
         aligned, aligned_widths, added = [], [], []
         for grasp, width in zip(grasps, widths):
             o = grasp.grasp_pose.pose.orientation
             axes = tf.transformations.quaternion_matrix([o.x, o.y, o.z, o.w])[:3, :3]
-            alignment = jaw_alignment_turn(axes[:, 0], axes[:, 1], bounding_box, rotation, max_span)
-            if alignment is not None:
-                turn, span = alignment
+            for turn, span in jaw_alignment_turns(axes[:, 0], axes[:, 1], bounding_box, rotation, max_span,
+                                                  narrowest=narrowest):
                 twin = copy.deepcopy(grasp)
                 twin.id = f'{grasp.id}_aligned{turn:+.0f}'
                 m = tf.transformations.quaternion_matrix([o.x, o.y, o.z, o.w]).dot(
@@ -1448,9 +1457,20 @@ class PickTools:
                              f'moved {math.sqrt(sum(v * v for v in shift)) * 100:.1f} cm')
             aligned.append(grasp)
             aligned_widths.append(width)
-        rospy.loginfo(f'jaw along the box: {len(added)} of {len(grasps)} grasps get a turned copy offered first'
+        rospy.loginfo(f'jaw along the box{" (narrowest side first)" if narrowest else ""}: {len(added)} turned '
+                      f'copies of {len(grasps)} grasps, each offered right before its original'
                       + (f' (deg about the approach, side closed on, move to the box centre line): {", ".join(added)}'
                          if added else ''))
+        if narrowest:
+            narrow = []
+            for grasp in aligned:
+                o = grasp.grasp_pose.pose.orientation
+                axes = tf.transformations.quaternion_matrix([o.x, o.y, o.z, o.w])[:3, :3]
+                narrow.append(closes_on_narrowest_side(axes[:, 0], axes[:, 1], bounding_box, rotation, max_span))
+            order = [i for i, n in enumerate(narrow) if n] + [i for i, n in enumerate(narrow) if not n]
+            aligned, aligned_widths = [aligned[i] for i in order], [aligned_widths[i] for i in order]
+            rospy.loginfo(f'jaw along the box: {sum(narrow)} of {len(narrow)} grasps close across the narrowest side '
+                          f'that fits, offered before the others: {", ".join(aligned[i].id for i in range(sum(narrow)))}')
         self.grasp_funnel('jaw_aligned', aligned)
         return aligned, aligned_widths
 

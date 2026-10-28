@@ -53,6 +53,12 @@ The fallback is configured by these private parameters on `pick_object_node`:
   the lift) gets a copy turned about its approach onto the nearest box axis whose side fits the open gripper (1 cm
   clearance per side) and moved along its jaw so the jaw's midline passes through the box centre, offered right before
   the original; round boxes are left alone
+- `open_set_align_jaw_narrowest_side` (default `false`, with `open_set_align_jaw_to_box`): the first turned copy closes
+  across the narrowest horizontal side of the target box that fits the open gripper instead of the nearest one, also
+  for a grasp that already closes across a wider side; the nearest-side copy, when it is another side, comes second,
+  then the original. Every grasp that then closes across that narrowest side, copy or original, is tried before all
+  the others (each group in its quality order); the cable ranking still puts the grasps predicted to pass the cable
+  guard first. It uses the detected box and the gripper's open distance only
 - `open_set_strip_reported_padding` (default `false`): take off the padding the detection itself reports
   (`DetectedObject.box_padding`) instead of `open_set_box_padding`, so the value always matches the detector that
   produced the box; a detection that reports none (0) falls back to `open_set_box_padding`

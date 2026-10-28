@@ -107,10 +107,9 @@ def rank_by_quality(candidates):
 CYLINDER_MIN_ELONGATION = 1.5
 CYLINDER_MAX_ROUNDNESS = 1.3
 SIDE_GRASP_SCORE_MULTIPLIER = 1.5
-# By size (Oscar, 2026-09-28, baseball vs strawberry): an object whose longest side is below TINY_OBJECT_MAX_SIZE (m)
-# keeps the strict top-down ranking; a compact round one (all sides within ROUND_MAX_RATIO of each other, e.g. a
-# baseball or tennis ball) is grasped from the side at its centre height; flat or elongated ones (banana, multimeter)
-# stay top-down.
+# By size (decided 2026-09-28): an object whose longest side is below TINY_OBJECT_MAX_SIZE (m) keeps the strict top-down
+# ranking; a compact round one (all sides within ROUND_MAX_RATIO of each other, e.g. a ball) is grasped from the side
+# at its centre height; flat or elongated ones stay top-down.
 TINY_OBJECT_MAX_SIZE = 0.06
 ROUND_MAX_RATIO = 1.3
 STANDING_MAX_TILT_DEG = 35.0   # a lying cylinder (banana, a can on its side) keeps top-down grasps across it
@@ -167,8 +166,8 @@ def apply_cylinder_side_bonus(candidates, grasp_axes, centre, axis, length, scor
 
 
 def is_compact_round(size):
-    '''True for a roughly round object box (all sides within ROUND_MAX_RATIO of each other: a ball, an apple, an
-    orange): a two-finger grasp of it holds the same when turned about its approach axis (#121).'''
+    '''True for a roughly round object box (all sides within ROUND_MAX_RATIO of each other: a small round object): a
+    two-finger grasp of it holds the same when turned about its approach axis.'''
     dims = [float(v) for v in size]
     return min(dims) > 0.0 and max(dims) <= ROUND_MAX_RATIO * min(dims)
 
@@ -267,10 +266,10 @@ def complete_one_sided_box(size, rotation, centre, sight, min_elongation=CYLINDE
     return completed, tuple(float(c) + grow * a for c, a in zip(centre, axes[depth_axis]))
 
 
-# ---------------------------------------------------------------- jaw along a box axis (2026-10-27, sim gelatin box)
-# A parallel jaw across a box diagonal touches two opposite edges only: the sim gelatin box (8.9 x 7.3 cm) stalled the
-# gripper at 11.7 cm, its top-face diagonal, and slid out in the lift. Every reachable AnyGrasp grasp of that box was
-# 28-44 deg off the box axes; turned about its approach onto the nearest box axis, the same grasp closes on two faces.
+# ---------------------------------------------------------------- jaw along a box axis (2026-10-27, sim)
+# A parallel jaw across a box diagonal touches two opposite edges only: on a flat box whose long side crosses the jaw
+# the gripper stalled at the top-face diagonal and the box slid out in the lift. Every reachable AnyGrasp grasp of that
+# box was 28-44 deg off the box axes; turned about its approach onto a box axis, the same grasp closes on two faces.
 ALIGN_JAW_MIN_OFF_DEG = 15.0   # a jaw closer than this to a box axis is left as it is
 ALIGN_JAW_MAX_TILT_DEG = 20.0  # only near-vertical grasps: turning those about the approach keeps the jaw horizontal
 
@@ -285,9 +284,20 @@ def jaw_alignment_turn(approach, jaw, size, rotation, max_span, min_off_deg=ALIG
     approach, jaw: the grasp's x and y axes; size: box side lengths; rotation: 3x3 rows of the box orientation; all in
     the frame of up.
     '''
+    turns = jaw_alignment_turns(approach, jaw, size, rotation, max_span, min_off_deg=min_off_deg,
+                                max_tilt_deg=max_tilt_deg, up=up)
+    return turns[0] if turns else None
+
+
+def _jaw_side_turns(approach, jaw, size, rotation, max_tilt_deg, up):
+    '''
+    for a grasp within max_tilt_deg of straight down: (turn_deg, span) per horizontal box side, the turn about the
+    approach that lays the jaw along that box axis and the box size along it, which the jaw then closes across;
+    [] for a tilted grasp or a degenerate box
+    '''
     dims = [float(v) for v in size]
     if len(dims) != 3 or min(dims) <= 0.0 or tilt_from_vertical_deg(approach, up) > max_tilt_deg:
-        return None
+        return []
     a, j, u = _unit(approach), _unit(jaw), _unit(up)
     axes = [tuple(float(rotation[r][c]) for r in range(3)) for c in range(3)]
     horizontal = sorted(range(3), key=lambda c: abs(sum(x * y for x, y in zip(axes[c], u))))[:2]
@@ -299,10 +309,45 @@ def jaw_alignment_turn(approach, jaw, size, rotation, max_span, min_off_deg=ALIG
         cross = (j[1] * e[2] - j[2] * e[1], j[2] * e[0] - j[0] * e[2], j[0] * e[1] - j[1] * e[0])
         angle = math.degrees(math.atan2(sum(x * y for x, y in zip(cross, a)), sum(x * y for x, y in zip(j, e))))
         turns.append(((angle + 90.0) % 180.0 - 90.0, dims[c]))   # a jaw is the same line both ways
-    if min(abs(turn) for turn, _ in turns) <= min_off_deg:
-        return None
+    return turns
+
+
+def jaw_alignment_turns(approach, jaw, size, rotation, max_span, narrowest=False, min_off_deg=ALIGN_JAW_MIN_OFF_DEG,
+                        max_tilt_deg=ALIGN_JAW_MAX_TILT_DEG, up=(0.0, 0.0, 1.0)):
+    '''
+    the turns (turn_deg, span) to offer for one grasp, best first, as in jaw_alignment_turn. narrowest False: at most
+    the one jaw_alignment_turn gives. narrowest True: first the turn onto the narrowest horizontal side that fits
+    (unless the jaw lies within min_off_deg of it already, also when it closes across the wider side now), then the
+    turn onto the nearest fitting side when that is another one and the jaw is off both axes. Equal sides count as one.
+    '''
+    turns = _jaw_side_turns(approach, jaw, size, rotation, max_tilt_deg, up)
     fitting = [(turn, span) for turn, span in turns if span <= max_span]
-    return min(fitting, key=lambda t: abs(t[0])) if fitting else None
+    if not fitting:
+        return []
+    on_an_axis = min(abs(turn) for turn, _ in turns) <= min_off_deg
+    nearest = min(fitting, key=lambda t: abs(t[0]))
+    if not narrowest:
+        return [] if on_an_axis else [nearest]
+    narrow = min(fitting, key=lambda t: (t[1], abs(t[0])))
+    offered = [] if abs(narrow[0]) <= min_off_deg else [narrow]
+    if not on_an_axis and nearest[1] != narrow[1]:
+        offered.append(nearest)
+    return offered
+
+
+def closes_on_narrowest_side(approach, jaw, size, rotation, max_span, min_off_deg=ALIGN_JAW_MIN_OFF_DEG,
+                             max_tilt_deg=ALIGN_JAW_MAX_TILT_DEG, up=(0.0, 0.0, 1.0)):
+    '''
+    True when a grasp within max_tilt_deg of straight down closes across the narrowest horizontal box side that fits
+    the open gripper (max_span): its jaw lies within min_off_deg of that box axis, as the turned copies of
+    jaw_alignment_turns(narrowest=True) do. Equal sides count as one.
+    '''
+    fitting = [(turn, span) for turn, span in _jaw_side_turns(approach, jaw, size, rotation, max_tilt_deg, up)
+               if span <= max_span]
+    if not fitting:
+        return False
+    narrow = min(span for _, span in fitting)
+    return any(abs(turn) <= min_off_deg for turn, span in fitting if span == narrow)
 
 
 def jaw_centring_shift(jaw, tcp, centre):
