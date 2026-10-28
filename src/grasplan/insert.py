@@ -32,6 +32,7 @@ import rospy
 import actionlib
 import tf2_ros
 import tf.transformations as tft
+from grasplan import cable_detour
 from grasplan.place import PlaceTools
 from grasplan.tools.common import separate_object_class_from_id, robot_prefix
 from grasplan.tools.cable_rank import gate_chunks, joint_path, order_by_predicted_stretch
@@ -121,7 +122,7 @@ class InsertTools:
         reason = getattr(self, 'insert_failure_reason', '')
         if not reason and getattr(self.place, 'mtc', None) is not None:
             reason = self.place.mtc.failure_reason
-        return reason
+        return cable_detour.explain_refusal(reason)
 
     def insert_obj_action_callback(self, goal):
         success = False

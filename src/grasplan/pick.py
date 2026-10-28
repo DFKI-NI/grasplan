@@ -45,6 +45,7 @@ from std_srvs.srv import Empty, SetBool
 from pose_selector.srv import ClassQuery, PoseDelete, GetPoses
 from geometry_msgs.msg import PoseStamped
 from shape_msgs.msg import SolidPrimitive
+from grasplan import cable_detour
 from grasplan.tools.moveit_errors import motion_failure_text, print_moveit_error
 from moveit_msgs.msg import (
     AllowedCollisionEntry,
@@ -1209,10 +1210,9 @@ class PickTools:
             self.clear_octomap()
 
         # go to intermediate arm poses if needed to disentangle arm cable
-        if object_to_pick.obj_class in self.list_of_disentangle_objects:
-            for arm_pose in self.poses_to_go_before_pick:
-                rospy.loginfo(f'going to intermediate arm pose {arm_pose} to disentangle cable')
-                self.move_arm_to_posture(arm_pose)
+        for arm_pose in self.untangle_poses_before_pick(object_to_pick.obj_class):
+            rospy.loginfo(f'going to intermediate arm pose {arm_pose} to disentangle cable')
+            self.move_arm_to_posture(arm_pose)
 
         # check if user cancelled action
         if self.pick_action_server.is_preempt_requested():
@@ -1549,7 +1549,7 @@ class PickTools:
         reason = getattr(self, 'pick_failure_reason', '')
         if not reason and getattr(self, 'mtc', None) is not None:
             reason = self.mtc.failure_reason
-        return reason
+        return cable_detour.explain_refusal(reason)
 
     def start_pose_failed(self):
         '''the arm could not reach the open-set pick start pose: the pick stops, the reason goes to the action text'''
@@ -1976,6 +1976,19 @@ class PickTools:
             )
         return result
 
+    def untangle_poses_before_pick(self, obj_class):
+        '''
+        the fixed untangle poses a closed-set pick visits first (the objects of ~list_of_disentangle_objects): in hack
+        mode (~cable_detour_mode, the default) ~poses_to_go_before_pick, in cable_aware mode none, the MTC cable guard
+        keeps the motion free of cable entanglement instead
+        '''
+        if obj_class not in self.list_of_disentangle_objects:
+            return []
+        if cable_detour.cable_aware(self.mtc, f'pick of {obj_class}'):
+            rospy.loginfo(f'cable-aware mode: no untangle poses before the pick of {obj_class}')
+            return []
+        return list(self.poses_to_go_before_pick)
+
     def cable_replay_detour(self, result):
         '''
         careful flag ~mtc_cable_replay_detour (off in code): when an MTC pick of a closed-set object moved nothing and
@@ -1992,6 +2005,8 @@ class PickTools:
         left behind would stop it. Returns the pose the arm went to, else None.
         '''
         if not rospy.get_param('~mtc_cable_replay_detour', False) or self.mtc is None or self.mtc.executed:
+            return None
+        if cable_detour.requested_cable_aware():   # the detour pose is an untangle pose: cable-aware mode has none
             return None
         if result == MoveItErrorCodes.PREEMPTED or self.pick_action_server.is_preempt_requested():
             return None

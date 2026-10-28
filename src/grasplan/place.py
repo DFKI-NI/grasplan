@@ -42,6 +42,7 @@ from grasplan.tools.support_plane_tools import (
     OBJECT_HEIGHTS,
 )
 from grasplan.tools.common import separate_object_class_from_id, connect_move_groups, roscpp_initialize_named, robot_prefix
+from grasplan import cable_detour
 from grasplan.tools.moveit_errors import motion_failure_text, print_moveit_error
 from grasplan.tools.place_reach import order_by_reach, order_free_first
 from grasplan.tools.topdown_grasps import depth_below_support_top, height_above_support_top, rests_on_other
@@ -91,9 +92,9 @@ def drop_implausible_place_boxes():
 
 
 def detour_only_when_needed():
-    '''#198 (d/e) ~untangle_detour_only_when_needed: default on in the sim (/use_sim_time), off on the real robot until
-    tested there (Oscar 2026-09-28)'''
-    return bool(rospy.get_param('~untangle_detour_only_when_needed', rospy.get_param('/use_sim_time', False)))
+    '''~untangle_detour_only_when_needed (hack mode only): leave the untangle detour out of the first try and take it only
+    after the cable guard rejected a plan. Careful flag, off in the code (the detour is always taken)'''
+    return bool(rospy.get_param('~untangle_detour_only_when_needed', False))
 
 
 class PlaceTools:
@@ -471,7 +472,8 @@ class PlaceTools:
         untangle_cable_guide_1/2_right, the battle-tested hack against cable entanglement), or for an object picked
         open-set only ~open_set_place_start_pose (default transport, empty = none), like the open-set pick (Oscar
         2026-09-28: the fast detour swings shook a picked Pringles can out of the gripper).
-        ~open_set_skip_untangle_detour false keeps the detour for every object.
+        ~open_set_skip_untangle_detour false keeps the detour for every object. In cable_aware mode
+        (~cable_detour_mode) a closed-set object gets no untangle pose at all.
         '''
         if rospy.get_param('~open_set_skip_untangle_detour', True) and self.picked_open_set(object_name):
             start = rospy.get_param('~open_set_place_start_pose', 'transport')
@@ -480,7 +482,10 @@ class PlaceTools:
             if start:
                 self.move_arm_to_posture(start)
             return
-        # #198 (e) ~untangle_detour_only_when_needed: the first try plans the place from where the arm is, the MTC cable
+        if cable_detour.cable_aware(getattr(self, 'mtc', None), f'place of {object_name}'):
+            rospy.loginfo(f'cable-aware mode: no untangle poses {poses} before the place of {object_name}')
+            return
+        # ~untangle_detour_only_when_needed: the first try plans the place from where the arm is, the MTC cable
         # guard checks it; the detour comes only when that try failed with the guard rejecting a plan
         # (detour_needed_after_first_try), and at most once per goal
         state = getattr(self, 'detour_state', '')
@@ -549,7 +554,7 @@ class PlaceTools:
         reason = getattr(self, 'place_failure_reason', '')
         if not reason and getattr(self, 'mtc', None) is not None:
             reason = self.mtc.failure_reason
-        return reason
+        return cable_detour.explain_refusal(reason)
 
     def place_obj_action_callback(self, goal):
         success = False

@@ -1,6 +1,6 @@
 '''#198 (e) (Oscar 2026-09-28: fewer arm motions): with ~untangle_detour_only_when_needed a closed-set place or insert
 leaves the untangle_cable_guide detour out of its first try; the second try takes it (once) only when the first failed
-before the arm moved and the MTC cable guard rejected a plan. Default on in the sim, off on the real robot. Mocks for
+before the arm moved and the MTC cable guard rejected a plan. Off in the code (hack mode only). Mocks for
 rosparam, the arm and MTC (no ROS master); needs the Mobipick image for the module imports.'''
 import unittest
 from types import SimpleNamespace as NS
@@ -15,7 +15,7 @@ DETOUR = ['untangle_cable_guide_1_right', 'untangle_cable_guide_2_right']
 
 class Fixture(unittest.TestCase):
     def setUp(self):
-        self.params = {CATALOG: {'multimeter': {}, 'klt': {}}, '/use_sim_time': True}
+        self.params = {CATALOG: {'multimeter': {}, 'klt': {}}, '~untangle_detour_only_when_needed': True}
         self.moves = []
         for module in (place, insert):
             patcher = mock.patch.object(module.rospy, 'get_param',
@@ -36,12 +36,19 @@ class TestGoBeforePlace(Fixture):
         self.assertEqual(self.moves, [])
         self.assertEqual(self.p.detour_state, 'deferred')
 
-    def test_real_robot_default_keeps_the_detour(self):
-        self.params['/use_sim_time'] = False
+    def test_switch_off_keeps_the_detour(self):
+        self.params['~untangle_detour_only_when_needed'] = False
         self.p.reset_detour()
         self.p.go_before_place('multimeter_1', DETOUR)
         self.p.go_before_place('multimeter_1', DETOUR)   # a second batch of the same try: as before
         self.assertEqual(self.moves, DETOUR + DETOUR)
+
+    def test_default_is_off_also_with_the_sim_clock(self):
+        del self.params['~untangle_detour_only_when_needed']
+        self.params['/use_sim_time'] = True
+        self.p.reset_detour()
+        self.p.go_before_place('multimeter_1', DETOUR)
+        self.assertEqual(self.moves, DETOUR)
 
     def test_no_cable_guard_keeps_the_detour(self):
         self.p.mtc.cable_guard = None
@@ -112,8 +119,8 @@ class TestPlaceGoal(Fixture):
         self.assertEqual(self.tries, [False, True])
         self.assertEqual(self.moves, [])
 
-    def test_real_robot_default_as_before(self):
-        self.params['/use_sim_time'] = False
+    def test_switch_off_as_before(self):
+        self.params['~untangle_detour_only_when_needed'] = False
         self.outcomes = [(False, 1), (True, 0)]
         self.goal()
         self.assertEqual(self.tries, [False, True])
