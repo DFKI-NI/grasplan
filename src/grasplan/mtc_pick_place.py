@@ -43,6 +43,9 @@ mobipick_cable_entanglement (#118) turns into constraints on the joint path inst
 reject grasps (#120, #124). Every free motion (Connect) gets a MoveIt path constraint that keeps wrist_3 within
 half a turn of the angle where the tube is least wound (no extra winding), several solutions are planned, and
 the cheapest one whose whole joint path keeps the cable model's stretch below ~mtc_cable_max_stretch is executed.
+With ~mtc_cable_replay_live_state (safe flag, off in code) the replay of the path through the monitor's carrier link
+chain goes on from the cable monitor's live chain instead of a fresh one, except where the monitor starts its chain
+afresh at every trajectory start anyway (its reset_at_trajectory_start): there the fresh chain is its model.
 '''
 
 import copy
@@ -248,6 +251,8 @@ class CableGuard:
         self.max_stretch = rospy.get_param('~mtc_cable_max_stretch', DEFAULT_CABLE_MAX_STRETCH)
         self.half_window = math.radians(rospy.get_param('~mtc_cable_wrist_3_half_window_deg', 170.0))
         self.max_points = int(rospy.get_param('~mtc_cable_points_per_trajectory', 40))
+        # safe flag, off in code: the chain replay goes on from the monitor's live chain instead of a fresh one
+        self.replay_live_state = bool(rospy.get_param('~mtc_cable_replay_live_state', False))
 
     def stop_stretch(self):
         '''the cable monitor's stop threshold (config decision.stop_stretch, e.g. +0.02)'''
@@ -311,9 +316,10 @@ class CableGuard:
 
     def chain_verdict(self, solution_msg):
         '''the cable monitor's decision (disc chain with history, same model and thresholds) along the whole joint
-        path of the solution, from a freshly settled chain at its start (mobipick_cable_entanglement.path_check, #121)'''
+        path of the solution, from a freshly settled chain at its start (mobipick_cable_entanglement.path_check),
+        or with ~mtc_cable_replay_live_state from the monitor's live chain, which keeps what the motions before did'''
         from mobipick_cable_entanglement.cable_model import CableModel
-        from mobipick_cable_entanglement.path_check import rope_replay
+        from mobipick_cable_entanglement.path_check import carrier_replay
         if getattr(self, 'chain_model', None) is None:
             cfg = copy.deepcopy(self.cfg)
             cfg.rope.enabled = True
@@ -327,11 +333,42 @@ class CableGuard:
                 samples.append((offset + point.time_from_start.to_sec(), dict(zip(trajectory.joint_names, point.positions))))
             offset = samples[-1][0] + 1e-3
         start = time.monotonic()
-        verdict = rope_replay(self.chain_model, samples, self.chain_rate)
+        state, origin = None, 'a fresh chain'
+        if samples and getattr(self, 'replay_live_state', False):
+            state, origin = self.live_chain_state(samples[0][1])
+        verdict = carrier_replay(self.chain_model, samples, self.chain_rate, start_state=state)
         if verdict is not None:
-            rospy.loginfo(f'mtc cable guard: chain replay of {verdict.updates} ticks in {time.monotonic() - start:.1f} s: '
-                          f'max stretch {verdict.max_stretch:+.3f} ({verdict.limiting}), stop {verdict.stop}')
+            rospy.loginfo(f'mtc cable guard: chain replay of {verdict.updates} ticks in {time.monotonic() - start:.1f} s '
+                          f'from {origin}: max stretch {verdict.max_stretch:+.3f} ({verdict.limiting}), '
+                          f'stop {verdict.stop}')
         return verdict
+
+    def live_chain_state(self, q0):
+        '''(chain state, where the replay starts) for a path starting at q0: the cable monitor's chain after its last
+        tick (its chain_state service), or (None, a fresh chain and why) when the monitor resets its chain at every
+        trajectory start (then the fresh chain is its model), or when the state is missing, stale, taken elsewhere or
+        from another model config; the replay then starts as without the flag'''
+        import json
+        from std_srvs.srv import Trigger
+        from mobipick_cable_entanglement.path_check import live_state_problem
+        name = rospy.get_param('~mtc_cable_chain_state_service',
+                               f'/{robot_prefix()}/cable_entanglement_monitor/chain_state')
+        state = None
+        try:
+            rospy.wait_for_service(name, timeout=0.2)
+            reply = rospy.ServiceProxy(name, Trigger)()
+            state = json.loads(reply.message) if reply.success else None
+            problem = None if reply.success else f'the monitor has none ({reply.message})'
+        except (rospy.ROSException, rospy.ServiceException, ValueError) as e:
+            problem = f'no cable monitor chain state at {name} ({e})'
+        if problem is None:
+            problem = live_state_problem(self.chain_model, state, q0, rospy.get_time())
+        if problem is not None:
+            log = rospy.loginfo_throttle if state and state.get('reset_at_trajectory_start') else rospy.logwarn_throttle
+            log(60.0, f'mtc cable guard: the chain replay starts from a fresh chain, not the monitor\'s live chain: '
+                      f'{problem}')
+            return None, f'a fresh chain (live chain unused: {problem})'
+        return state, f'the monitor\'s live chain ({rospy.get_time() - float(state["stamp"]):.2f} s old)'
 
     def turn_for_slack(self, q, round_object):
         '''(turn in degrees, predicted stretch) about the grasp approach axis (= the wrist_3 axis) that gives the most
