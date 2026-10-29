@@ -515,7 +515,7 @@ def _plan_named_logged(arm, name, guard):
     return trajectory, ''
 
 
-def guarded_named_move(arm, name, guard, attempts=2, via=None, chain_stops=None):
+def guarded_named_move(arm, name, guard, attempts=2, via=None, chain_stops=None, report=None):
     '''
     Move a MoveGroupCommander arm to the SRDF pose name like arm.go(), but plan first and let the MTC cable guard
     (geometry and the monitor's chain replay, #121) check the joint path before anything moves: the 2026-09-28 sim
@@ -526,9 +526,11 @@ def guarded_named_move(arm, name, guard, attempts=2, via=None, chain_stops=None)
     nothing more moves and False is returned with the reason logged. guard None: the old behaviour (go, one retry).
     A chain replay stop only logs unless ~mtc_cable_named_move_rope_stops is true: it refused a re-pick the unguarded
     code does fine (suite 2026-09-28, #121). ~mtc_cable_guard_named_moves (see named_move_guard_mode) can make the
-    whole guard log only: the arm then moves as without it and the checks are only logged. chain_stops True or False
-    overrides ~mtc_cable_named_move_rope_stops for this move (the cable replay detour must not take a leg the chain
-    replay would stop).
+    whole guard log only: the arm then moves as without it and the checks are only logged.
+    chain_stops: True/False decides for this move and its via legs whether a chain replay stop refuses a plan
+    (the cable replay detour must not take a leg the chain replay would stop); None keeps
+    ~mtc_cable_named_move_rope_stops. report: a dict that collects the guard's verdict per plan
+    ('plans': [(pose, attempt, stretch, ok, span)]), the via pose taken ('via') and the last refusal ('reason').
     '''
     arm.set_named_target(name)
     mode = named_move_guard_mode() if guard is not None else 'off'
@@ -537,7 +539,7 @@ def guarded_named_move(arm, name, guard, attempts=2, via=None, chain_stops=None)
     if mode == 'off':
         return _plain_named_move(arm, name)
     trajectory, reason = _plan_named_checked(arm, name, guard, attempts, _current_joint(guard.wrist_3_joint),
-                                             chain_stops)
+                                             chain_stops, report)
     if trajectory is not None:
         announce_trajectory_start(f'named move {name}')
         return bool(arm.execute(trajectory, wait=True))
@@ -545,19 +547,27 @@ def guarded_named_move(arm, name, guard, attempts=2, via=None, chain_stops=None)
     via = rospy.get_param('~mtc_cable_named_move_via', ['transport']) if via is None else via
     for pose in [p for p in via if p != name]:
         rospy.logwarn(f'arm move to {name} refused ({reason}); trying via {pose}')
-        if guarded_named_move(arm, pose, guard, attempts, via=[]) and guarded_named_move(arm, name, guard, attempts, via=[]):
+        if report is not None:
+            report['via'] = pose
+        if (guarded_named_move(arm, pose, guard, attempts, via=[], chain_stops=chain_stops, report=report)
+                and guarded_named_move(arm, name, guard, attempts, via=[], chain_stops=chain_stops, report=report)):
             return True
+        reason = (report or {}).get('reason', reason)
+    if report is not None:
+        report['reason'] = reason
     rospy.logerr(f'not moving the arm to {name}: {reason}')
     return False
 
 
-def _plan_named_checked(arm, name, guard, attempts, w3, chain_stops=None):
+def _plan_named_checked(arm, name, guard, attempts, w3, chain_stops=None, report=None):
     '''the enforce mode of guarded_named_move without the motion: plan arm's target (set by the caller, from its start
     state) up to attempts times until the cable guard passes a plan; w3 is the start's wrist_3 angle (rad, None if
-    unknown); chain_stops None: ~mtc_cable_named_move_rope_stops. Returns (trajectory, '') or (None, reason).'''
+    unknown); chain_stops None: ~mtc_cable_named_move_rope_stops; report: see guarded_named_move. Returns
+    (trajectory, '') or (None, reason).'''
     guard.update_params()
     if chain_stops is None:
-        chain_stops = bool(rospy.get_param('~mtc_cable_named_move_rope_stops', False))
+        chain_stops = rospy.get_param('~mtc_cable_named_move_rope_stops', False)
+    chain_stops = bool(chain_stops)
     lo, hi = guard.wrist_3_neutral - guard.half_window, guard.wrist_3_neutral + guard.half_window
     if w3 is not None and lo <= w3 <= hi:
         arm.set_path_constraints(guard.path_constraints())
@@ -578,6 +588,8 @@ def _plan_named_checked(arm, name, guard, attempts, w3, chain_stops=None):
             # poses (anygrasp view at about -0.09) would otherwise be refused after a place (night19)
             ok, stretch, span, q = guard.check(_SolutionView([trajectory]), max_stretch=guard.stop_stretch(),
                                                 chain_stops=chain_stops)
+            if report is not None:
+                report.setdefault('plans', []).append((name, attempt, stretch, ok, span))
             if ok:
                 rospy.loginfo(f'moving arm to {name} (cable check passed: stretch {stretch:+.3f}, attempt {attempt})')
                 return trajectory, ''
@@ -585,7 +597,49 @@ def _plan_named_checked(arm, name, guard, attempts, w3, chain_stops=None):
             rospy.logwarn(f'arm move to {name}: plan {attempt}/{attempts} rejected by the {reason}')
     finally:
         arm.clear_path_constraints()
+    if report is not None:
+        report['reason'] = reason
     return None, reason
+
+
+def pick_start_move_carrier_stops():
+    '''~pick_start_move_carrier_stops (careful, off in code): the pick's start move from the grasp view to its start
+    pose refuses a plan the chain replay predicts to stop, replans, then detours via ~pick_start_move_via'''
+    return bool(rospy.get_param('~pick_start_move_carrier_stops', False))
+
+
+class MonitorStretch:
+    '''the cable monitor's own ~max_stretch (Float32) while a move runs, for the log line next to the guard's
+    replay verdict; subscribed on first use, None when the monitor publishes nothing (not running, real robot log mode)'''
+
+    def __init__(self, topic):
+        self.topic, self.sub, self.latest, self.peak = topic, None, None, None
+
+    def start(self):
+        if self.sub is None:
+            try:
+                from std_msgs.msg import Float32
+
+                self.sub = rospy.Subscriber(self.topic, Float32, self._on, queue_size=10)
+            except Exception as e:  # noqa: BLE001 - only for the log
+                rospy.logwarn(f'cable monitor stretch not watched ({self.topic}): {e}')
+        self.peak = self.latest
+
+    def _on(self, msg):
+        self.latest = float(msg.data)
+        if self.peak is None or self.latest > self.peak:
+            self.peak = self.latest
+
+
+_monitor_stretch = None
+
+
+def monitor_stretch():
+    '''the MonitorStretch of this robot's cable monitor (one subscription per process)'''
+    global _monitor_stretch
+    if _monitor_stretch is None:
+        _monitor_stretch = MonitorStretch(f'/{robot_prefix()}/cable_entanglement_monitor/max_stretch')
+    return _monitor_stretch
 
 
 def plan_pick_during_start_move():

@@ -985,6 +985,43 @@ class PickTools:
             guard = self.mtc.cable_guard
         return guarded_named_move(self.robot.arm, arm_posture_name, guard)
 
+    def move_arm_to_pick_start(self, pose):
+        '''
+        the open-set pick's start move from the grasp view to ~open_set_pick_start_pose. With the careful flag
+        ~pick_start_move_carrier_stops (off in code) the cable guard's chain replay refuses a plan it predicts
+        to stop (the monitor stopped 3 of 4 such moves at table 2, 2026-10-03), the move is replanned up to
+        ~pick_start_move_attempts times (default 3, about 2.3 s per replay) and otherwise goes via ~pick_start_move_via
+        (default [observe100cm_right], the grasp view's observation pose), each leg checked the same way; refused
+        there too, nothing moves and the pick reports why. One log line per start move: the replay verdict per plan,
+        the detour, the cable monitor's own largest stretch during the move. Off, or in cable-aware mode:
+        move_arm_to_posture as before.
+        '''
+        from grasplan.mtc_pick_place import guarded_named_move, monitor_stretch, pick_start_move_carrier_stops
+        if not pick_start_move_carrier_stops() or getattr(self, 'mtc', None) is None:
+            return self.move_arm_to_posture(pose)
+        if cable_detour.requested_cable_aware():   # a switch of the untangle (hack) mode: cable-aware mode moves as before
+            return self.move_arm_to_posture(pose)
+        self.mtc.update_cable_guard()
+        attempts = max(1, int(rospy.get_param('~pick_start_move_attempts', 3)))
+        via = [str(v) for v in rospy.get_param('~pick_start_move_via', ['observe100cm_right'])]
+        rospy.loginfo(f'moving arm to {pose} (pick start move, chain replay stops refuse, up to {attempts} plans, '
+                      f'then via {via})')
+        report, monitor = {}, monitor_stretch()
+        monitor.start()
+        started = time.time()
+        with TIMER.stage('named_move'):
+            ok = guarded_named_move(self.robot.arm, pose, self.mtc.cable_guard, attempts, via=via, chain_stops=True,
+                                    report=report)
+        plans = ', '.join(f'{name} #{attempt} {stretch:+.3f} {"pass" if passed else "refused"}'
+                          for name, attempt, stretch, passed, _ in report.get('plans', []))
+        peak = 'unknown' if monitor.peak is None else f'{monitor.peak:+.3f}'
+        rospy.loginfo(f'pick start move to {pose}: {"done" if ok else "REFUSED"} in {time.time() - started:.1f} s; '
+                      f'replay per plan: {plans or "none"}; detour: {report.get("via") or "no"}; '
+                      f'cable monitor max stretch during the move: {peak}')
+        if not ok:
+            self.pick_start_refused = report.get('reason', 'no plan')
+        return ok
+
     @timed('gripper_open')
     def open_gripper(self):
         '''Open the gripper through its GripperCommand action server.'''
@@ -1224,11 +1261,12 @@ class PickTools:
         # #198 (d) (~open_set_pick_from_current_state): the move waits until the grasps are ranked from the current
         # state (reachable_external_grasps -> settle_pick_start) and happens only when that state does not suit
         self.deferred_start_pose, self.stayed_for_pick, self.pick_start_failed = '', '', ''
+        self.pick_start_refused = ''
         if external_grasp_candidates is not None:
             start_pose = rospy.get_param('~open_set_pick_start_pose', 'transport')
             if start_pose and pick_from_current_state():
                 self.deferred_start_pose = start_pose
-            elif start_pose and not self.move_arm_to_posture(start_pose):
+            elif start_pose and not self.move_arm_to_pick_start(start_pose):
                 self.pick_start_failed = start_pose
                 return self.start_pose_failed()
         # a gripper left closed with nothing in it (real 2026-09-28: a Pringles can lost during a place) has its fingers
@@ -1792,6 +1830,8 @@ class PickTools:
     def start_pose_failed(self):
         '''the arm could not reach the open-set pick start pose: the pick stops, the reason goes to the action text'''
         reason = f'could not move the arm to {self.pick_start_failed!r} before planning the grasp'
+        if getattr(self, 'pick_start_refused', ''):
+            reason = f'pick start move refused by the cable guard ({self.pick_start_refused})'
         rospy.logerr(reason)
         if self.mtc is not None:
             self.mtc.failure_reason = reason
@@ -1815,7 +1855,7 @@ class PickTools:
             rospy.loginfo(f'planning the grasp from the current arm state, without the move to {pose}')
             return ranked
         rospy.loginfo(f'moving the arm to {pose} before planning the grasp: {reason}')
-        if not self.move_arm_to_posture(pose):
+        if not self.move_arm_to_pick_start(pose):
             self.pick_start_failed = pose
             return []
         state = self.robot.get_current_state()
