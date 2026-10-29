@@ -115,6 +115,8 @@ REGRASP_THRESHOLD_M = 0.020
 
 # what the executor does with each MTC sub trajectory, in the order the leaf stages were added
 ARM, GRIPPER, ATTACH, DETACH, NOOP = 'arm', 'gripper', 'attach', 'detach', 'noop'
+# a stage that only puts the plan's start where a StartMove ends; never executed, never replayed by the guard
+PREFIX = 'prefix'
 
 
 def pose_to_matrix(pose):
@@ -483,10 +485,22 @@ def _plain_named_move(arm, name):
 def _logged_named_move(arm, name, guard):
     '''plan the named move without the wrist_3 constraint like arm.go() does, log what the guard (stop_stretch and
     chain replay) would say, and execute that same plan whatever it says; no plan: the old go with its retry'''
+    trajectory, _ = _plan_named_logged(arm, name, guard)
+    if trajectory is None:
+        return _plain_named_move(arm, name)
+    announce_trajectory_start(f'named move {name}')
+    return bool(arm.execute(trajectory, wait=True))
+
+
+def _plan_named_logged(arm, name, guard):
+    '''the log mode of guarded_named_move without the motion: one plan of arm's target, the guard's verdict only logged
+    (guard None: not even that, the off mode). Returns (trajectory, '') or (None, 'no plan').'''
     planned = arm.plan()
     success, trajectory = (planned[0], planned[1]) if isinstance(planned, tuple) else (True, planned)
     if not success or not trajectory.joint_trajectory.points:
-        return _plain_named_move(arm, name)
+        return None, 'no plan'
+    if guard is None:
+        return trajectory, ''
     try:
         guard.update_params()
         ok, stretch, span, q = guard.check(_SolutionView([trajectory]), max_stretch=guard.stop_stretch(),
@@ -498,8 +512,7 @@ def _logged_named_move(arm, name, guard):
                           f'{stretch:+.3f} in the {span} span at {q}')
     except Exception as e:   # the log must never keep the arm from moving
         rospy.logwarn(f'moving arm to {name}: cable check failed ({e}), log only')
-    announce_trajectory_start(f'named move {name}')
-    return bool(arm.execute(trajectory, wait=True))
+    return trajectory, ''
 
 
 def guarded_named_move(arm, name, guard, attempts=2, via=None, chain_stops=None):
@@ -523,10 +536,28 @@ def guarded_named_move(arm, name, guard, attempts=2, via=None, chain_stops=None)
         return _logged_named_move(arm, name, guard)
     if mode == 'off':
         return _plain_named_move(arm, name)
+    trajectory, reason = _plan_named_checked(arm, name, guard, attempts, _current_joint(guard.wrist_3_joint),
+                                             chain_stops)
+    if trajectory is not None:
+        announce_trajectory_start(f'named move {name}')
+        return bool(arm.execute(trajectory, wait=True))
+    # still refused: go via an intermediate pose (~mtc_cable_named_move_via, e.g. transport) and try once more
+    via = rospy.get_param('~mtc_cable_named_move_via', ['transport']) if via is None else via
+    for pose in [p for p in via if p != name]:
+        rospy.logwarn(f'arm move to {name} refused ({reason}); trying via {pose}')
+        if guarded_named_move(arm, pose, guard, attempts, via=[]) and guarded_named_move(arm, name, guard, attempts, via=[]):
+            return True
+    rospy.logerr(f'not moving the arm to {name}: {reason}')
+    return False
+
+
+def _plan_named_checked(arm, name, guard, attempts, w3, chain_stops=None):
+    '''the enforce mode of guarded_named_move without the motion: plan arm's target (set by the caller, from its start
+    state) up to attempts times until the cable guard passes a plan; w3 is the start's wrist_3 angle (rad, None if
+    unknown); chain_stops None: ~mtc_cable_named_move_rope_stops. Returns (trajectory, '') or (None, reason).'''
     guard.update_params()
     if chain_stops is None:
         chain_stops = bool(rospy.get_param('~mtc_cable_named_move_rope_stops', False))
-    w3 = _current_joint(guard.wrist_3_joint)
     lo, hi = guard.wrist_3_neutral - guard.half_window, guard.wrist_3_neutral + guard.half_window
     if w3 is not None and lo <= w3 <= hi:
         arm.set_path_constraints(guard.path_constraints())
@@ -549,20 +580,179 @@ def guarded_named_move(arm, name, guard, attempts=2, via=None, chain_stops=None)
                                                 chain_stops=chain_stops)
             if ok:
                 rospy.loginfo(f'moving arm to {name} (cable check passed: stretch {stretch:+.3f}, attempt {attempt})')
-                announce_trajectory_start(f'named move {name}')
-                return bool(arm.execute(trajectory, wait=True))
+                return trajectory, ''
             reason = f'cable guard: stretch {stretch:+.3f} in the {span} span at {q}'
             rospy.logwarn(f'arm move to {name}: plan {attempt}/{attempts} rejected by the {reason}')
     finally:
         arm.clear_path_constraints()
-    # still refused: go via an intermediate pose (~mtc_cable_named_move_via, e.g. transport) and try once more
-    via = rospy.get_param('~mtc_cable_named_move_via', ['transport']) if via is None else via
-    for pose in [p for p in via if p != name]:
-        rospy.logwarn(f'arm move to {name} refused ({reason}); trying via {pose}')
-        if guarded_named_move(arm, pose, guard, attempts, via=[]) and guarded_named_move(arm, name, guard, attempts, via=[]):
-            return True
-    rospy.logerr(f'not moving the arm to {name}: {reason}')
-    return False
+    return None, reason
+
+
+def plan_pick_during_start_move():
+    '''~plan_pick_during_start_move (careful, off in code): the closed-set pick is planned while the arm runs its
+    untangle poses (see StartMove)'''
+    return bool(rospy.get_param('~plan_pick_during_start_move', False))
+
+
+class StartMove:
+    '''
+    (~plan_pick_during_start_move): the named poses a pick visits before its grasp (the closed-set untangle poses),
+    each planned from where the one before ends and checked by the cable guard exactly like guarded_named_move, then run
+    in a background thread, one execute_trajectory goal per pose with its own trajectory start for the cable monitor
+    (the boundaries the guard checked, as the old pose-by-pose moves), so that MTC plans the pick meanwhile from end_q
+    (a prefix stage in the task that is neither executed nor replayed by the guard). wait() returns once the arm is
+    there; the plan is used only when the arm stands within tolerance of end_q, else it is planned again from the real
+    state.
+    '''
+
+    MAX_TOLERANCE_RAD = 0.05   # a larger ~plan_pick_during_start_move_tolerance_rad is refused, not clipped
+
+    def __init__(self, names, trajectories):
+        self.names = list(names)
+        self.trajectories = list(trajectories)
+        last = self.trajectories[-1].joint_trajectory
+        self.end_q = dict(zip(last.joint_names, last.points[-1].positions))
+        self.runner, self.code, self.cancelled = None, None, False
+        if not self.end_q or not all(math.isfinite(v) for v in self.end_q.values()):
+            raise ValueError(f'start move to {self.names}: its end is not a complete finite joint state ({self.end_q})')
+        self.client = None
+        self.started = None
+
+    @classmethod
+    def plan(cls, arm, names, guard, attempts=2):
+        '''the StartMove for names, or None (logged) when a pose cannot be planned and checked from the end of the one
+        before: the caller then moves the old way (guarded_named_move, with its replans via transport)'''
+        from moveit_msgs.msg import RobotState
+        from sensor_msgs.msg import JointState
+        mode = named_move_guard_mode() if guard is not None else 'off'
+        trajectories, start = [], None
+        try:
+            for name in names:
+                if start is None:
+                    arm.set_start_state_to_current_state()
+                    w3 = _current_joint(guard.wrist_3_joint) if guard is not None else None
+                else:
+                    arm.set_start_state(RobotState(joint_state=JointState(name=list(start), position=list(start.values())),
+                                                   is_diff=True))
+                    w3 = start.get(guard.wrist_3_joint) if guard is not None else None
+                arm.set_named_target(name)
+                if mode == 'enforce':
+                    trajectory, reason = _plan_named_checked(arm, name, guard, attempts, w3)
+                else:
+                    trajectory, reason = _plan_named_logged(arm, name, guard if mode == 'log' else None)
+                if trajectory is None:
+                    rospy.logwarn(f'start move to {names}: {name}: {reason}; moving the old way, one pose after the other')
+                    return None
+                trajectories.append(trajectory)
+                points = trajectory.joint_trajectory
+                start = dict(zip(points.joint_names, points.points[-1].positions))
+        finally:
+            arm.set_start_state_to_current_state()
+        try:
+            return cls(names, trajectories)
+        except ValueError as e:
+            rospy.logwarn(f'{e}; moving the old way, one pose after the other')
+            return None
+
+    def start(self, client):
+        '''run the poses one after the other on the execute_trajectory action client in a background thread; returns at
+        once'''
+        import threading
+        self.client, self.started = client, time.monotonic()
+        self.runner = threading.Thread(target=self.run, args=(client,), name='start move', daemon=True)
+        self.runner.start()
+        rospy.loginfo(f'start move to {self.names} running ({self.seconds():.1f} s of motion); planning the pick meanwhile')
+
+    def run(self, client):
+        '''the background part of start(): each pose as its own goal and trajectory start; stops at the first failure.
+        Sets self.code (a MoveItErrorCodes value, None without a result).'''
+        code = None
+        for name, trajectory in zip(self.names, self.trajectories):
+            if self.cancelled:
+                break
+            announce_trajectory_start(f'named move {name}')
+            client.send_goal(ExecuteTrajectoryGoal(trajectory=trajectory))
+            client.wait_for_result()
+            result = client.get_result()
+            code = result.error_code.val if result is not None else None
+            if code != MoveItErrorCodes.SUCCESS:
+                break
+        self.code = code
+
+    def seconds(self):
+        return sum(t.joint_trajectory.points[-1].time_from_start.to_sec() for t in self.trajectories)
+
+    @timed('start_move_wait')
+    def wait(self, tolerance=None, plan_start=None):
+        '''(arrived, reason): waits for the motion (bounded), then requires a complete, finite and fresh arm joint state
+        within tolerance of end_q for every joint of the start move, and, when given, plan_start (the first point of the
+        retained MTC arm trajectory, name -> rad) within tolerance of end_q and of that state. Differences are not
+        wrapped: a full wrist turn is a different cable state. Anything missing or not finite drops the plan.'''
+        if self.client is None:
+            return False, 'the start move was never sent'
+        client, self.client = self.client, None
+        if tolerance is None:
+            tolerance = rospy.get_param('~plan_pick_during_start_move_tolerance_rad', 0.01)
+        try:
+            tolerance = float(tolerance)
+        except (TypeError, ValueError):
+            tolerance = float('nan')
+        if not (math.isfinite(tolerance) and 0.0 <= tolerance <= self.MAX_TOLERANCE_RAD):
+            self.join(self.timeout_s())
+            return False, f'invalid arrival tolerance {tolerance} rad (0 to {self.MAX_TOLERANCE_RAD})'
+        if not self.join(self.timeout_s()):
+            self.cancelled = True
+            client.cancel_goal()
+            return False, f'the start move to {self.names} did not end within {self.timeout_s():.0f} s (cancelled)'
+        code = self.code
+        if code != MoveItErrorCodes.SUCCESS:
+            return False, f'the start move to {self.names} failed (MoveIt error code {code})'
+        now = _current_arm_q(not_before=_ros_now())
+        if now is None:
+            return False, 'no fresh joint state after the start move'
+        off, why = _joint_offset(self.end_q, now, 'the joint state')
+        if why:
+            return False, why
+        if off > tolerance:
+            return False, f'the arm stopped {math.degrees(off):.2f} deg from the end of the start move (tolerance ' \
+                          f'{math.degrees(tolerance):.2f} deg)'
+        if plan_start is not None:
+            for reference, label in ((self.end_q, 'the end of the start move'), (now, 'the arm')):
+                off, why = _joint_offset(reference, plan_start, 'the planned pick start')
+                if why:
+                    return False, why
+                if off > tolerance:
+                    return False, f'the pick was planned from {math.degrees(off):.2f} deg off {label} (tolerance ' \
+                                  f'{math.degrees(tolerance):.2f} deg)'
+        return True, ''
+
+    def join(self, timeout):
+        '''True when the background run ended within timeout seconds'''
+        self.runner.join(timeout)
+        return not self.runner.is_alive()
+
+    def timeout_s(self):
+        '''how long wait() waits for the motion: twice its duration plus 10 s'''
+        return 2.0 * self.seconds() + 10.0
+
+
+def _joint_offset(reference, actual, label):
+    '''(largest |actual - reference| over every joint of reference, '') or (inf, why) when actual misses one of them or
+    a value is not finite'''
+    missing = [n for n in reference if n not in actual]
+    if missing:
+        return float('inf'), f'{label} lacks {", ".join(missing)}'
+    bad = [n for n in reference if not (math.isfinite(reference[n]) and math.isfinite(actual[n]))]
+    if bad:
+        return float('inf'), f'{label} is not finite for {", ".join(bad)}'
+    return max(abs(actual[n] - reference[n]) for n in reference), ''
+
+
+def _ros_now():
+    try:
+        return rospy.Time.now()
+    except rospy.exceptions.ROSInitException:   # no node (unit tests)
+        return None
 
 
 def _current_joint(joint, timeout=2.0):
@@ -597,14 +787,21 @@ class FingerRecorder:
         return self.samples
 
 
-def _current_arm_q(timeout=2.0):
-    '''the arm joints (name -> rad) of one fresh joint_states message of this node's namespace, None if none came'''
+def _current_arm_q(timeout=2.0, not_before=None):
+    '''the arm joints (name -> rad) of one fresh joint_states message of this node's namespace, None if none came;
+    not_before (rospy.Time): None also for a message stamped before it (or not stamped)'''
     from sensor_msgs.msg import JointState
-    try:
-        msg = rospy.wait_for_message('joint_states', JointState, timeout=timeout)
-    except rospy.ROSException:
-        return None
-    return {n: p for n, p in zip(msg.name, msg.position) if 'ur5_' in n}
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            msg = rospy.wait_for_message('joint_states', JointState, timeout=max(deadline - time.monotonic(), 0.05))
+        except rospy.ROSException:
+            return None
+        arm = {n: p for n, p in zip(msg.name, msg.position) if 'ur5_' in n}
+        if not_before is None or (not msg.header.stamp.is_zero() and msg.header.stamp >= not_before):
+            return arm
+        if time.monotonic() >= deadline:
+            return None
 
 
 class _SolutionView:
@@ -619,6 +816,8 @@ class _SolutionView:
 
 
 class MtcPickPlace:
+    start_move = None   # the StartMove the arm runs while the pick is planned (set by pick.py)
+
     def __init__(self, arm_group, eef_link, gripper_links, planning_frame, is_preempt_requested):
         '''
         arm_group: MoveIt group that moves the gripper (the chain ending in eef_link)
@@ -732,6 +931,13 @@ class MtcPickPlace:
                 if grasp is None:
                     self.unplanned.append(getattr(self, 'last_plan_failure', '') or 'not planned')
                     continue
+            if self.start_move is not None:
+                # planned while the arm ran its start move; use the plan only when the arm is where it starts
+                arrived, why = self.finish_start_move(roles)
+                if not arrived:
+                    rospy.logwarn(f'mtc: {why}: planning the pick again from the current state')
+                    return self.pickup(goal)
+                rospy.loginfo(f'mtc: {what} was planned during the start move')
             # the pre grasp posture (open) is not a stage, it is sent before the first arm motion
             self.executed = True
             self.executed_grasp = grasp   # for the grasp funnel debug output of pick.py
@@ -752,6 +958,13 @@ class MtcPickPlace:
             elif not self.failure_reason:
                 self.failure_reason = f'executing grasp {grasp.id} failed: {self.execution_text(code)}'
             return result  # something moved: never try another grasp from a changed state
+        if self.start_move is not None:
+            # nothing planned from the start move's end (also when only its stand-in path failed): once the arm
+            # is there, the old way, from the real state
+            arrived, why = self.finish_start_move()
+            rospy.logwarn(f'mtc: no grasp planned during the start move{f" ({why})" if why else ""}: planning the pick '
+                          f'again from the current state')
+            return self.pickup(goal)
         self.failure_reason = (f'none of the {len(goal.possible_grasps)} grasps could be planned'
                                + self.unplanned_breakdown())
         rospy.logerr(f'mtc: none of the {len(goal.possible_grasps)} grasps of {goal.target_name} could be planned'
@@ -1080,7 +1293,55 @@ class MtcPickPlace:
         task.clear()
         task.name = name
         task.add(stages.CurrentState('current state'))
-        return task, [NOOP]
+        if self.start_move is None:
+            return task, [NOOP]
+        # the arm is on its way to the start move's last pose; plan from there (a stand-in path, dropped)
+        prefix = stages.MoveTo('start move (planned meanwhile)', self.pipeline)
+        prefix.group = self.arm_group
+        prefix.setGoal(self.start_move.names[-1])
+        task.add(prefix)
+        return task, [NOOP, PREFIX]
+
+    def planned_start_q(self, timeout=2.0):
+        '''the arm joints (name -> rad) the pick is planned from: the end of the running StartMove, else the
+        current state'''
+        if self.start_move is not None:
+            return dict(self.start_move.end_q)
+        return _current_arm_q(timeout=timeout)
+
+    def without_prefix(self, solution_msg):
+        '''the solution message with the stand-in path of the start move prefix emptied (same sub trajectory indices): what
+        the arm will really run, from the start move's end on'''
+        if self.start_move is None:
+            return solution_msg
+        msg = copy.deepcopy(solution_msg)
+        for sub in msg.sub_trajectory[1:2]:
+            sub.trajectory.joint_trajectory.points = []
+        return msg
+
+    def finish_start_move(self, roles=None):
+        '''(arrived, reason) of the running StartMove, waiting for it; (True, '') when none runs. Clears it. roles: those
+        of the planned task, whose first arm trajectory after the stand-in must start where the arm stands'''
+        if self.start_move is None:
+            return True, ''
+        move, self.start_move = self.start_move, None
+        if roles is None:
+            return move.wait()
+        plan_start = self.retained_start_q(roles)
+        if plan_start is None:
+            move.wait()
+            return False, 'the planned pick has no arm trajectory to compare with the arrival'
+        return move.wait(plan_start=plan_start)
+
+    def retained_start_q(self, roles):
+        '''the first point (name -> rad) of the first non-empty arm trajectory of the chosen solution after the start move
+        stand-in: where the executed pick starts; None when there is none'''
+        subs = list(self.chosen_solution.toMsg().sub_trajectory)
+        for role, sub in list(zip(roles, subs))[roles.index(PREFIX) + 1 if PREFIX in roles else 0:]:
+            trajectory = sub.trajectory.joint_trajectory
+            if role == ARM and trajectory.points:
+                return dict(zip(trajectory.joint_names, trajectory.points[0].positions))
+        return None
 
     def connect(self, name, shaped=None):
         '''
@@ -1124,7 +1385,7 @@ class MtcPickPlace:
         if (goal_state is None or getattr(self, 'no_shaping', False) or getattr(self, 'cable_guard', None) is None
                 or getattr(self, 'cable_shaper', None) is None or not cable_shaping.shaping_on()):
             return None
-        start = _current_arm_q()
+        start = self.planned_start_q()
         goal = {n: p for n, p in zip(goal_state.name, goal_state.position) if 'ur5_' in n}
         margin = self.cable_guard.max_stretch
         try:
@@ -1412,6 +1673,8 @@ class MtcPickPlace:
         from sensor_msgs.msg import JointState
         try:
             current = rospy.wait_for_message('joint_states', JointState, timeout=2.0)
+            if self.start_move is not None:   # seeded where the pick will start, not where the arm is now
+                current.position = [self.start_move.end_q.get(n, p) for n, p in zip(current.name, current.position)]
             ik = rospy.ServiceProxy('compute_ik', GetPositionIK)
             ik.wait_for_service(2.0)
             request = GetPositionIKRequest()
@@ -1464,16 +1727,16 @@ class MtcPickPlace:
         '''on a failed grasp, the start and the pinned target branch, so a log tells reachability
         from cable trouble (the failing stages and guard verdicts are logged by plan())'''
         ik_state = getattr(self, 'grasp_ik_states', {}).get(grasp.id)
-        start = _current_arm_q(timeout=0.5)
+        start = self.planned_start_q(timeout=0.5)
         target = {n: p for n, p in zip(ik_state.name, ik_state.position) if 'ur5_' in n} if ik_state else None
         rospy.loginfo(f'mtc: grasp {grasp.id} not planned: start {cable_shaping.degrees(start or {})}, '
                       f'pinned target {cable_shaping.degrees(target) if target else "none (MTC IK)"}')
 
     @staticmethod
-    def motion_seconds(solution):
-        '''summed duration of the arm sub trajectories of an MTC solution (s)'''
+    def motion_seconds(solution, skip=0):
+        '''summed duration of the arm sub trajectories of an MTC solution (s), without its first skip ones'''
         total = 0.0
-        for sub in solution.toMsg().sub_trajectory:
+        for sub in solution.toMsg().sub_trajectory[skip:]:
             points = sub.trajectory.joint_trajectory.points
             if points:
                 total += points[-1].time_from_start.to_sec()
@@ -1512,7 +1775,7 @@ class MtcPickPlace:
         else:
             least_bad, checks = float('inf'), []
             for index, solution in enumerate(task.solutions):
-                ok, stretch, span, q = self.cable_guard.check(solution.toMsg())
+                ok, stretch, span, q = self.cable_guard.check(self.without_prefix(solution.toMsg()))
                 if not ok and span != 'wrist_3 window' and stretch < least_bad:
                     least_bad, self.guard_rejected_q = stretch, self.cable_guard.worst_q_rad
                 checks.append(f'{index}: cost {solution.cost:.1f} stretch {stretch:+.3f} ({span})')
@@ -1534,7 +1797,7 @@ class MtcPickPlace:
             rospy.loginfo(f'mtc: {what} cable check passed ({checks[-1]})')
         elapsed = time.monotonic() - start
         try:
-            motion = f', motion {self.motion_seconds(self.chosen_solution):.1f} s'
+            motion = f', motion {self.motion_seconds(self.chosen_solution, 2 if self.start_move is not None else 0):.1f} s'
         except Exception:  # noqa: BLE001 - log only
             motion = ''
         rospy.loginfo(f'mtc: {what} planned in {elapsed:.1f} s (cost {self.chosen_solution.cost:.2f}{motion})')
@@ -1733,6 +1996,8 @@ class MtcPickPlace:
                     self.pick_progress['attached'] = True
             elif role == DETACH:
                 code = self.detach(detach)
+            elif role == PREFIX:
+                continue   # the start move already ran this part
             else:
                 if sub.trajectory.joint_trajectory.points:
                     rospy.logerr('mtc: unexpected motion in a planning scene stage, aborting')

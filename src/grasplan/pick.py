@@ -943,6 +943,33 @@ class PickTools:
             return True, f'fixed pose {fallback!r}'
         return False, f'{reason}; failed to move the arm to {fallback!r}'
 
+    def start_move_while_planning(self, poses):
+        '''
+        (~plan_pick_during_start_move, careful, off in code): instead of moving through poses one by one before
+        planning the pick (the closed-set untangle poses, 6-14 s in the sim), plan and cable-check them all now, send
+        them as one motion and let MTC plan the pick meanwhile from their end (mtc_pick_place.StartMove). True when the
+        motion runs; False (the old way) without MTC or when a pose cannot be planned and checked from the one before.
+        '''
+        from grasplan.mtc_pick_place import StartMove, plan_pick_during_start_move
+        if not plan_pick_during_start_move() or getattr(self, 'mtc', None) is None:
+            return False
+        with TIMER.stage('named_move'):
+            self.mtc.update_cable_guard()
+            move = StartMove.plan(self.robot.arm, poses, self.mtc.cable_guard)
+        if move is None:
+            return False
+        move.start(self.mtc.execute_client)
+        self.mtc.start_move = move
+        return True
+
+    def finish_start_move(self):
+        '''wait for a start move the pick did not use (nothing planned, preempted); no-op otherwise'''
+        if getattr(getattr(self, 'mtc', None), 'start_move', None) is None:
+            return
+        arrived, why = self.mtc.finish_start_move()
+        if not arrived:
+            rospy.logwarn(f'start move: {why}')
+
     @timed('named_move')
     def move_arm_to_posture(self, arm_posture_name):
         '''
@@ -1268,7 +1295,10 @@ class PickTools:
             self.clear_octomap()
 
         # go to intermediate arm poses if needed to disentangle arm cable
-        for arm_pose in self.untangle_poses_before_pick(object_to_pick.obj_class):
+        untangle = self.untangle_poses_before_pick(object_to_pick.obj_class)
+        if untangle and self.start_move_while_planning(untangle):
+            untangle = []   # running now, the pick is planned meanwhile
+        for arm_pose in untangle:
             rospy.loginfo(f'going to intermediate arm pose {arm_pose} to disentangle cable')
             self.move_arm_to_posture(arm_pose)
 
@@ -1277,6 +1307,7 @@ class PickTools:
             rospy.logwarn(
                 f'grasplan {self.pick_action_server.action_server.ns} ' 'action server goal cancel request received'
             )
+            self.finish_start_move()
             return False
 
         # try to pick object with moveit
@@ -1294,6 +1325,7 @@ class PickTools:
             rospy.loginfo(f'from the current arm state: the {len(first)} predicted-pass grasps, the other '
                           f'{len(grasps) - len(first)} from {self.stayed_for_pick} if needed')
         result = self.offer_grasps(object_to_pick, first, support_surface_name, external_grasp_candidates is not None)
+        self.finish_start_move()   # nothing planned (or preempted) while the start move ran: let it end first
         if result is False:
             return False   # preempted
         # #198 (d): planned from the current state and every grasp failed before the arm moved: once more from the
