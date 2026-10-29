@@ -68,6 +68,7 @@ from grasplan.msg import (
 from grasplan.srv import ViewObject
 from grasplan.tools.common import objectToPick, connect_move_groups, roscpp_initialize_named, robot_prefix
 from grasplan.tools.action_client_helper import ActionClientHelper
+from grasplan.tools.stage_timing import TIMER, action, timed, watch_server
 from grasplan.tools.gripper_envelope import fingertip_envelope, lowest_point_offset
 from grasplan.tools.finger_series import closing_axis_tilt_deg
 from grasplan.tools.pad_footprint import width_across_pads
@@ -350,10 +351,12 @@ class PickTools:
         # create joint controller cancellers for both arm and gripper
         ns = rospy.get_namespace().strip('/')  # programatically get robot namespace
         self.action_client_helper = ActionClientHelper(ns, self.pick_action_server, controller_names=['arm', 'gripper'])
+        watch_server(self.pick_action_server)
         self.pick_action_server.start()
 
         rospy.loginfo('pick node ready!')
 
+    @action('pick', lambda goal: goal.object_name)
     def pick_obj_action_callback(self, goal):
         # Explicitly check for preemption at the start
         if self.pick_action_server.is_preempt_requested():
@@ -494,6 +497,7 @@ class PickTools:
             return False, message, False
 
         generate_goal = GenerateGraspsGoal(object_name=object_name)
+        TIMER.open('anygrasp')   # closed after the wait, or with the action on an early return
         self.anygrasp_generate_action_client.send_goal(generate_goal)
         deadline = None
         if self.anygrasp_result_timeout > 0:
@@ -513,6 +517,7 @@ class PickTools:
         else:
             self.anygrasp_generate_action_client.cancel_goal()
             return False, 'ROS shutdown while waiting for AnyGrasp', True
+        TIMER.close()
 
         state = self.anygrasp_generate_action_client.get_state()
         result = self.anygrasp_generate_action_client.get_result()
@@ -584,6 +589,7 @@ class PickTools:
         self.tf_listener.getLatestCommonTime(target_reference_frame, pose.header.frame_id)
         return self.tf_listener.transformPose(target_reference_frame, pose)
 
+    @timed('scene')
     def make_object_pose_and_add_objs_to_planning_scene(
         self, object_to_pick, ignore_object_list=[], external_object=None
     ):
@@ -904,6 +910,7 @@ class PickTools:
         acm.entry_values = [AllowedCollisionEntry(enabled=row) for row in rows]
         return acm
 
+    @timed('view')
     def move_to_anygrasp_view(self, object_name):
         '''
         point the camera at the object for AnyGrasp through the view service (a view sampled around the object's
@@ -934,6 +941,7 @@ class PickTools:
             return True, f'fixed pose {fallback!r}'
         return False, f'{reason}; failed to move the arm to {fallback!r}'
 
+    @timed('named_move')
     def move_arm_to_posture(self, arm_posture_name):
         '''
         use moveit commander to send the arm to a predefined arm configuration
@@ -948,6 +956,7 @@ class PickTools:
             guard = self.mtc.cable_guard
         return guarded_named_move(self.robot.arm, arm_posture_name, guard)
 
+    @timed('gripper_open')
     def open_gripper(self):
         '''Open the gripper through its GripperCommand action server.'''
         if not self.gripper_action_client.wait_for_server(rospy.Duration(self.gripper_action_timeout)):
@@ -1995,6 +2004,7 @@ class PickTools:
             )
         return result
 
+    @timed('ik_prefilter')
     def reachable_external_grasps(self, grasps):
         '''
         External grasps whose grasp pose has an IK solution (compute_ik, seeded with the current state, no collision
@@ -2116,6 +2126,7 @@ class PickTools:
             gap = '?'
         return f'tilt {tilt} gap {gap}'
 
+    @timed('cable_rank')
     def rank_by_predicted_cable_stretch(self, grasps, joint_states, start=None):
         '''
         grasps (best first) with their IK joint states -> the grasps the MTC cable guard's model predicts to pass

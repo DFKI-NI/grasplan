@@ -65,6 +65,7 @@ from grasplan.msg import PlaceObjectAction, PlaceObjectResult
 from moveit_msgs.msg import MoveItErrorCodes
 from pose_selector.srv import GetPoses
 from grasplan.tools.action_client_helper import ActionClientHelper
+from grasplan.tools.stage_timing import action, timed, watch_server
 from visualization_msgs.msg import Marker, MarkerArray
 from typing import List
 from std_msgs.msg import Header
@@ -221,6 +222,7 @@ class PlaceTools:
             self.place_action_server = actionlib.SimpleActionServer(
                 'place_object', PlaceObjectAction, self.place_obj_action_callback, False
             )
+            watch_server(self.place_action_server)
             # prepare fallback option because moveit pickup action server ignores preemption requests
             # create joint controller cancellers for both arm and gripper
             ns = rospy.get_namespace().strip('/')  # programatically get robot namespace
@@ -280,6 +282,7 @@ class PlaceTools:
         if markers.markers:
             self.marker_array_pub.publish(markers)
 
+    @timed('scene')
     def add_objs_to_planning_scene(self):
         # query all poses available in pose selector
         resp = self.get_all_poses_pick_pose_selector_srv()
@@ -442,6 +445,7 @@ class PlaceTools:
             return False
         return separate_object_class_from_id(object_name)[0] not in catalog
 
+    @timed('detour')
     def go_before_place(self, object_name, poses):
         '''
         the arm poses before placing or inserting object_name: the closed-set untangle detour (poses, e.g.
@@ -505,6 +509,7 @@ class PlaceTools:
         self.detour_state = 'forced'
         return True
 
+    @timed('named_move')
     def move_arm_to_posture(self, arm_posture_name):
         '''
         use moveit commander to send the arm to a predefined arm configuration
@@ -532,6 +537,7 @@ class PlaceTools:
             reason = self.mtc.failure_reason
         return cable_detour.explain_refusal(reason)
 
+    @action('place', lambda goal: goal.support_surface_name)
     def place_obj_action_callback(self, goal):
         success = False
         self.place_failure_reason = ''   # why a check before MTC stopped the place
@@ -585,6 +591,7 @@ class PlaceTools:
                 PlaceObjectResult(success=False), f'place failed: {reason}' if reason else 'place failed'
             )
 
+    @timed('order_poses')
     def order_place_poses_by_reach(self, place_poses: ObjectList, max_reach=None):
         """
         ~place_prefer_near_arm (#132): try the place poses nearest to the arm base (~place_reach_frame) first, as MTC

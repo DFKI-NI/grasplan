@@ -85,6 +85,7 @@ from grasplan.tools.common import robot_prefix
 from grasplan.tools.finger_series import analyse_close
 from grasplan.tools.pad_gap import PINCH_GAP_RATIO, PINCH_MAX_TILT_DEG, is_pinch, overclose, pad_gap, pinch_checkable
 from grasplan.tools.touching_boxes import boxes_touch
+from grasplan.tools.stage_timing import timed
 from grasplan.tools.moveit_errors import arm_stop_text, moveit_code_text
 
 # the name MoveIt gives the octomap inside the planning scene (planning_scene::PlanningScene::OCTOMAP_NS)
@@ -289,6 +290,7 @@ class CableGuard:
         )
         return constraints
 
+    @timed('guard_check')
     def check(self, solution_msg, max_stretch=None, chain_stops=True):
         '''(ok, worst stretch, worst span, worst joint angles in degrees) along all sub trajectories; max_stretch
         overrides the planning margin ~mtc_cable_max_stretch (named-pose moves use the monitor's stop threshold);
@@ -331,6 +333,7 @@ class CableGuard:
                     k.split('/')[-1]: round(math.degrees(v), 1) for k, v in verdict.q.items()}
         return worst < limit, worst, worst_span, worst_q
 
+    @timed('guard_replay')
     def chain_verdict(self, solution_msg):
         '''the cable monitor's decision (disc chain with history, same model and thresholds) along the whole joint
         path of the solution, from a freshly settled chain at its start (mobipick_cable_entanglement.path_check);
@@ -1237,6 +1240,7 @@ class MtcPickPlace:
         self.cable_guard.update_params()
         self.cable_solutions = max(1, int(rospy.get_param('~mtc_cable_solutions', 4)))
 
+    @timed('plan')
     def plan(self, task, what):
         '''plan task; sets self.chosen_solution (the cheapest solution, or with the cable guard the cheapest one
         whose joint path passes the cable check). With the guard one solution is planned, and a rejected one is not
@@ -1426,6 +1430,7 @@ class MtcPickPlace:
             visit(stage, stage.name + '/')
         return '; '.join(report)
 
+    @timed('execute')
     def execute(self, task, roles, postures_before, stage_posture, attach=None, detach=None, check_grasp=False,
                 regrasp=None):
         '''
@@ -1762,6 +1767,7 @@ class MtcPickPlace:
             rospy.logerr(f'mtc: grasp check unavailable, picks are not verified: {e}')
             return None
 
+    @timed('hold_check')
     def gripper_holds_object(self, when, delay=None):
         if not rospy.get_param('~mtc_check_grasp', True):
             rospy.logwarn_once('mtc: ~mtc_check_grasp is false: picks and places do not check the gripper')
@@ -1834,6 +1840,7 @@ class MtcPickPlace:
         if open_posture is not None:
             self.command_gripper(open_posture)
 
+    @timed('arm_move')
     def execute_arm(self, robot_trajectory):
         self.execute_client.send_goal(ExecuteTrajectoryGoal(trajectory=robot_trajectory))
         while not self.execute_client.wait_for_result(rospy.Duration(0.1)):
@@ -1847,6 +1854,7 @@ class MtcPickPlace:
             rospy.logerr(f'mtc: arm trajectory execution failed: {self.execution_failure}')
         return code
 
+    @timed('gripper')
     def command_gripper(self, posture):
         '''send the single point posture of a Grasp/PlaceLocation (opening in metres) to the GripperCommand server'''
         if not self.gripper_client.wait_for_server(rospy.Duration(2.0)):

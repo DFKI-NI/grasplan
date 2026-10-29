@@ -49,6 +49,7 @@ from pose_selector.srv import ClassQuery
 from grasplan.tools.common import objectToPick  # name is misleading, in this case we want to insert an object in it
 from grasplan.msg import InsertObjectAction, InsertObjectResult
 from grasplan.tools.action_client_helper import ActionClientHelper
+from grasplan.tools.stage_timing import action, timed, watch_server
 from grasplan.tools.comfortable_insert import (
     comfortable_insert_candidates,
     free_yaw_insert_candidates,
@@ -100,6 +101,7 @@ class InsertTools:
         self.insert_action_server = actionlib.SimpleActionServer(
             'insert_object', InsertObjectAction, self.insert_obj_action_callback, False
         )
+        watch_server(self.insert_action_server)
         # prepare fallback option because moveit pickup action server ignores preemption requests
         # create joint controller cancellers for both arm and gripper
         ns = rospy.get_namespace().strip('/')  # programatically get robot namespace
@@ -124,6 +126,7 @@ class InsertTools:
             reason = self.place.mtc.failure_reason
         return cable_detour.explain_refusal(reason)
 
+    @action('insert', lambda goal: goal.support_surface_name)
     def insert_obj_action_callback(self, goal):
         success = False
         self.insert_failure_reason = ''   # why a check before MTC stopped the insert
@@ -413,6 +416,7 @@ class InsertTools:
             return self.fail(f'cannot insert: the action server {INSERT_OBJECT_SERVER_NAME} is not available')
         return False
 
+    @timed('insert_poses')
     def gen_comfortable_insert_poses(
         self,
         object_name,
@@ -559,6 +563,7 @@ class InsertTools:
                 break
         return result
 
+    @timed('insert_order')
     def sort_by_wrist_3_change(self, bodies, tcp_to_body):
         '''
         Object body poses sorted by how far wrist_3 turns from the current state (collision-aware IK). With
