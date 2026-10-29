@@ -1,7 +1,8 @@
 '''The MTC cable guard's chain replay from the cable monitor's live chain (~mtc_cable_replay_live_state, off in code):
-off, the replay starts from a fresh chain as before and never asks the monitor; on, it goes on from the monitor's
-chain when that is fresh and taken where the path starts and the monitor does not reset its chain at every trajectory
-start, else from a fresh chain with the reason logged. Fake
+off, the replay starts from a fresh chain as before and never asks the monitor; on, the path is replayed from a fresh
+chain and also from the monitor's chain when that is fresh and taken where the path starts and the monitor does not
+reset its chain at every trajectory start (else the fresh replay alone, with the reason logged); the path passes only
+when both replays pass. Fake
 monitor service and fake MTC solution messages, no ROS master; needs the Mobipick image and
 mobipick_cable_entanglement.'''
 import json
@@ -83,18 +84,70 @@ class TestLiveChainState(unittest.TestCase):
         self.assertEqual((verdict.max_stretch, verdict.span, verdict.updates), (fresh.max_stretch, fresh.span,
                                                                                 fresh.updates))
 
-    def test_on_goes_on_from_the_monitor_chain(self):
+    def test_on_replays_also_from_the_monitor_chain(self):
+        from mobipick_cable_entanglement.path_check import carrier_replay
         guard = self.guard(live=True)
         with mock.patch.object(rospy, 'wait_for_service'), \
                 mock.patch.object(rospy, 'ServiceProxy', self.reply(self.state)), \
                 mock.patch.object(rospy, 'get_time', return_value=NOW), \
                 mock.patch.object(rospy, 'get_param', side_effect=lambda name, default=None: default):
-            live = guard.chain_verdict(solution(PLACE_END, ANYGRASP))
-        fresh = self.guard(live=False).chain_verdict(solution(PLACE_END, ANYGRASP))
-        # the live chain is still caught from the motion before: the replay sees it, the fresh chain does not
+            verdict = guard.chain_verdict(solution(PLACE_END, ANYGRASP))
+        samples = [(0.0, q(PLACE_END)), (3.0, q(ANYGRASP))]
+        fresh = carrier_replay(self.guard(live=False).chain_model, samples, 10.0)
+        live = carrier_replay(self.guard(live=False).chain_model, samples, 10.0, start_state=self.state)
+        # the live chain is still caught from the motion before: its replay sees more stretch than the fresh one
         self.assertGreater(live.max_stretch, fresh.max_stretch + 0.005,
                            f'live {live.max_stretch:+.4f}, fresh {fresh.max_stretch:+.4f}')
-        self.assertTrue(live.stop)
+        self.assertTrue(verdict.stop)   # both refuse here: the fresh refusal is reported first
+        self.assertEqual((verdict.max_stretch, verdict.span), (fresh.max_stretch, fresh.span))
+
+    def combined(self, fresh_stops, live_stops):
+        '''chain_verdict with the live state found and both replays faked: (verdict, start states replayed)'''
+        guard = self.guard(live=True)
+        guard.live_chain_state = lambda q0: (self.state, 'the monitor\'s live chain')
+        starts = []
+
+        def replay(model, samples, rate, start_state=None):
+            starts.append(start_state)
+            stop = live_stops if start_state is not None else fresh_stops
+            return NS(stop=stop, max_stretch=0.03 if stop else -0.05, span='wrist', limiting='stretch', q={},
+                      updates=len(samples), origin='live' if start_state is not None else 'fresh')
+        with mock.patch('mobipick_cable_entanglement.path_check.carrier_replay', replay), \
+                mock.patch.object(rospy, 'logwarn') as warn:
+            verdict = guard.chain_verdict(solution(PLACE_END, ANYGRASP))
+        return verdict, starts, warn
+
+    def test_both_replays_pass_and_the_path_passes(self):
+        verdict, starts, warn = self.combined(fresh_stops=False, live_stops=False)
+        self.assertEqual(starts, [None, self.state])
+        self.assertFalse(verdict.stop)
+        warn.assert_not_called()
+
+    def test_the_fresh_replay_keeps_its_veto_with_a_slack_live_chain(self):
+        verdict, starts, warn = self.combined(fresh_stops=True, live_stops=False)
+        self.assertEqual(starts, [None, self.state])
+        self.assertTrue(verdict.stop)
+        self.assertEqual(verdict.origin, 'fresh')
+        self.assertIn('the fresh chain refuses, the live chain passes -> path refused', warn.call_args[0][0])
+
+    def test_a_live_refusal_refuses_the_path_the_fresh_replay_passes(self):
+        verdict, starts, warn = self.combined(fresh_stops=False, live_stops=True)
+        self.assertTrue(verdict.stop)
+        self.assertEqual(verdict.origin, 'live')
+        self.assertIn('the fresh chain passes, the live chain refuses -> path refused', warn.call_args[0][0])
+
+    def test_without_a_live_state_the_fresh_replay_alone_decides(self):
+        guard = self.guard(live=True)
+        guard.live_chain_state = lambda q0: (None, 'a fresh chain (live chain unused: stale)')
+        starts = []
+
+        def replay(model, samples, rate, start_state=None):
+            starts.append(start_state)
+            return NS(stop=True, max_stretch=0.03, span='wrist', limiting='stretch', q={}, updates=len(samples))
+        with mock.patch('mobipick_cable_entanglement.path_check.carrier_replay', replay):
+            verdict = guard.chain_verdict(solution(PLACE_END, ANYGRASP))
+        self.assertEqual(starts, [None])
+        self.assertTrue(verdict.stop)
 
     def test_falls_back_to_a_fresh_chain_with_the_reason(self):
         guard = self.guard(live=True)
