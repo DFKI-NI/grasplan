@@ -68,6 +68,7 @@ from grasplan.srv import ViewObject
 from grasplan.tools.common import objectToPick, connect_move_groups, roscpp_initialize_named, robot_prefix
 from grasplan.tools.action_client_helper import ActionClientHelper
 from grasplan.tools.gripper_envelope import fingertip_envelope, lowest_point_offset
+from grasplan.tools.pad_gap import pad_gap, reads_open
 from grasplan.tools.topdown_grasps import (
     box_overlap_fraction,
     clamp_box_to_support,
@@ -957,6 +958,30 @@ class PickTools:
             return False
         return True
 
+    def pre_open_gripper(self):
+        '''
+        The pick's pre-open. Safe flag ~skip_pre_open_when_open (off in code): when the finger joint
+        (~skip_pre_open_finger_joint) of a joint_states message that arrives within 1 s already reads open (pads within
+        ~skip_pre_open_tolerance, 0.015 m, of the configured open width ~gripper_open), the goal would change nothing and
+        is skipped (~0.9 s per pick); no reading or a partly closed gripper opens as before. One log line per pick.
+        '''
+        if rospy.get_param('~skip_pre_open_when_open', False):
+            from grasplan.mtc_pick_place import _current_joint
+            joint = rospy.get_param('~skip_pre_open_finger_joint', f'{robot_prefix()}/gripper_finger_joint')
+            theta = _current_joint(joint, timeout=1.0)
+            open_positions = self.grasp_planner.gripper_open_distance
+            open_width = float(open_positions[0] if isinstance(open_positions, (list, tuple)) else open_positions)
+            tolerance = rospy.get_param('~skip_pre_open_tolerance', 0.015)
+            if reads_open(theta, open_width, tolerance):
+                rospy.loginfo(f'pre-open skipped: {joint} reads {theta:.3f} rad = {pad_gap(theta) * 1000:.0f} mm, '
+                              f'within {tolerance * 1000:.0f} mm of the open {open_width * 1000:.0f} mm')
+                return True
+            rospy.loginfo('pre-open: ' + (f'no {joint} reading within 1 s' if theta is None else
+                                          f'{joint} reads {theta:.3f} rad = {pad_gap(theta) * 1000:.0f} mm')
+                          + ', opening the gripper')
+        rospy.loginfo('opening the gripper before planning the pick (nothing is attached)')
+        return self.open_gripper()
+
     def move_gripper_to_posture(self, gripper_posture_name):
         '''
         WARNING, THIS FUNCTION SHOULD NOT BE USED!
@@ -1153,8 +1178,7 @@ class PickTools:
         # inside the target box in every grasp pose the IK pre-filter and MTC check (MTC sends the open posture only at
         # execution), so every grasp fails as "in collision"; ~open_gripper_before_pick (default true) opens it first
         if rospy.get_param('~open_gripper_before_pick', True):
-            rospy.loginfo('opening the gripper before planning the pick (nothing is attached)')
-            if not self.open_gripper():
+            if not self.pre_open_gripper():
                 rospy.logwarn('could not open the gripper before planning; the grasps may collide with the object')
 
         # check if user cancelled action
