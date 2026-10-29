@@ -82,7 +82,7 @@ from moveit.task_constructor import core, stages
 from grasplan.tools.octomap_probe import count_in_box, occupied_leaves
 from grasplan.tools.common import robot_prefix
 from grasplan.tools.finger_series import analyse_close
-from grasplan.tools.pad_gap import overclose, pad_gap
+from grasplan.tools.pad_gap import PINCH_GAP_RATIO, PINCH_MAX_TILT_DEG, is_pinch, overclose, pad_gap, pinch_checkable
 from grasplan.tools.touching_boxes import boxes_touch
 from grasplan.tools.moveit_errors import arm_stop_text, moveit_code_text
 
@@ -1447,7 +1447,9 @@ class MtcPickPlace:
                         self.failure_reason = f'the gripper closed on nothing at {attach[0] if attach else "the object"}'
                         return MoveItErrorCodes.FAILURE
                     self.pick_progress['closed'] = True
-                    if regrasp is not None and self.regrasp_after_overclose(regrasp, posture):
+                    if regrasp is not None and regrasp.get('pinch_check') and self.pinched(regrasp):
+                        return MoveItErrorCodes.FAILURE   # failure_reason says why; the caller opens the gripper
+                    if regrasp is not None and regrasp.get('regrasp', True) and self.regrasp_after_overclose(regrasp, posture):
                         if not self.closed_on_object(posture):   # the second close, as the first
                             self.failure_reason = f'the gripper closed on nothing after the re-grasp at {regrasp["object"]}'
                             return MoveItErrorCodes.FAILURE
@@ -1481,7 +1483,9 @@ class MtcPickPlace:
         axis, the width the rule uses, and the deepest the re-grasp may go; below 5 mm = shallow by design)
         '''
         log_only = bool(rospy.get_param('~grasp_regrasp_log_only', False))
-        if not rospy.get_param('~grasp_regrasp_on_overclose', False) and not log_only:
+        regrasp = bool(rospy.get_param('~grasp_regrasp_on_overclose', False)) or log_only
+        pinch_check = bool(rospy.get_param('~grasp_standing_tilt_band', False))
+        if not regrasp and not pinch_check:
             return None
         info = getattr(self, 'regrasp_info', {}).get(grasp.id)
         if not info or not (info.get('width') or info.get('width_open') or info.get('width_box')):
@@ -1494,6 +1498,7 @@ class MtcPickPlace:
                 'source': info.get('source'), 'confidence': info.get('confidence'),
                 'max_depth': info.get('max_depth', 0.0),
                 'reason': info.get('reason', ''), 'open_set': info.get('open_set', True), 'log_only': log_only,
+                'regrasp': regrasp, 'pinch_check': pinch_check,
                 'open_posture': grasp.pre_grasp_posture, 'approach': grasp.pre_grasp_approach}
 
     def start_close_recording(self, request):
@@ -1535,6 +1540,38 @@ class MtcPickPlace:
     def finger_angle(self):
         '''finger joint angle (rad) now, None when no joint state comes'''
         return _current_joint(rospy.get_param('~grasp_regrasp_finger_joint', f'{robot_prefix()}/gripper_finger_joint'))
+
+    def pinched(self, request):
+        '''
+        careful flag ~grasp_standing_tilt_band, after the close held: the pads sit on a rim or a corner when the
+        finger gap is below PINCH_GAP_RATIO (0.7, ~grasp_pinch_gap_ratio) of the object's width across the pads (the box
+        width of the grasp, the reading the re-grasp uses; open-set grasps only: a closed-set close is bounded by its
+        configured width). True sets failure_reason ("pinch (gap X of width Y)"); the failed close opens the gripper
+        like a close on nothing. Every check is one log line. A grasp whose closing axis is tilted more than
+        ~grasp_pinch_max_tilt_deg (25, the band edge) out of the horizontal is not checked (log line): the box length along
+        a tilted axis is no width across the pads (a can at 53 deg read 111 mm for 66 mm and a good grasp failed).
+        '''
+        width = request.get('width_box')
+        if not request.get('open_set', True) or not width:
+            return False
+        tilt, max_tilt = request.get('tilt_deg'), rospy.get_param('~grasp_pinch_max_tilt_deg', PINCH_MAX_TILT_DEG)
+        if not pinch_checkable(tilt, max_tilt):
+            rospy.loginfo(f"mtc: pinch check skipped: {request['object']} grasp {request['grasp_id']} closing axis "
+                          f"tilted {tilt:.0f} deg (limit {max_tilt:.0f}), width_box {width * 1000:.0f} mm is along it")
+            return False
+        theta = self.finger_angle()
+        if theta is None:
+            return False
+        gap = pad_gap(theta)
+        ratio = rospy.get_param('~grasp_pinch_gap_ratio', PINCH_GAP_RATIO)
+        pinch = is_pinch(gap, width, ratio)
+        rospy.loginfo(f"mtc: pinch check: {request['object']} grasp {request['grasp_id']} gap {gap * 1000:.0f} mm "
+                      f"width_box {width * 1000:.0f} mm ratio {gap / width:.2f} (limit {ratio:.2f}) conf "
+                      f"{request.get('confidence')}: {'PINCH' if pinch else 'ok'}")
+        if pinch:
+            self.failure_reason = (f"pinch (gap {gap * 1000:.0f} of width {width * 1000:.0f} mm): the fingertips hold "
+                                   f"{request['object']} at a rim, not across it")
+        return pinch
 
     def regrasp_after_overclose(self, request, close_posture):
         '''

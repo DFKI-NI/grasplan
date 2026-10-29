@@ -1575,7 +1575,8 @@ class PickTools:
         if self.mtc is None:
             return
         self.mtc.regrasp_info = {}
-        if not (rospy.get_param('~grasp_regrasp_on_overclose', False) or rospy.get_param('~grasp_regrasp_log_only', False)):
+        if not (rospy.get_param('~grasp_regrasp_on_overclose', False) or rospy.get_param('~grasp_regrasp_log_only', False)
+                or rospy.get_param('~grasp_standing_tilt_band', False)):
             return
         cap = rospy.get_param('~grasp_regrasp_max_depth', 0.03)
         frame = object_pose.header.frame_id if object_pose is not None else ''

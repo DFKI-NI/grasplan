@@ -121,3 +121,23 @@ def regrasp_max_depth(extent_beyond_tips, cap, table_room=None, backed_off=False
         limits.append((max(table_room, 0.0), 'table'))
     depth, reason = min(limits, key=lambda item: item[0])
     return (depth, reason) if depth >= minimum else (0.0, reason)
+
+
+PINCH_GAP_RATIO = 0.7   # good closes read 0.81-0.96 of the object's width, fingertip pinches on a rim 0.36-0.71
+
+
+PINCH_MAX_TILT_DEG = 25.0   # beyond it the box length along the tilted closing axis is no width across the pads
+
+
+def pinch_checkable(tilt_deg, max_tilt=PINCH_MAX_TILT_DEG):
+    '''True when the pinch verdict is meaningful: the pad closing axis lies at most ``max_tilt`` deg out of the horizontal
+    plane (tilt_deg, None = unknown, checked). On a tilted closing axis the box extent along it (a standing can at 53 deg:
+    111 mm for a 66 mm can) is longer than the object across the pads, so gap / width reads far too low.'''
+    return tilt_deg is None or tilt_deg <= max_tilt
+
+
+def is_pinch(gap, width, ratio=PINCH_GAP_RATIO, closed_gap=0.005):
+    '''True when the pads closed on less than ``ratio`` of the object's width across them (gap and width in m): they sit
+    on a rim or a corner, not across the object. A fully closed gripper (gap < closed_gap, nothing between) is not
+    this case, and without a width there is no verdict.'''
+    return bool(width) and width > 0.0 and gap >= closed_gap and gap < ratio * width
