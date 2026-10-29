@@ -81,6 +81,8 @@ from moveit.task_constructor import core, stages
 
 from grasplan.tools.octomap_probe import count_in_box, occupied_leaves
 from grasplan.tools.common import robot_prefix
+from grasplan.tools.finger_series import analyse_close
+from grasplan.tools.pad_gap import overclose, pad_gap
 from grasplan.tools.touching_boxes import boxes_touch
 from grasplan.tools.moveit_errors import arm_stop_text, moveit_code_text
 
@@ -95,6 +97,12 @@ DEFAULT_CABLE_MAX_STRETCH = -0.115
 # a close width (m) above this is a per-object width short of fully closed, which ~mtc_grasp_check_squeeze may close
 # on to check the grasp (#188); the klt and materialbox widths (0.0005) count as fully closed
 GRASP_CHECK_SQUEEZE_MIN_WIDTH = 0.005
+
+# pinch (m) the fingers may close past the object's width before the re-grasp fires
+# (~grasp_regrasp_overclose, 20 mm: the pads sink 8-12 mm into a flat holding grasp in the sim, and of 16 Pringles picks
+# those closed >= 19 mm past the can's diameter rotated it in the grasp 7 of 8 times; the first sim number, 15 mm, sat
+# below that boundary); the deepest the re-grasp goes is ~grasp_regrasp_max_depth, set per grasp by pick.py.
+REGRASP_THRESHOLD_M = 0.020
 
 # what the executor does with each MTC sub trajectory, in the order the leaf stages were added
 ARM, GRIPPER, ATTACH, DETACH, NOOP = 'arm', 'gripper', 'attach', 'detach', 'noop'
@@ -539,6 +547,28 @@ def _current_joint(joint, timeout=2.0):
     return dict(zip(msg.name, msg.position)).get(joint)
 
 
+class FingerRecorder:
+    '''collects (time, angle, effort) of one finger joint from joint_states until stop() (the closing as a
+    measurement, see tools/finger_series.py)'''
+
+    def __init__(self, joint):
+        from sensor_msgs.msg import JointState
+        self.joint = joint
+        self.samples = []
+        self.subscriber = rospy.Subscriber('joint_states', JointState, self.callback, queue_size=50)
+
+    def callback(self, msg):
+        if self.joint not in msg.name:
+            return
+        i = msg.name.index(self.joint)
+        effort = msg.effort[i] if len(msg.effort) > i else None
+        self.samples.append((msg.header.stamp.to_sec() or rospy.get_time(), msg.position[i], effort))
+
+    def stop(self):
+        self.subscriber.unregister()
+        return self.samples
+
+
 class _SolutionView:
     '''a moveit_msgs/RobotTrajectory list shaped like an MTC solution message for CableGuard.check'''
 
@@ -651,13 +681,16 @@ class MtcPickPlace:
             self.executed = True
             self.executed_grasp = grasp   # for the grasp funnel debug output of pick.py
             code = self.execute(task, roles, [grasp.pre_grasp_posture], grasp.grasp_posture,
-                                attach=(goal.target_name, touch), check_grasp=True)
+                                attach=(goal.target_name, touch), check_grasp=True,
+                                regrasp=self.regrasp_request(goal, grasp))
             if code == MoveItErrorCodes.SUCCESS and not self.gripper_holds_object('after the lift'):
                 self.failure_reason = f'{goal.target_name} was lost during the lift (the gripper is empty)'
                 code = MoveItErrorCodes.FAILURE
             if code != MoveItErrorCodes.SUCCESS and self.failure_reason:
                 rospy.logerr(f'mtc: pick failed: {self.failure_reason}')
                 self.release_empty_grasp(goal.target_name, grasp.pre_grasp_posture)
+            elif code != MoveItErrorCodes.SUCCESS:
+                self.open_after_failed_grasp(goal.target_name, grasp.pre_grasp_posture)
             result.error_code.val = code
             if code == MoveItErrorCodes.SUCCESS:
                 result.grasp = grasp
@@ -872,6 +905,9 @@ class MtcPickPlace:
             grasp_stages.add(block)
             roles.append(NOOP)
         task.add(grasp_stages)
+        # what a re-grasp needs to plan the lift again from the arm's new state
+        self.pick_tail = {'object': obj, 'support': goal.support_surface_name, 'neighbours': neighbours,
+                          'retreat': retreat, 'touch': touch}
         return task, roles
 
     def touching_neighbours(self, object_name, support_name):
@@ -1367,7 +1403,8 @@ class MtcPickPlace:
             visit(stage, stage.name + '/')
         return '; '.join(report)
 
-    def execute(self, task, roles, postures_before, stage_posture, attach=None, detach=None, check_grasp=False):
+    def execute(self, task, roles, postures_before, stage_posture, attach=None, detach=None, check_grasp=False,
+                regrasp=None):
         '''
         run the first solution of task. roles has one entry per leaf stage in the order they were added.
         postures_before are gripper postures (trajectory_msgs/JointTrajectory, opening in metres) sent before
@@ -1389,6 +1426,8 @@ class MtcPickPlace:
             stage_names = [''] * len(postures_before) + self.leaf_stage_names(task)
         except Exception:  # noqa: BLE001 - names only label the failure
             stage_names = []
+        # how far a pick got, for pickup(): closed on the object, attached to the scene, lifted
+        self.pick_progress = {'closed': False, 'attached': False, 'lifted': False}
         announce_trajectory_start('mtc solution')  # the whole solution is one executed trajectory for the cable monitor
         for step, (role, sub) in enumerate(steps):
             if self.is_preempt_requested():
@@ -1399,13 +1438,26 @@ class MtcPickPlace:
                 code = self.execute_arm(sub.trajectory)
             elif role == GRIPPER:
                 posture = postures.pop(0)
+                recorder = self.start_close_recording(regrasp) if check_grasp and not postures else None
                 code = self.command_gripper(posture)
+                if recorder is not None:
+                    self.log_close_series(regrasp, recorder.stop())
                 if code == MoveItErrorCodes.SUCCESS and check_grasp and not postures:  # the closing step
                     if not self.closed_on_object(posture):
                         self.failure_reason = f'the gripper closed on nothing at {attach[0] if attach else "the object"}'
                         return MoveItErrorCodes.FAILURE
+                    self.pick_progress['closed'] = True
+                    if regrasp is not None and self.regrasp_after_overclose(regrasp, posture):
+                        if not self.closed_on_object(posture):   # the second close, as the first
+                            self.failure_reason = f'the gripper closed on nothing after the re-grasp at {regrasp["object"]}'
+                            return MoveItErrorCodes.FAILURE
+                        # the arm moved deeper: the attach and lift of the solution start from the old grasp pose, so the
+                        # controller would refuse them (start deviates, CONTROL_FAILED -4); plan them again from here
+                        return self.execute_tail(attach)
             elif role == ATTACH:
                 code = self.attach(*attach)
+                if code == MoveItErrorCodes.SUCCESS:
+                    self.pick_progress['attached'] = True
             elif role == DETACH:
                 code = self.detach(detach)
             else:
@@ -1417,7 +1469,211 @@ class MtcPickPlace:
                 if self.execution_failure and step < len(stage_names) and stage_names[step]:
                     self.execution_failure += f' (stage {stage_names[step]})'
                 return code
+            if role == ARM and self.pick_progress['attached']:
+                self.pick_progress['lifted'] = True
         return MoveItErrorCodes.SUCCESS
+
+    def regrasp_request(self, goal, grasp):
+        '''
+        what the re-grasp after over-closing needs for this grasp, or None: neither ~grasp_regrasp_on_overclose
+        (the code default is off) nor the diagnostic ~grasp_regrasp_log_only (measure and log, never move) is on, or no
+        width for the grasp (pick.py sets regrasp_info per grasp: the AnyGrasp opening, the box width along the finger
+        axis, the width the rule uses, and the deepest the re-grasp may go; below 5 mm = shallow by design)
+        '''
+        log_only = bool(rospy.get_param('~grasp_regrasp_log_only', False))
+        if not rospy.get_param('~grasp_regrasp_on_overclose', False) and not log_only:
+            return None
+        info = getattr(self, 'regrasp_info', {}).get(grasp.id)
+        if not info or not (info.get('width') or info.get('width_open') or info.get('width_box')):
+            rospy.loginfo(f'mtc: regrasp: {goal.target_name} grasp {grasp.id}: no width, no re-grasp')
+            return None
+        return {'object': goal.target_name, 'grasp_id': grasp.id, 'width': info.get('width'),
+                'width_open': info.get('width_open'), 'width_box': info.get('width_box'),
+                'width_extent': info.get('width_extent'), 'tilt_deg': info.get('tilt_deg'),
+                'disagree': info.get('disagree'),
+                'source': info.get('source'), 'confidence': info.get('confidence'),
+                'max_depth': info.get('max_depth', 0.0),
+                'reason': info.get('reason', ''), 'open_set': info.get('open_set', True), 'log_only': log_only,
+                'open_posture': grasp.pre_grasp_posture, 'approach': grasp.pre_grasp_approach}
+
+    def start_close_recording(self, request):
+        '''the recorder of the closing, only when ~grasp_regrasp_log_only is on (a diagnostic, no motion), else None'''
+        if request is None or not request.get('log_only'):
+            return None
+        try:
+            return FingerRecorder(rospy.get_param('~grasp_regrasp_finger_joint',
+                                                  f'{robot_prefix()}/gripper_finger_joint'))
+        except Exception as error:   # a diagnostic never breaks the pick
+            rospy.logwarn(f'mtc: stall: no finger recording ({error})')
+            return None
+
+    def log_close_series(self, request, samples):
+        '''one line per close (log only): the finger angle where the fingers first stopped (contact), at the end and
+        the creep between, the pad gap at both, the effort, the tilt of the pad closing axis of the grasp (a tilted grasp
+        reads wider than the object by design) and the perceived widths for reference'''
+        mm = lambda value: 'n/a' if value is None else f'{value * 1000:.0f} mm'   # noqa: E731
+        try:
+            result = analyse_close(samples)
+            if result is None:
+                rospy.loginfo(f"mtc: stall: {request['object']} grasp {request['grasp_id']}: {len(samples)} finger "
+                              'samples, no analysis')
+                return
+            creep = pad_gap(result['contact']) - pad_gap(result['final'])
+            effort = 'n/a' if result['effort'] is None else f"{result['effort']:.1f}"
+            peak = 'n/a' if result['peak_effort'] is None else f"{result['peak_effort']:.1f}"
+            tilt = request.get('tilt_deg')
+            rospy.loginfo(
+                f"mtc: stall: {request['object']} grasp {request['grasp_id']} contact_theta {result['contact']:.3f} "
+                f"contact_gap {mm(pad_gap(result['contact']))} final_theta {result['final']:.3f} "
+                f"final_gap {mm(pad_gap(result['final']))} creep {creep * 1000:.1f} mm "
+                f"contact_after {result['contact_time']:.2f} s effort {effort} peak_effort {peak} samples {result['n']} "
+                f"tilt {'n/a' if tilt is None else f'{tilt:.1f}'} deg width_open {mm(request.get('width_open'))} "
+                f"width_box {mm(request.get('width_box'))} extent_y {mm(request.get('width_extent'))}")
+        except Exception as error:   # a diagnostic never breaks the pick
+            rospy.logwarn(f'mtc: stall: could not analyse the close ({error})')
+
+    def finger_angle(self):
+        '''finger joint angle (rad) now, None when no joint state comes'''
+        return _current_joint(rospy.get_param('~grasp_regrasp_finger_joint', f'{robot_prefix()}/gripper_finger_joint'))
+
+    def regrasp_after_overclose(self, request, close_posture):
+        '''
+        careful flag ~grasp_regrasp_on_overclose, after the close held: compare the finger angle with the one
+        flat pads would show on an object of the perceived width (pad gap table of the real robot's URDF). The width is
+        the AnyGrasp opening only when it agrees with the box width along the finger axis (within 10 mm: the opening
+        carries a margin of 10-30 mm over the object, T2 2026-10-01); the agreed width is the smaller one. Closed
+        ~grasp_regrasp_overclose (0.020 m) or more past it: open, move deeper along the grasp axis by
+        min(excess, max depth of this grasp), close again; once per pick, whatever the second excess is. Skipped: fully
+        closed (nothing between the fingers), widths disagree, shallow by design (max depth < 5 mm), closed-set grasps
+        (measured only). ~grasp_regrasp_log_only: every check is logged with both width inputs and nothing moves.
+        Returns True when it fired. Every check is one log line (the tester's counts come from these).
+        '''
+        mm = lambda value: 'n/a' if value is None else f'{value * 1000:.0f} mm'   # noqa: E731
+        what = (f"regrasp: {request['object']} grasp {request['grasp_id']} width_perc {mm(request['width'])} "
+                f"width_open {mm(request['width_open'])} width_box {mm(request['width_box'])} "
+                f"extent_y {mm(request.get('width_extent'))} src {request.get('source')} conf {request.get('confidence')}")
+        theta = self.finger_angle()
+        if theta is None:
+            rospy.logwarn(f'mtc: {what}: no finger angle, no check')
+            return False
+        gap = pad_gap(theta)
+        excesses = ' '.join(f'excess_{name} {(overclose(theta, request[key]) * 1000):+.0f} mm'
+                            for name, key in (('open', 'width_open'), ('box', 'width_box'), ('extent', 'width_extent'))
+                            if request.get(key))
+        measured = f'theta {theta:.3f} gap {gap * 1000:.0f} mm {excesses}'
+        threshold = rospy.get_param('~grasp_regrasp_overclose', REGRASP_THRESHOLD_M)
+        if request['log_only']:
+            rospy.loginfo(f'mtc: {what} {measured}: log only, nothing moves')
+            return False
+        if request.get('confidence') == 'low':
+            rospy.logwarn(f'mtc: {what} {measured}: skipped, shape unknown (confidence low), no re-grasp')
+            return False
+        if request['width'] is None or request['disagree']:
+            rospy.logwarn(f'mtc: {what} {measured}: skipped, widths disagree (open {mm(request["width_open"])}, '
+                          f'box {mm(request["width_box"])}) or no width')
+            return False
+        excess = overclose(theta, request['width'])
+        measured = f'theta {theta:.3f} gap {gap * 1000:.0f} mm excess {excess * 1000:+.0f} mm'
+        if gap < 0.005 or excess < threshold:
+            rospy.loginfo(f'mtc: {what} {measured}: not fired (threshold {threshold * 1000:.0f} mm)')
+            return False
+        if not request['open_set']:
+            rospy.logwarn(f'mtc: {what} {measured}: closed-set grasp, no re-grasp (check the yaml close width)')
+            return False
+        depth = min(excess, request['max_depth'])
+        if request['max_depth'] < 0.005:
+            rospy.logwarn(f"mtc: regrasp: skipped shallow by design: {request['object']} grasp {request['grasp_id']} "
+                          f"{measured}: max depth {request['max_depth'] * 1000:.0f} mm, reason {request['reason']}")
+            return False
+        rospy.logwarn(f"mtc: {what} {measured}: FIRED max_depth {request['max_depth'] * 1000:.0f} mm "
+                      f"({request['reason']}): opening, {depth * 1000:.0f} mm deeper")
+        moved = 0.0
+        if self.command_gripper(request['open_posture']) == MoveItErrorCodes.SUCCESS and self.move_deeper(request, depth):
+            moved = depth
+        else:
+            rospy.logwarn(f'mtc: {what}: the deeper move failed, closing again where it stands')
+        self.command_gripper(close_posture)
+        rospy.sleep(rospy.get_param('~mtc_grasp_check_delay', 1.0))
+        again = self.finger_angle()
+        second = (f'theta2 {again:.3f} gap2 {pad_gap(again) * 1000:.0f} mm excess2 '
+                  f'{overclose(again, request["width"]) * 1000:+.0f} mm') if again is not None else 'no second angle'
+        rospy.logwarn(f'mtc: {what} {measured} moved {moved * 1000:.0f} mm -> {second}')
+        self.regrasp_fired = getattr(self, 'regrasp_fired', 0) + 1
+        return True
+
+    def execute_tail(self, attach):
+        '''
+        after a re-grasp: plan the attach and the lift again from the arm's current state, with the lift of the
+        original pick (same retreat, straight up when neighbours touch), and run them. The arm stands deeper than the
+        grasp pose the original solution was planned from, so its remaining sub trajectories would start off the
+        current state. Returns a MoveItErrorCodes value.
+        '''
+        tail = getattr(self, 'pick_tail', None)
+        if tail is None:
+            self.failure_reason = 'no lift to plan again after the re-grasp'
+            return MoveItErrorCodes.FAILURE
+        obj, neighbours = tail['object'], tail['neighbours']
+        task, roles = self.start_task('lift after regrasp')
+        if self.allow_octomap_contact:
+            before = stages.ModifyPlanningScene('allow octomap contact')
+            before.allowCollisions(OCTOMAP_COLLISION_NAME, tail['touch'], True)
+            task.add(before)
+            roles.append(NOOP)
+        allow = stages.ModifyPlanningScene('allow gripper contacts')
+        allow.allowCollisions(obj, self.gripper_links, True)
+        task.add(allow)
+        roles.append(NOOP)
+        attach_stage = stages.ModifyPlanningScene('attach object')
+        attach_stage.attachObject(obj, self.eef_link)
+        if tail['support']:
+            attach_stage.allowCollisions(obj, [tail['support']], True)
+        if neighbours:
+            attach_stage.allowCollisions(obj, neighbours, True)
+        task.add(attach_stage)
+        roles.append(ATTACH)
+        task.add(self.move_relative('lift', tail['retreat']))
+        roles.append(ARM)
+        if neighbours:
+            block = stages.ModifyPlanningScene('forbid neighbour contacts after lift')
+            block.allowCollisions(obj, neighbours, False)
+            task.add(block)
+            roles.append(NOOP)
+        if not self.plan(task, 'lift after the re-grasp'):
+            self.failure_reason = f'the lift of {obj} could not be planned again after the re-grasp'
+            return MoveItErrorCodes.PLANNING_FAILED
+        for role, sub in zip(roles, self.chosen_solution.toMsg().sub_trajectory):
+            if role == ARM and sub.trajectory.joint_trajectory.points:
+                code = self.execute_arm(sub.trajectory)
+            elif role == ATTACH:
+                code = self.attach(*attach)
+                if code == MoveItErrorCodes.SUCCESS:
+                    self.pick_progress['attached'] = True
+            else:
+                continue
+            if code != MoveItErrorCodes.SUCCESS:
+                return code
+            if role == ARM:
+                self.pick_progress['lifted'] = True
+        return MoveItErrorCodes.SUCCESS
+
+    def move_deeper(self, request, depth):
+        '''plan and run a straight move of the open gripper along the grasp approach by depth (m); False if it cannot'''
+        task, roles = self.start_task('regrasp deeper')
+        allow = stages.ModifyPlanningScene('allow gripper contacts')
+        allow.allowCollisions(request['object'], self.gripper_links, True)
+        task.add(allow)
+        roles.append(NOOP)
+        deeper = copy.deepcopy(request['approach'])
+        deeper.min_distance = 0.5 * depth
+        deeper.desired_distance = depth
+        task.add(self.move_relative('deeper', deeper))
+        roles.append(ARM)
+        if not self.plan(task, f'regrasp deeper by {depth * 1000:.0f} mm'):
+            return False
+        for role, sub in zip(roles, self.chosen_solution.toMsg().sub_trajectory):
+            if role == ARM and sub.trajectory.joint_trajectory.points:
+                return self.execute_arm(sub.trajectory) == MoveItErrorCodes.SUCCESS
+        return False
 
     def make_gripper_fact(self):
         '''
@@ -1486,6 +1742,24 @@ class MtcPickPlace:
         if self.command_gripper(squeeze) != MoveItErrorCodes.SUCCESS:
             return False
         return self.gripper_holds_object('after closing fully')
+
+    def open_after_failed_grasp(self, object_name, open_posture):
+        '''
+        a pick that failed AFTER the gripper closed on the object and BEFORE the arm lifted it (e.g. the lift was refused,
+        MoveIt error -4): the object still stands on its support, so open the gripper here, over the table, before the
+        caller retracts the arm. Retracting with the closed gripper carried the object away and dropped it wherever the
+        gripper opened next (a sim test: the can ended on the robot's deck). The object stays in the scene (detached if it
+        was attached); it is not removed as for a grasp on nothing.
+        '''
+        progress = getattr(self, 'pick_progress', None) or {}
+        if not progress.get('closed') or progress.get('lifted'):
+            return
+        rospy.logwarn(f'mtc: pick of {object_name} failed after the close and before the lift: opening the gripper '
+                      'where the object stands, before the arm retracts')
+        if progress.get('attached'):
+            self.detach(object_name)
+        if open_posture is not None:
+            self.command_gripper(open_posture)
 
     def release_empty_grasp(self, object_name, open_posture):
         '''after a failed grasp: the object is not in the hand, so drop it from the scene and open the gripper'''

@@ -32,6 +32,7 @@ import math
 import time
 import traceback
 
+import numpy as np
 import rospy
 import actionlib
 import moveit_commander
@@ -68,7 +69,18 @@ from grasplan.srv import ViewObject
 from grasplan.tools.common import objectToPick, connect_move_groups, roscpp_initialize_named, robot_prefix
 from grasplan.tools.action_client_helper import ActionClientHelper
 from grasplan.tools.gripper_envelope import fingertip_envelope, lowest_point_offset
-from grasplan.tools.pad_gap import pad_gap, reads_open
+from grasplan.tools.finger_series import closing_axis_tilt_deg
+from grasplan.tools.pad_footprint import width_across_pads
+from grasplan.tools.pad_gap import (
+    box_extent_along,
+    box_max_x_in_tcp,
+    pad_gap,
+    pad_tip_x,
+    perceived_width,
+    reads_open,
+    regrasp_max_depth,
+    theta_for_gap,
+)
 from grasplan.tools.topdown_grasps import (
     box_overlap_fraction,
     clamp_box_to_support,
@@ -1153,6 +1165,7 @@ class PickTools:
             # the IK pin is for this pick's ranked open-set grasps (set by reachable_external_grasps): none left from an
             # earlier pick, whose grasp ids may repeat
             self.mtc.grasp_ik_states = {}
+            self.mtc.regrasp_info = {}   # set per pick by note_regrasp_info
         self.cable_gate_passing = 0
         self.open_set_pick = external_grasp_candidates is not None   # the cable replay detour is for closed-set picks
         self.detoured = ''   # the pose the cable replay detour moved the arm to in this pick
@@ -1204,6 +1217,7 @@ class PickTools:
                 self.robot.arm.get_end_effector_link(),
                 grasp_type,
             )
+            self.note_regrasp_info(grasps, [None] * len(grasps), object_pose, bounding_box, support_surface_name, False)
         else:
             grasps = []
             self.grasp_funnel_start(object_to_pick.get_object_class_and_id_as_string(), object_pose)
@@ -1220,6 +1234,7 @@ class PickTools:
                 self.grasp_funnel('low_object_kept', grasps)
                 grasps, widths = self.standing_tilt_band_grasps(grasps, widths, object_pose, bounding_box)
                 grasps, widths = self.align_jaws_to_box(grasps, widths, object_pose, bounding_box)
+                self.note_regrasp_info(grasps, widths, object_pose, bounding_box, support_surface_name, True)
                 grasps = self.raise_low_grasps(grasps, support_surface_name, widths, sink=low)
                 self.grasp_funnel('clearance_kept', grasps)
                 candidates = grasps
@@ -1546,6 +1561,87 @@ class PickTools:
                           f'that fits, offered before the others: {", ".join(aligned[i].id for i in range(sum(narrow)))}')
         self.grasp_funnel('jaw_aligned', aligned)
         return aligned, aligned_widths
+    def note_regrasp_info(self, grasps, widths, object_pose, bounding_box, support_surface_name, open_set):
+        '''
+        flag ~grasp_regrasp_on_overclose: per grasp, tell the MTC executor the PERCEIVED width (m: AnyGrasp's jaw
+        opening plus ~anygrasp_gripper_width_offset when ~anygrasp_use_gripper_width is on, or for the hand-made
+        closed-set grasps the object box along the finger axis, never Gazebo's truth) and how deep a re-grasp after
+        over-closing may go: the least of ~grasp_regrasp_max_depth (0.03), what the perceived box extends beyond the pad
+        tips along the approach, and the room before the fingertips reach ~open_set_min_fingertip_height above the
+        support. Below 5 mm (nothing beyond the tips: the banana end; the table; a low object) the grasp is shallow by
+        design and the re-grasp skips it, with the reason in the log. raise_low_grasps marks the backed-off ones.
+        closed-set grasps are only measured (the close is bounded by the configured width): no re-grasp, a log line.
+        '''
+        if self.mtc is None:
+            return
+        self.mtc.regrasp_info = {}
+        if not (rospy.get_param('~grasp_regrasp_on_overclose', False) or rospy.get_param('~grasp_regrasp_log_only', False)):
+            return
+        cap = rospy.get_param('~grasp_regrasp_max_depth', 0.03)
+        frame = object_pose.header.frame_id if object_pose is not None else ''
+        top = self.support_top_z(support_surface_name, frame) if support_surface_name else None
+        min_fingertip = max(rospy.get_param('~open_set_min_fingertip_height', 0.0), 0.0)
+        envelope = self.fingertip_envelope() if top is not None else None
+        use_gripper_width = getattr(self.grasp_planner, 'anygrasp_use_gripper_width', False)
+        offset = float(getattr(self.grasp_planner, 'anygrasp_gripper_width_offset', 0.0)) if use_gripper_width else 0.0
+        for grasp, width in zip(grasps, widths):
+            pose = grasp.grasp_pose.pose
+            q = [pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w]
+            tcp = tf.transformations.quaternion_matrix(q)
+            tcp[:3, 3] = [pose.position.x, pose.position.y, pose.position.z]
+            opening = (width + offset) if (open_set and width) else None
+            same_frame = grasp.grasp_pose.header.frame_id == frame
+            box_width, source, confidence = None, 'opening' if opening else None, 'low'
+            if bounding_box and object_pose is not None and same_frame:
+                o = object_pose.pose.orientation
+                box = tf.transformations.quaternion_matrix([o.x, o.y, o.z, o.w])
+                box[:3, 3] = [object_pose.pose.position.x, object_pose.pose.position.y, object_pose.pose.position.z]
+                if open_set:   # closed-set grasps keep the box extent along the finger axis, measured only
+                    box_width, source, confidence = width_across_pads(
+                        bounding_box, np.linalg.inv(tcp).dot(box), opening)
+                else:
+                    box_width, source, confidence = self.box_width_for_grasp(grasp, object_pose, bounding_box), 'box', 'medium'
+            # the AnyGrasp opening carries a margin over the object (T2: 10-30 mm), so it is only an upper bound; the
+            # width is the footprint extent of the perceived box across the pads (no per-object knowledge of
+            # open-set objects: a box with two equal sides is confidence low)
+            perceived, disagree = perceived_width(opening, box_width)
+            extent = self.box_width_for_grasp(grasp, object_pose, bounding_box) if same_frame else None
+            info = {'width': perceived, 'width_open': opening, 'width_box': box_width, 'width_extent': extent,
+                    'tilt_deg': closing_axis_tilt_deg(tcp[:3, :3]) if same_frame else None, 'disagree': disagree,
+                    'source': source, 'confidence': confidence,
+                    'open_set': open_set, 'max_depth': 0.0, 'reason': 'no box'}
+            if perceived and bounding_box and object_pose is not None and grasp.grasp_pose.header.frame_id == frame:
+                o = object_pose.pose.orientation
+                box = tf.transformations.quaternion_matrix([o.x, o.y, o.z, o.w])
+                box[:3, 3] = [object_pose.pose.position.x, object_pose.pose.position.y, object_pose.pose.position.z]
+                beyond = box_max_x_in_tcp(bounding_box, np.linalg.inv(tcp).dot(box).tolist()) - pad_tip_x(
+                    theta_for_gap(perceived))
+                room = None
+                if top is not None and envelope:
+                    approach = tcp[:3, 0]
+                    if approach[2] < -1e-3:
+                        lowest = pose.position.z + lowest_point_offset(envelope, q, perceived)
+                        room = (lowest - top - min_fingertip) / -approach[2]
+                info['max_depth'], info['reason'] = regrasp_max_depth(beyond, cap, room)
+            self.mtc.regrasp_info[grasp.id] = info
+
+    def support_top_z(self, support_surface_name, frame):
+        '''z of the top of the support surface's boxes in frame, None if unknown'''
+        support = self.scene.get_objects([support_surface_name]).get(support_surface_name)
+        if support is None or not support.primitives or support.header.frame_id != frame:
+            return None
+        return max(support.pose.position.z + pose.position.z + primitive.dimensions[2] / 2.0
+                   for primitive, pose in zip(support.primitives, support.primitive_poses))
+
+    @staticmethod
+    def box_width_for_grasp(grasp, object_pose, bounding_box):
+        '''the object box's extent along the grasp's finger axis (TCP y), None without a box or pose (closed-set grasps)'''
+        if not bounding_box or object_pose is None:
+            return None
+        o, g = object_pose.pose.orientation, grasp.grasp_pose.pose.orientation
+        r_obj = tf.transformations.quaternion_matrix([o.x, o.y, o.z, o.w])[:3, :3]
+        y_tcp = tf.transformations.quaternion_matrix([g.x, g.y, g.z, g.w])[:3, 1]
+        return box_extent_along(bounding_box, r_obj, y_tcp)
 
     def raise_low_grasps(self, grasps, support_surface_name, widths=None, sink=False):
         '''
@@ -1615,6 +1711,10 @@ class PickTools:
             pose.position.y -= shift * approach[1]
             pose.position.z -= shift * approach[2]
             raised.append(f'{grasp.id} +{missing * 100:.1f} cm')
+            mtc = getattr(self, 'mtc', None)
+            info = getattr(mtc, 'regrasp_info', {}).get(grasp.id) if mtc is not None else None
+            if info is not None:   # backed off from the table on purpose, the re-grasp must not push it deeper
+                info['max_depth'], info['reason'] = 0.0, 'backoff'
             kept.append(grasp)
         if raised:
             rospy.loginfo(f'raised {len(raised)} of {len(grasps)} grasps (tcp {min_height * 100:.1f} cm, fingertips '
