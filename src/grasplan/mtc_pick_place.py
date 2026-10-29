@@ -93,6 +93,11 @@ OCTOMAP_COLLISION_NAME = '<octomap>'
 # guarded plans that caught or nearly caught the tube had a wrist stretch of -0.108 / -0.103, all clean ones
 # -0.126..-0.217 (#121), so the model's 0.0 (tube just taut) let tangling plans through. Revisit after the refit.
 DEFAULT_CABLE_MAX_STRETCH = -0.115
+# the margin with the support anchor (the sim's wrist anchor), behind the careful flag ~mtc_cable_support_margin. On
+# the 629 real motions of 2026-09-27/28 the support anchor's geometric stretch of the five real cable stops lies at
+# -6.4..-3.7 % (the closest 0.6 points above): -0.115 rejected 65 % of the safe motions, -0.07 rejects 9 % and still
+# catches all five
+SUPPORT_CABLE_MAX_STRETCH = -0.07
 
 # a close width (m) above this is a per-object width short of fully closed, which ~mtc_grasp_check_squeeze may close
 # on to check the grasp (#188); the klt and materialbox widths (0.0005) count as fully closed
@@ -257,6 +262,9 @@ class CableGuard:
         self.chain_check = bool(rospy.get_param('~mtc_cable_rope_check', True))
         self.chain_rate = float(rospy.get_param('~mtc_cable_rope_rate', 10.0))
         self.max_stretch = rospy.get_param('~mtc_cable_max_stretch', DEFAULT_CABLE_MAX_STRETCH)
+        if getattr(self.cfg, 'wrist_anchor', None) == 'support' and rospy.get_param('~mtc_cable_support_margin', False):
+            # careful flag, off in code; only with the support anchor (the tip anchor keeps its own margin)
+            self.max_stretch = rospy.get_param('~mtc_cable_support_max_stretch', SUPPORT_CABLE_MAX_STRETCH)
         self.half_window = math.radians(rospy.get_param('~mtc_cable_wrist_3_half_window_deg', 170.0))
         self.max_points = int(rospy.get_param('~mtc_cable_points_per_trajectory', 40))
         # safe flag, off in code: the chain replay goes on from the monitor's live chain instead of a fresh one
