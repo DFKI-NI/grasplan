@@ -84,6 +84,8 @@ from grasplan.tools.octomap_probe import count_in_box, occupied_leaves
 from grasplan.tools.common import robot_prefix
 from grasplan.tools.finger_series import analyse_close
 from grasplan.tools.pad_gap import PINCH_GAP_RATIO, PINCH_MAX_TILT_DEG, is_pinch, overclose, pad_gap, pinch_checkable
+from grasplan import cable_shaping
+from grasplan.tools import cable_path as cp
 from grasplan.tools.touching_boxes import boxes_touch
 from grasplan.tools.stage_timing import timed
 from grasplan.tools.moveit_errors import arm_stop_text, moveit_code_text
@@ -595,6 +597,16 @@ class FingerRecorder:
         return self.samples
 
 
+def _current_arm_q(timeout=2.0):
+    '''the arm joints (name -> rad) of one fresh joint_states message of this node's namespace, None if none came'''
+    from sensor_msgs.msg import JointState
+    try:
+        msg = rospy.wait_for_message('joint_states', JointState, timeout=timeout)
+    except rospy.ROSException:
+        return None
+    return {n: p for n, p in zip(msg.name, msg.position) if 'ur5_' in n}
+
+
 class _SolutionView:
     '''a moveit_msgs/RobotTrajectory list shaped like an MTC solution message for CableGuard.check'''
 
@@ -635,6 +647,9 @@ class MtcPickPlace:
         self.relaxed_retreat_min_distance = rospy.get_param('~mtc_relaxed_retreat_min_distance', 0.05)
         self.retreat_failed = False
         self.cable_guard = None  # CableGuard, built on the first goal with ~mtc_cable_plan_check true
+        self.cable_shaper = None  # cable_shaping.CablePathShaper of that guard, with ~mtc_cable_path_shaping
+        self.shaped_path = None   # the ShapedPath of the task being built, None when unshaped
+        self.no_shaping = False   # set while a grasp is replanned unshaped after its shaped plan failed
         # solutions the cable guard rejected since the caller last set it to 0 (place/insert goal: #198 (e) takes the
         # untangle detour only after such a rejection)
         self.cable_rejections = 0
@@ -698,7 +713,21 @@ class MtcPickPlace:
                 rospy.logwarn(f'mtc: grasp {grasp.id} skipped: {e}')
                 self.unplanned.append(f'could not be set up ({e})')
                 continue
-            if not self.plan(task, f'grasp {grasp.id} ({index + 1}/{len(goal.possible_grasps)})'):
+            what = f'grasp {grasp.id} ({index + 1}/{len(goal.possible_grasps)})'
+            planned = self.plan(task, what)
+            if not planned and getattr(self, 'shaped_path', None) is not None:
+                # the shaped plan failed (a waypoint or the interpolated last segment collides): the old way
+                rospy.loginfo(f'mtc: {what}: the cable-shaped plan failed, replanning it unshaped')
+                self.no_shaping = True
+                try:
+                    task, roles = self.make_pick_task(goal, grasp)
+                    planned = self.plan(task, what + ' unshaped')
+                finally:
+                    self.no_shaping = False
+            if not planned:
+                self.log_failed_branch(grasp)
+                task, roles, planned = self.next_branch_plan(goal, grasp, what)
+            if not planned:
                 grasp, task, roles = self.turned_grasp_plan(goal, grasp)
                 if grasp is None:
                     self.unplanned.append(getattr(self, 'last_plan_failure', '') or 'not planned')
@@ -888,14 +917,16 @@ class MtcPickPlace:
         task.add(before)
         roles.append(NOOP)
 
-        task.add(self.connect('move to pregrasp'))
+        self.ensure_shaping_ik(grasp)
+        ik_state = getattr(self, 'grasp_ik_states', {}).get(grasp.id)
+        shaped = self.shape_to(task, roles, ik_state, f'grasp {grasp.id}')
+        task.add(self.connect('move to pregrasp', shaped) if shaped is not None else self.connect('move to pregrasp'))
         roles.append(ARM)
 
         grasp_stages = core.SerialContainer('grasp')
         grasp_stages.add(self.move_relative('approach', grasp.pre_grasp_approach))
         roles.append(ARM)
         ik = self.compute_ik('grasp pose', self.to_planning_frame(grasp.grasp_pose), task['allow octomap contact'])
-        ik_state = getattr(self, 'grasp_ik_states', {}).get(grasp.id)
         if ik_state is not None and speed_changes_on() and rospy.get_param('~mtc_pin_grasp_ik', True):
             # the IK solution pick.py's cable ranking judged (#151): MTC's own IK branch differed and failed the guard
             reference = {n: p for n, p in zip(ik_state.name, ik_state.position) if 'ur5_' in n}
@@ -1051,12 +1082,74 @@ class MtcPickPlace:
         task.add(stages.CurrentState('current state'))
         return task, [NOOP]
 
-    def connect(self, name):
+    def connect(self, name, shaped=None):
+        '''
+        the free-space Connect; shaped (a cable_shaping.ShapedPath to this Connect's goal): when its checked path
+        is slack, the Connect only interpolates joints (the executed path is the checked one, ~mtc_cable_path_interpolate
+        _last), else the planner gets the model's wrist corridor instead of the wide wrist_3 window
+        (~mtc_cable_corridor)
+        '''
+        margin = self.cable_guard.max_stretch if getattr(self, 'cable_guard', None) is not None else None
+        if shaped is not None and margin is not None and shaped.slack(margin) and rospy.get_param(
+                '~mtc_cable_path_interpolate_last', True):
+            connect = stages.Connect(name, [(self.arm_group, core.JointInterpolationPlanner())])
+            connect.timeout = self.connect_timeout
+            rospy.loginfo(f'mtc: {name}: joint interpolation along the cable-checked path')
+            return connect
         connect = stages.Connect(name, [(self.arm_group, self.pipeline)])
         connect.timeout = self.connect_timeout
         if self.cable_guard is not None:
-            connect.properties['path_constraints'] = self.cable_guard.path_constraints()
+            if shaped is not None and shaped.last_box and cable_shaping.sub_flag('~mtc_cable_corridor'):
+                connect.properties['path_constraints'] = self.cable_shaper.corridor_constraints(
+                    shaped.last_box, self.joint_prefix())
+                rospy.loginfo(f'mtc: {name}: planner in the cable corridor '
+                              + ', '.join(f'{j} {math.degrees(lo):.0f}..{math.degrees(hi):.0f}'
+                                          for j, (lo, hi) in sorted(shaped.last_box.items())))
+            else:
+                connect.properties['path_constraints'] = self.cable_guard.path_constraints()
         return connect
+
+    def joint_prefix(self):
+        return self.cable_guard.wrist_3_joint[: -len('ur5_wrist_3_joint')] if self.cable_guard is not None else ''
+
+    @timed('cable_shape')
+    def shape_to(self, task, roles, goal_state, what):
+        '''
+        (~mtc_cable_path_shaping, careful, off in code): the cable model's path from the current arm state to
+        goal_state (sensor_msgs/JointState, e.g. the pinned grasp IK); adds one joint-interpolated MoveTo stage per
+        model waypoint (~mtc_cable_path_waypoints) to task and returns the ShapedPath for the Connect, None when
+        unshaped (flag off, no grid yet, no path, no goal state)
+        '''
+        self.shaped_path = None
+        if (goal_state is None or getattr(self, 'no_shaping', False) or getattr(self, 'cable_guard', None) is None
+                or getattr(self, 'cable_shaper', None) is None or not cable_shaping.shaping_on()):
+            return None
+        start = _current_arm_q()
+        goal = {n: p for n, p in zip(goal_state.name, goal_state.position) if 'ur5_' in n}
+        margin = self.cable_guard.max_stretch
+        try:
+            shaped = self.cable_shaper.plan(start or {}, goal, margin)
+        except Exception as e:  # noqa: BLE001 - shaping must never break a pick: plan unshaped
+            rospy.logwarn(f'mtc: cable path to {what} failed ({e}), planning unshaped')
+            return None
+        if shaped is None:
+            rospy.loginfo(f'mtc: cable path to {what}: none (grid not ready or no slack path), planning unshaped')
+            return None
+        if not cable_shaping.sub_flag('~mtc_cable_path_waypoints') and shaped.waypoints:
+            rospy.loginfo(f'mtc: cable path to {what}: {len(shaped.waypoints)} waypoint(s) found but '
+                          f'~mtc_cable_path_waypoints is off')
+            shaped.waypoints, shaped.worst = [], self.cable_shaper.evaluate_max_line(start, goal)
+        rospy.loginfo(f'mtc: cable path to {what}: {shaped.summary(margin)}; start {cable_shaping.degrees(start)} '
+                      f'goal {cable_shaping.degrees(goal)}'
+                      + ''.join(f'; waypoint {i + 1} {cable_shaping.degrees(w)}' for i, w in enumerate(shaped.waypoints)))
+        for i, waypoint in enumerate(shaped.waypoints):
+            move = stages.MoveTo(f'cable waypoint {i + 1}', core.JointInterpolationPlanner())
+            move.group = self.arm_group
+            move.setGoal(cable_shaping.full_names(waypoint, self.joint_prefix()))
+            task.add(move)
+            roles.append(ARM)
+        self.shaped_path = shaped
+        return shaped
 
     def move_relative(self, name, gripper_translation):
         '''MoveRelative along a moveit_msgs/GripperTranslation (direction, min and desired distance)'''
@@ -1239,6 +1332,152 @@ class MtcPickPlace:
             self.cable_guard = self._cable_guard_cache
         self.cable_guard.update_params()
         self.cable_solutions = max(1, int(rospy.get_param('~mtc_cable_solutions', 4)))
+        if cable_shaping.shaping_on():
+            if getattr(self, 'cable_shaper', None) is None or self.cable_shaper.guard is not self.cable_guard:
+                try:
+                    self.cable_shaper = cable_shaping.CablePathShaper(self.cable_guard)
+                except Exception as e:  # noqa: BLE001 - shaping is optional, the guard goes on alone
+                    rospy.logerr(f'mtc: cable path shaping requested but not available: {e}')
+                    self.cable_shaper = None
+            if self.cable_shaper is not None:
+                self.cable_shaper.ready()   # loads the grid or starts its build in the background
+
+    @timed('cable_branch')
+    def least_stretch_branch(self, ik, request, solution, start, grasp_id):
+        '''
+        (~mtc_cable_path_branches under ~mtc_cable_path_shaping, careful, off in code): the IK branch of this grasp
+        pose with the most cable slack. The other UR branches are found by seeding compute_ik near each of them
+        (cp.ur_branch_seeds; the polished IK plugin returns the branch nearest its seed), deduplicated and
+        ranked by the cable grid (goal slack first, then the slack path's worst stretch from start). Returns solution
+        unchanged when off, without a grid or when no other branch is better.
+        '''
+        if not cable_shaping.sub_flag('~mtc_cable_path_branches'):
+            return solution
+        self.update_cable_guard()
+        shaper, guard = getattr(self, 'cable_shaper', None), getattr(self, 'cable_guard', None)
+        grid = shaper.ready() if shaper is not None else None
+        if grid is None or guard is None:
+            return solution
+        try:
+            started = time.time()
+            arm = [n for n in solution.name if 'ur5_' in n]
+            short = {cp.short_name(n): n for n in arm}
+            first = {cp.short_name(n): p for n, p in zip(solution.name, solution.position) if n in arm}
+            branches = [first]
+            for seed in cp.ur_branch_seeds(first, shaper.limits)[1:]:
+                req = copy.deepcopy(request)
+                names, positions = list(req.ik_request.robot_state.joint_state.name), \
+                    list(req.ik_request.robot_state.joint_state.position)
+                for j, v in seed.items():
+                    if short.get(j) in names:
+                        positions[names.index(short[j])] = v
+                req.ik_request.robot_state.joint_state.position = positions
+                response = ik(req)
+                if response.error_code.val == MoveItErrorCodes.SUCCESS:
+                    js = response.solution.joint_state
+                    branches.append({cp.short_name(n): p for n, p in zip(js.name, js.position) if n in arm})
+            branches = cp.dedupe_branches(branches)
+            start_q = {cp.short_name(n): p for n, p in zip(start.name, start.position) if n in arm}
+            ranked = cp.rank_branches(grid, start_q, branches, guard.max_stretch)
+            best = ranked[0][0]
+            # the next ranked branches, for MTC to fall through to when the chosen one cannot be planned
+            branch_states = []
+            for row in ranked:
+                state = copy.deepcopy(solution)
+                state.position = [row[0][cp.short_name(n)] if n in arm else p
+                                  for n, p in zip(solution.name, solution.position)]
+                branch_states.append(state)
+            self.grasp_ik_branches = dict(getattr(self, 'grasp_ik_branches', None) or {})
+            self.grasp_ik_branches[grasp_id] = branch_states
+            rospy.loginfo(f'cable branches of grasp {grasp_id}: {len(branches)} found in {time.time() - started:.2f} s; '
+                          + '; '.join(f'{"chosen " if r[0] is best else ""}goal {r[1]:+.3f} path {r[2]:+.3f}'
+                                      f'{"" if r[3] is None else f" ({len(r[3])} wp)"}' for r in ranked))
+            return solution if best is first else branch_states[0]
+        except Exception as e:  # noqa: BLE001 - the branch choice is optional: keep compute_ik's branch
+            rospy.logwarn(f'cable branches of grasp {grasp_id}: {e}; keeping the first IK branch')
+            return solution
+
+    def ensure_shaping_ik(self, grasp):
+        '''
+        a grasp without a pinned IK state (closed-set picks: the pre-filter runs for open-set grasps only) gets one
+        when the branch choice is on: compute_ik of its grasp pose seeded with the current state, then the branch with
+        the most cable slack; it is pinned like the pre-filter's (grasp_ik_states), so MTC plans to it
+        '''
+        states = getattr(self, 'grasp_ik_states', None)
+        if states is None:
+            states = self.grasp_ik_states = {}
+        if grasp.id in states or not cable_shaping.sub_flag('~mtc_cable_path_branches'):
+            return
+        from moveit_msgs.srv import GetPositionIK, GetPositionIKRequest
+        from sensor_msgs.msg import JointState
+        try:
+            current = rospy.wait_for_message('joint_states', JointState, timeout=2.0)
+            ik = rospy.ServiceProxy('compute_ik', GetPositionIK)
+            ik.wait_for_service(2.0)
+            request = GetPositionIKRequest()
+            request.ik_request.group_name = self.arm_group
+            request.ik_request.robot_state.joint_state = current
+            request.ik_request.avoid_collisions = False   # the fingers touch the object at the grasp pose
+            request.ik_request.ik_link_name = self.eef_link
+            request.ik_request.pose_stamped = grasp.grasp_pose
+            request.ik_request.timeout = rospy.Duration(float(rospy.get_param('~external_grasp_ik_timeout', 0.05)))
+            response = ik(request)
+            if response.error_code.val != MoveItErrorCodes.SUCCESS:
+                rospy.loginfo(f'mtc: cable branches of grasp {grasp.id}: no IK ({response.error_code.val}), MTC IK as before')
+                return
+            states[grasp.id] = self.least_stretch_branch(ik, request, response.solution.joint_state, current, grasp.id)
+        except (rospy.ROSException, rospy.ServiceException) as e:
+            rospy.logwarn(f'mtc: cable branches of grasp {grasp.id}: compute_ik unavailable ({e}), MTC IK as before')
+
+    def next_branch_plan(self, goal, grasp, what):
+        '''
+        when the pinned IK branch of grasp could not be planned, the next branches pick.py ranked by cable slack
+        (grasp_ik_branches, ~mtc_cable_path_branches), each pinned and planned in turn (shaped, else unshaped);
+        (task, roles, planned)
+        '''
+        branches = list(getattr(self, 'grasp_ik_branches', {}).get(grasp.id, ()))[1:]
+        states = getattr(self, 'grasp_ik_states', {})
+        pinned = states.get(grasp.id)
+        try:
+            for k, state in enumerate(branches, start=2):
+                rospy.loginfo(f'mtc: {what}: trying the next IK branch by cable slack ({k}/{len(branches) + 1})')
+                states[grasp.id] = state
+                task, roles = self.make_pick_task(goal, grasp)
+                if self.plan(task, f'{what} branch {k}'):
+                    pinned = state   # keep the branch that planned
+                    return task, roles, True
+                if getattr(self, 'shaped_path', None) is not None:
+                    self.no_shaping = True
+                    try:
+                        task, roles = self.make_pick_task(goal, grasp)
+                        if self.plan(task, f'{what} branch {k} unshaped'):
+                            pinned = state
+                            return task, roles, True
+                    finally:
+                        self.no_shaping = False
+            return None, None, False
+        finally:
+            if pinned is not None:
+                states[grasp.id] = pinned
+
+    def log_failed_branch(self, grasp):
+        '''on a failed grasp, the start and the pinned target branch, so a log tells reachability
+        from cable trouble (the failing stages and guard verdicts are logged by plan())'''
+        ik_state = getattr(self, 'grasp_ik_states', {}).get(grasp.id)
+        start = _current_arm_q(timeout=0.5)
+        target = {n: p for n, p in zip(ik_state.name, ik_state.position) if 'ur5_' in n} if ik_state else None
+        rospy.loginfo(f'mtc: grasp {grasp.id} not planned: start {cable_shaping.degrees(start or {})}, '
+                      f'pinned target {cable_shaping.degrees(target) if target else "none (MTC IK)"}')
+
+    @staticmethod
+    def motion_seconds(solution):
+        '''summed duration of the arm sub trajectories of an MTC solution (s)'''
+        total = 0.0
+        for sub in solution.toMsg().sub_trajectory:
+            points = sub.trajectory.joint_trajectory.points
+            if points:
+                total += points[-1].time_from_start.to_sec()
+        return total
 
     @timed('plan')
     def plan(self, task, what):
@@ -1294,7 +1533,11 @@ class MtcPickPlace:
             self.guard_rejected_q = None
             rospy.loginfo(f'mtc: {what} cable check passed ({checks[-1]})')
         elapsed = time.monotonic() - start
-        rospy.loginfo(f'mtc: {what} planned in {elapsed:.1f} s (cost {self.chosen_solution.cost:.2f})')
+        try:
+            motion = f', motion {self.motion_seconds(self.chosen_solution):.1f} s'
+        except Exception:  # noqa: BLE001 - log only
+            motion = ''
+        rospy.loginfo(f'mtc: {what} planned in {elapsed:.1f} s (cost {self.chosen_solution.cost:.2f}{motion})')
         task.publish(self.chosen_solution)
         return True
 

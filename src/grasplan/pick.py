@@ -90,6 +90,8 @@ from grasplan.tools.topdown_grasps import (
     topdown_grasps,
 )
 from grasplan.tools.cable_rank import gate_chunks, joint_path, order_by_predicted_stretch
+from grasplan import cable_shaping
+from grasplan.tools import cable_path
 from grasplan.grasp_scoring import (
     CYLINDER_MIN_ELONGATION,
     LOW_OBJECT_MAX_HEIGHT,
@@ -1175,6 +1177,7 @@ class PickTools:
             # earlier pick, whose grasp ids may repeat
             self.mtc.grasp_ik_states = {}
             self.mtc.regrasp_info = {}   # set per pick by note_regrasp_info
+            self.mtc.grasp_ik_branches = {}   # the cable-ranked IK branches per grasp
         self.cable_gate_passing = 0
         self.open_set_pick = external_grasp_candidates is not None   # the cable replay detour is for closed-set picks
         self.detoured = ''   # the pose the cable replay detour moved the arm to in this pick
@@ -2019,6 +2022,7 @@ class PickTools:
         self.ik_prefilter = None   # (reachable, solutions, colliding), re-ranked by a retry without a new IK
         if self.mtc is not None:
             self.mtc.grasp_ik_states = {}
+            self.mtc.grasp_ik_branches = {}   # the cable-ranked IK branches per grasp
         if self.external_grasp_ik_prefilter and grasps:
             ik = rospy.ServiceProxy('compute_ik', GetPositionIK, persistent=True)
             try:
@@ -2050,7 +2054,8 @@ class PickTools:
                         colliding.append(grasp)
                     else:
                         reachable.append(grasp)
-                        solutions.append(response.solution.joint_state)
+                        solutions.append(self.least_stretch_branch(ik, request, response.solution.joint_state,
+                                                                   state.joint_state, grasp.id))
                 rospy.loginfo(f'IK pre-filter ({ik_timeout * 1000:.0f} ms per call): '
                               f'{len(reachable) + len(colliding)} of {offered} grasps reachable'
                               + (f', {len(colliding)} of them only with a colliding IK solution' if strict else '')
@@ -2126,6 +2131,12 @@ class PickTools:
             gap = '?'
         return f'tilt {tilt} gap {gap}'
 
+    def least_stretch_branch(self, ik, request, solution, start, grasp_id):
+        '''the IK branch of this grasp with the most cable slack (MtcPickPlace.least_stretch_branch)'''
+        if self.mtc is None:
+            return solution
+        return self.mtc.least_stretch_branch(ik, request, solution, start, grasp_id)
+
     @timed('cable_rank')
     def rank_by_predicted_cable_stretch(self, grasps, joint_states, start=None):
         '''
@@ -2144,9 +2155,18 @@ class PickTools:
             return grasps
         stretches = []
         start_q = dict(zip(start.name, start.position)) if start is not None else None
+        shaper = self.mtc.cable_shaper if cable_shaping.shaping_on() else None
+        grid = shaper.ready() if shaper is not None else None
         for joint_state in joint_states:
             goal_q = dict(zip(joint_state.name, joint_state.position))
             try:
+                if grid is not None and start_q:
+                    # the stretch of the path MTC will be shaped along (grid, not the plain joint line)
+                    a = {cable_path.short_name(n): v for n, v in start_q.items() if 'ur5_' in n}
+                    b = {cable_path.short_name(n): v for n, v in goal_q.items() if 'ur5_' in n}
+                    found = cable_path.slack_path(grid, a, b, guard.max_stretch)
+                    stretches.append(found[1] if found is not None else grid.worst_along(a, b))
+                    continue
                 stretches.append(max(guard.model.evaluate(q).max_stretch for q in joint_path(start_q, goal_q)))
             except Exception as e:  # noqa: BLE001 - no prediction keeps the grasp where it is
                 rospy.logwarn(f'cable ranking: no prediction for a grasp: {e}')
