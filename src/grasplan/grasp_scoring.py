@@ -234,6 +234,32 @@ def tilt_from_vertical_deg(approach, up=(0.0, 0.0, 1.0)):
     return math.degrees(math.acos(max(-1.0, min(1.0, -sum(x * y for x, y in zip(a, u))))))
 
 
+# ---------------------------------------------------------------- standing tall objects: no tilted grasps
+# A tilted side grasp (45-65 deg off vertical) of a standing Pringles can pinches its rim: the can swings in the hand and
+# tips over at the place (1 of 10 upright, against 12 of 12 for grasps within 20 deg of vertical, sim, 31 picks). Careful
+# flag ~grasp_standing_tilt_band: for a standing elongated object taller than LOW_OBJECT_MAX_HEIGHT the grasps whose
+# approach is between STANDING_BAND_MIN_TILT_DEG and STANDING_BAND_MAX_TILT_DEG off vertical are dropped (a top grasp
+# within the band's lower edge and a side grasp beyond its upper edge stay). Only the box shape decides, no names.
+STANDING_BAND_MIN_TILT_DEG = 25.0
+STANDING_BAND_MAX_TILT_DEG = 65.0
+
+
+def is_standing_elongated(size, rotation=None, up=(0.0, 0.0, 1.0), min_height=LOW_OBJECT_MAX_HEIGHT):
+    '''True for a long cylinder-like box standing within STANDING_MAX_TILT_DEG of ``up`` and taller than min_height'''
+    if len(size) != 3 or min(float(v) for v in size) <= 0.0:
+        return False
+    cylinder = cylinder_axis(size, rotation)
+    if cylinder is None:
+        return False
+    standing = abs(sum(a * u for a, u in zip(cylinder[0], _unit(up)))) >= math.cos(math.radians(STANDING_MAX_TILT_DEG))
+    return standing and box_height_and_footprint(size, rotation, up)[0] > min_height
+
+
+def in_tilt_band(tilt_deg, low=STANDING_BAND_MIN_TILT_DEG, high=STANDING_BAND_MAX_TILT_DEG):
+    '''True when an approach tilt (deg off vertical) lies strictly between low and high'''
+    return low < tilt_deg < high
+
+
 # ---------------------------------------------------------------- one-sided boxes (2026-09-28, real Pringles can)
 # The grasp view sees only the front of an object: the box of a standing Pringles can came out 7.3 x 3.6 x 24 cm for a
 # ~7.5 cm can, so the planning scene lacked its back half (the ranking uses the fuller committed box, or widens a

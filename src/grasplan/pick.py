@@ -78,14 +78,19 @@ from grasplan.tools.topdown_grasps import (
 )
 from grasplan.tools.cable_rank import gate_chunks, joint_path, order_by_predicted_stretch
 from grasplan.grasp_scoring import (
+    CYLINDER_MIN_ELONGATION,
     LOW_OBJECT_MAX_HEIGHT,
     LOW_OBJECT_MAX_TILT_DEG,
     SMALL_OBJECT_MAX_FOOTPRINT,
+    STANDING_BAND_MAX_TILT_DEG,
+    STANDING_BAND_MIN_TILT_DEG,
     box_height_and_footprint,
     closes_on_narrowest_side,
     complete_one_sided_box,
+    in_tilt_band,
     is_compact_round,
     is_low_object,
+    is_standing_elongated,
     jaw_alignment_turns,
     jaw_centring_shift,
     tilt_from_vertical_deg,
@@ -1213,6 +1218,7 @@ class PickTools:
                 widths = [candidate.width for candidate in external_grasp_candidates]
                 grasps, widths, low = self.top_grasps_for_low_objects(grasps, widths, object_pose, bounding_box)
                 self.grasp_funnel('low_object_kept', grasps)
+                grasps, widths = self.standing_tilt_band_grasps(grasps, widths, object_pose, bounding_box)
                 grasps, widths = self.align_jaws_to_box(grasps, widths, object_pose, bounding_box)
                 grasps = self.raise_low_grasps(grasps, support_surface_name, widths, sink=low)
                 self.grasp_funnel('clearance_kept', grasps)
@@ -1422,6 +1428,49 @@ class PickTools:
             + ('' if kept else '; the top-down fallback grasps instead')
         )
         return kept, kept_widths, True
+
+    def standing_tilt_band_grasps(self, grasps, widths, object_pose, bounding_box):
+        '''
+        careful flag ~grasp_standing_tilt_band (off in code): for a standing elongated object taller than
+        LOW_OBJECT_MAX_HEIGHT (box shape only) the open-set grasps whose approach lies between
+        ~grasp_standing_tilt_band_min_deg (25) and ~grasp_standing_tilt_band_max_deg (65) off vertical are dropped before
+        the cable ranking: the tilted side grasps pinch the rim and the object tips at the place. When none is left the
+        unfiltered grasps stay (log line), so the pick is never worse than before. Every dropped grasp is logged with its
+        tilt. Returns (grasps, widths).
+        '''
+        if not rospy.get_param('~grasp_standing_tilt_band', False) or not grasps or not bounding_box or object_pose is None:
+            return grasps, widths
+        o = object_pose.pose.orientation
+        rotation = tf.transformations.quaternion_matrix([o.x, o.y, o.z, o.w])[:3, :3].tolist()
+        if not is_standing_elongated(bounding_box, rotation, min_height=rospy.get_param(
+                '~open_set_low_object_max_height', LOW_OBJECT_MAX_HEIGHT)):
+            dims = sorted(float(v) for v in bounding_box)
+            rospy.loginfo(f'standing tilt band: object not standing elongated (height '
+                          f'{box_height_and_footprint(bounding_box, rotation)[0]:.3f} m, elongation '
+                          f'{dims[2] / dims[1] if dims[1] > 0.0 else 0.0:.2f} of at least {CYLINDER_MIN_ELONGATION}): '
+                          f'all {len(grasps)} grasps kept')
+            return grasps, widths
+        low = rospy.get_param('~grasp_standing_tilt_band_min_deg', STANDING_BAND_MIN_TILT_DEG)
+        high = rospy.get_param('~grasp_standing_tilt_band_max_deg', STANDING_BAND_MAX_TILT_DEG)
+        kept, kept_widths, dropped = [], [], []
+        for grasp, width in zip(grasps, widths):
+            q = grasp.grasp_pose.pose.orientation
+            tilt = tilt_from_vertical_deg(tf.transformations.quaternion_matrix([q.x, q.y, q.z, q.w])[:3, 0])
+            if in_tilt_band(tilt, low, high):
+                dropped.append(f'{grasp.id} {tilt:.0f}')
+            else:
+                kept.append(grasp)
+                kept_widths.append(width)
+        if not dropped:
+            rospy.loginfo(f'standing tilt band: no grasp of {len(grasps)} between {low:.0f} and {high:.0f} deg off vertical')
+            return grasps, widths
+        if not kept:
+            rospy.logwarn(f'standing tilt band: all {len(grasps)} grasps are between {low:.0f} and {high:.0f} deg off '
+                          f'vertical ({", ".join(dropped)}): keeping them (fallback)')
+            return grasps, widths
+        rospy.loginfo(f'standing tilt band: kept {len(kept)} of {len(grasps)} grasps, dropped (deg off vertical): '
+                      f'{", ".join(dropped)}')
+        return kept, kept_widths
 
     def align_jaws_to_box(self, grasps, widths, object_pose, bounding_box):
         '''
@@ -1953,6 +2002,19 @@ class PickTools:
         seed.joint_state.position = positions
         return seed
 
+    def tilt_and_gap(self, grasp):
+        '''"tilt 46deg gap 82mm" of a grasp for the log: approach angle off vertical, planned opening ("?" if unknown)'''
+        try:
+            q = grasp.grasp_pose.pose.orientation
+            tilt = f'{tilt_from_vertical_deg(tf.transformations.quaternion_matrix([q.x, q.y, q.z, q.w])[:3, 0]):.0f}deg'
+        except Exception:  # noqa: BLE001 - a log aid never breaks the ranking
+            tilt = '?'
+        try:
+            gap = f'{grasp.pre_grasp_posture.points[-1].positions[0] * 1000:.0f}mm'
+        except Exception:  # noqa: BLE001
+            gap = '?'
+        return f'tilt {tilt} gap {gap}'
+
     def rank_by_predicted_cable_stretch(self, grasps, joint_states, start=None):
         '''
         grasps (best first) with their IK joint states -> the grasps the MTC cable guard's model predicts to pass
@@ -1980,8 +2042,10 @@ class PickTools:
         ordered, passing = order_by_predicted_stretch(grasps, stretches, guard.max_stretch)
         self.cable_gate_passing = passing   # the cable gate offers these first (#151)
         # per grasp (quality order), so a gate that holds back most grasps can be judged from the log (#192)
+        # tilt = approach angle off vertical, gap = the planned opening in mm (tilted grasps pinch a standing can)
         rospy.loginfo('cable ranking per grasp: ' + ', '.join(
-            f'{g.id} q{g.grasp_quality:.2f} ' + ('?' if s is None else f'{s:+.3f}') for g, s in zip(grasps, stretches)))
+            f'{g.id} q{g.grasp_quality:.2f} {self.tilt_and_gap(g)} ' + ('?' if s is None else f'{s:+.3f}')
+            for g, s in zip(grasps, stretches)))
         known = sorted(s for s in stretches if s is not None)
         rospy.loginfo(
             f'cable ranking: {passing} of {len(grasps)} reachable grasps predicted to pass the cable guard '
