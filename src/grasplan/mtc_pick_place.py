@@ -38,7 +38,7 @@ executed here: arm segments through move_group's execute_trajectory action, the 
 the GripperCommand action with the metre values of the goal, attach and detach through
 apply_planning_scene. This also makes the execution preemptible, which the pickup action was not.
 
-Optional arm cable guard (~mtc_cable_plan_check, old name ~mtc_cable_constraints, re-read on every goal): the cable model of
+Optional, experimental arm cable guard (~mtc_cable_plan_check, old name ~mtc_cable_constraints, re-read on every goal): the cable model of
 mobipick_cable_entanglement (#118) turns into constraints on the joint path instead of joint limits that
 reject grasps (#120, #124). Every free motion (Connect) gets a MoveIt path constraint that keeps wrist_3 within
 half a turn of the angle where the tube is least wound (no extra winding), several solutions are planned, and
