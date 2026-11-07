@@ -93,6 +93,13 @@ class TestPinchCheck(unittest.TestCase):
         self.assertEqual(self.run_execute(m), MoveItErrorCodes.FAILURE)
         self.assertIn('pinch (gap ', m.failure_reason)
         self.assertEqual(m.pick_progress['attached'], False)
+        self.assertTrue(m.pinch_verdict)   # what the retry of the next grasp goes by
+
+    def test_a_straight_close_is_no_pinch_verdict(self):
+        m = self.mtc(0.070)
+        m.pinch_verdict = False
+        self.run_execute(m)
+        self.assertFalse(m.pinch_verdict)
 
     def test_a_good_tilted_grasp_is_not_rejected_by_the_box_length_along_its_axis(self):
         # 2026-10-03 sim: tilt 53 deg, finger gap 59 mm on a 66 mm can, width_box 111 mm (ratio 0.53) was a false pinch

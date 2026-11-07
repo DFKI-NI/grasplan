@@ -145,6 +145,7 @@ def anygrasp_default_names(prefix):
 
 MIN_STRIPPED_SIDE = 0.005   # m: a side never shrinks below this, however small the detection
 ALIGN_JAW_SIDE_CLEARANCE = 0.01   # m between each open pad and a box face it is turned onto (align_jaws_to_box)
+PINCH_RETRY_MAX = 2   # further grasps after a pinch verdict (~grasp_pinch_retry_max), so at most 3 closes per pick
 
 
 def strip_box_padding(name, size, reported=0.0):
@@ -1890,6 +1891,71 @@ class PickTools:
         return None
 
     def offer_grasps(self, object_to_pick, grasps, support_surface_name, external):
+        '''
+        offer_grasp_batches, and with ~grasp_pinch_retry_next (open-set picks with MTC) on: a pinch verdict does not end
+        the pick, the arm backs out, returns to the pick start pose and the untried grasps the cable ranking predicts to
+        pass are offered, up to ~grasp_pinch_retry_max (2) more times. All from the box perceived before the first close,
+        with no new perception. It needs the arm cable plan check: without it the retry motions go unchecked and the sim
+        monitor stopped the next grasp 3 of 3 times, so the pick then ends after the pinch as if the switch were off.
+        '''
+        if not (external and self.mtc is not None and rospy.get_param('~grasp_pinch_retry_next', False)):
+            return self.offer_grasp_batches(object_to_pick, grasps, support_surface_name, external)
+        name = object_to_pick.get_object_class_and_id_as_string()
+        scene_object = self.scene.get_objects([name]).get(name)
+        limit = int(rospy.get_param('~grasp_pinch_retry_max', PINCH_RETRY_MAX))
+        pinches = []
+        while True:
+            result = self.offer_grasp_batches(object_to_pick, grasps, support_surface_name, True)
+            moved, reason = self.mtc.executed, self.mtc.failure_reason
+            if pinches:   # the arm moved for the first pinch, also when this pass planned nothing
+                self.mtc.executed = True
+                if result not in (MoveItErrorCodes.SUCCESS, None, False):
+                    self.mtc.failure_reason = '; '.join(pinches + [reason])
+                    if not moved:   # nothing closed in this pass: the object leaves the scene as after any failed close
+                        self.remove_from_scene(name)
+            if not (moved and self.mtc.pinch_verdict) or self.pick_action_server.is_preempt_requested():
+                return result
+            if self.mtc.cable_guard is None:
+                rospy.logwarn(f'pinch retry of {name} skipped: the arm cable plan check is off')
+                return result
+            pinches.append(reason)
+            stop = self.pinch_retry_stop(name, grasps, scene_object, len(pinches), limit)
+            if stop:
+                rospy.logwarn(f'pinch retry of {name}: {stop}')
+                self.mtc.failure_reason = '; '.join(pinches + [f'no other grasp tried: {stop}'])
+                return result
+            position = [g.id for g in grasps].index(self.mtc.executed_offer_id) + 1
+            rospy.logwarn(f'pinch retry of {name}: offering the {self.cable_gate_passing - position} grasps ranked after '
+                          f'{self.mtc.executed_offer_id} (retry {len(pinches)} of {limit})')
+            grasps = grasps[position:self.cable_gate_passing]   # the held-back grasps are predicted to fail the guard
+            self.cable_gate_passing = len(grasps)
+
+    def pinch_retry_stop(self, name, grasps, scene_object, retries, limit):
+        '''
+        why no further grasp follows this pinch ('' when one does). When it is empty the arm has backed out and stands at
+        ~open_set_pick_start_pose (empty = stays where it backed out to): the grasps were ranked and their IK pinned for
+        a pick from there, not from next to the object, where the sim monitor stopped the next grasp's path twice.
+        '''
+        if retries > limit:
+            return f'~grasp_pinch_retry_max ({limit}) reached'
+        if self.mtc.executed_offer_id not in [g.id for g in grasps]:
+            return f'the pinched grasp {self.mtc.executed_offer_id} is not in the offer'
+        if self.mtc.executed_offer_id == grasps[-1].id:
+            return 'no grasp left in the offer'
+        if [g.id for g in grasps].index(self.mtc.executed_offer_id) + 1 >= self.cable_gate_passing:
+            return 'no untried grasp is predicted to pass the cable guard'
+        if scene_object is None:
+            return f'{name} was not in the planning scene before the close'
+        stop = self.mtc.leave_pinched_grasp(self.mtc.executed_grasp, scene_object)
+        if stop:
+            return stop
+        pose = rospy.get_param('~open_set_pick_start_pose', 'transport')
+        if pose and not self.move_arm_to_pick_start(pose):
+            refused = getattr(self, 'pick_start_refused', '')
+            return f'the arm could not return to {pose}' + (f' ({refused})' if refused else '')
+        return ''
+
+    def offer_grasp_batches(self, object_to_pick, grasps, support_surface_name, external):
         '''
         plan and execute the ranked grasps: in batches of ~external_grasp_batch_size (external = open-set), the cable
         gate's predicted-pass grasps first (#151); the MoveIt error code of the last try, False when preempted

@@ -951,6 +951,7 @@ class MtcPickPlace:
         result = PickupResult()
         result.error_code.val = MoveItErrorCodes.PLANNING_FAILED
         self.failure_reason, self.executed, self.executed_grasp = '', False, None
+        self.pinch_verdict = False   # the last close of this pickup held at the rim (see pinched)
         self.unplanned = []   # why each grasp could not be planned, for the failure reason
         self.chain_rejections = 0   # solutions the chain replay alone rejected in this pickup (cable replay detour)
         self.update_cable_guard()
@@ -995,6 +996,7 @@ class MtcPickPlace:
             # the pre grasp posture (open) is not a stage, it is sent before the first arm motion
             self.executed = True
             self.executed_grasp = grasp   # for the grasp funnel debug output of pick.py
+            self.executed_offer_id = goal.possible_grasps[index].id   # grasp may be a turned copy of the offered one
             code = self.execute(task, roles, [grasp.pre_grasp_posture], grasp.grasp_posture,
                                 attach=(goal.target_name, touch), check_grasp=True,
                                 regrasp=self.regrasp_request(goal, grasp))
@@ -2162,6 +2164,7 @@ class MtcPickPlace:
                       f"ratio {gap / width:.2f} (limit {ratio:.2f}) conf "
                       f"{request.get('confidence')}: {'PINCH' if pinch else 'ok'}")
         if pinch:
+            self.pinch_verdict = True
             self.failure_reason = (f"pinch (gap {gap * 1000:.0f} of width {width * 1000:.0f} mm): the fingertips hold "
                                    f"{request['object']} at a rim, not across it")
         return pinch
@@ -2304,6 +2307,49 @@ class MtcPickPlace:
             if role == ARM and sub.trajectory.joint_trajectory.points:
                 return self.execute_arm(sub.trajectory) == MoveItErrorCodes.SUCCESS
         return False
+
+    def leave_pinched_grasp(self, grasp, scene_object):
+        '''
+        after a pinch verdict, with the gripper opened by release_empty_grasp and the object gone from the scene: back out
+        straight along the approach of that grasp, the way the fingers came in, then put the object back in the scene
+        so the next grasp plans around it. Returns '' when the next grasp can be tried, else why not. The object may have
+        turned in the close: its box stays as perceived.
+        '''
+        if (rospy.get_param('~mtc_check_grasp', True) and self.gripper_fact is not None
+                and self.gripper_holds_object('after opening on a pinch')):
+            return 'the gripper still reports the object after opening'
+        task, roles = self.start_task('back out of a pinch')
+        if self.allow_octomap_contact:
+            before = stages.ModifyPlanningScene('allow octomap contact')
+            before.allowCollisions(OCTOMAP_COLLISION_NAME, self.gripper_links, True)
+            task.add(before)
+            roles.append(NOOP)
+        back = copy.deepcopy(grasp.pre_grasp_approach)
+        back.direction.vector.x = -back.direction.vector.x
+        back.direction.vector.y = -back.direction.vector.y
+        back.direction.vector.z = -back.direction.vector.z
+        try:
+            task.add(self.move_relative('back out', back))
+        except (tf2_ros.TransformException, ValueError) as e:
+            return f'backing out could not be set up ({e})'
+        roles.append(ARM)
+        if not self.plan(task, f'backing out of grasp {grasp.id}'):
+            return f"backing out could not be planned ({getattr(self, 'last_plan_failure', '') or 'no solution'})"
+        announce_trajectory_start('back out of a pinch')   # a solution of its own, its replay started from a fresh chain
+        for role, sub in zip(roles, self.chosen_solution.toMsg().sub_trajectory):
+            if role == ARM and sub.trajectory.joint_trajectory.points:
+                code = self.execute_arm(sub.trajectory)
+                if code != MoveItErrorCodes.SUCCESS:
+                    return f'backing out failed: {self.execution_text(code)}'
+        restored = PlanningScene()
+        restored.is_diff = True
+        scene_object.operation = CollisionObject.ADD
+        restored.world.collision_objects = [scene_object]
+        try:
+            self.apply_planning_scene_srv(restored)
+        except rospy.ServiceException as e:
+            return f'the object could not be put back in the scene: {e}'
+        return ''
 
     def make_gripper_fact(self):
         '''
