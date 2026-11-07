@@ -2,6 +2,8 @@
 reason into the action status text also when a check before MTC stops them, MTC names the MoveIt error code and the
 arm's stop, and "none of the N grasps could be planned" says why per grasp.
 Mocks (no ROS master); needs the Mobipick image for the module imports.'''
+import threading
+import time
 import unittest
 from types import SimpleNamespace as NS
 from unittest import mock
@@ -54,8 +56,8 @@ class MotionFailureText(unittest.TestCase):
 
 
 class ArmStop(unittest.TestCase):
-    def mode(self, value):
-        proxy = mock.MagicMock(return_value=NS(safety_mode=NS(mode=value)))
+    def mode(self, value, controllers=()):
+        proxy = mock.MagicMock(return_value=NS(safety_mode=NS(mode=value), controller=list(controllers)))
         with mock.patch.object(moveit_errors.rospy, 'wait_for_service'), \
                 mock.patch.object(moveit_errors.rospy, 'ServiceProxy', return_value=proxy):
             return moveit_errors.arm_stop_text()
@@ -76,6 +78,80 @@ class ArmStop(unittest.TestCase):
                 mock.patch.object(moveit_errors.rospy, 'logwarn'):
             self.assertEqual(moveit_errors.arm_stop_text(), '')
 
+
+class ArmStopDeadline(unittest.TestCase):
+    '''A dashboard that is found but never replies must not hold back the motion's failure'''
+    def setUp(self):
+        moveit_errors._waiting_calls.clear()
+        self.release = threading.Event()
+        self.addCleanup(self.release.set)
+        self.addCleanup(moveit_errors._waiting_calls.clear)
+
+    def services(self, stalled, mode=None, controllers=(), stall_discovery=False):
+        '''patches rospy: the service names in stalled block until self.release, the others answer at once'''
+        from ur_dashboard_msgs.msg import SafetyMode
+        reply = NS(safety_mode=NS(mode=SafetyMode.NORMAL if mode is None else mode), controller=list(controllers))
+        self.calls = []
+
+        def wait_for_service(name, timeout):
+            if stall_discovery and name in stalled:
+                self.release.wait()
+
+        def proxy(name, service_type):
+            def call():
+                self.calls.append(name)
+                if name in stalled:
+                    self.release.wait()
+                return reply
+            return call
+        return [mock.patch.object(moveit_errors.rospy, 'wait_for_service', wait_for_service),
+                mock.patch.object(moveit_errors.rospy, 'ServiceProxy', proxy),
+                mock.patch.object(moveit_errors.rospy, 'logwarn')]
+
+    def timed(self, patches, **kwargs):
+        with patches[0], patches[1], patches[2] as warn:
+            start = time.monotonic()
+            text = moveit_errors.arm_stop_text(**kwargs)
+            return text, time.monotonic() - start, [c.args[0] for c in warn.call_args_list]
+
+    def test_a_silent_dashboard_returns_by_the_deadline(self):
+        dashboard = 'ur_hardware_interface/dashboard/get_safety_mode'
+        text, took, warnings = self.timed(self.services({dashboard}), timeout=0.3)
+        self.assertEqual(text, '')
+        self.assertLess(took, 0.6)
+        self.assertTrue(any('no reply within' in w for w in warnings), warnings)
+
+    def test_a_stalled_discovery_returns_by_the_deadline(self):
+        dashboard = 'ur_hardware_interface/dashboard/get_safety_mode'
+        text, took, _ = self.timed(self.services({dashboard}, stall_discovery=True), timeout=0.3)
+        self.assertEqual(text, '')
+        self.assertLess(took, 0.6)
+
+    def test_a_stuck_call_is_not_repeated_and_the_service_comes_back_after_its_reply(self):
+        from ur_dashboard_msgs.msg import SafetyMode
+        dashboard = 'ur_hardware_interface/dashboard/get_safety_mode'
+        self.timed(self.services({dashboard}), timeout=0.2)
+        stuck = moveit_errors._waiting_calls[dashboard]
+        text, took, warnings = self.timed(self.services({dashboard}, mode=SafetyMode.PROTECTIVE_STOP), timeout=0.2)
+        self.assertEqual(text, '')
+        self.assertNotIn(dashboard, self.calls)  # skipped: no second thread on the silent service
+        self.assertTrue(any('still waits for its reply' in w for w in warnings), warnings)
+        self.release.set()
+        stuck.join(1.0)
+        self.assertFalse(stuck.is_alive())
+        text, _, _ = self.timed(self.services(set(), mode=SafetyMode.PROTECTIVE_STOP), timeout=0.5)
+        self.assertEqual(text, '; the arm is in a protective stop (UR safety mode PROTECTIVE_STOP)')
+
+    def test_an_unexpected_error_of_a_lookup_gives_no_words_and_does_not_raise(self):
+        def broken(name, service_type):
+            def call():
+                raise AttributeError('reply without safety_mode')
+            return call
+        with mock.patch.object(moveit_errors.rospy, 'wait_for_service'), \
+                mock.patch.object(moveit_errors.rospy, 'ServiceProxy', broken), \
+                mock.patch.object(moveit_errors.rospy, 'logwarn') as warn:
+            self.assertEqual(moveit_errors.arm_stop_text(timeout=0.3), '')
+        self.assertTrue(any('reply without safety_mode' in c.args[0] for c in warn.call_args_list))
 
 class Stage:
     '''an MTC stage: children by index, or a leaf with solutions and failures'''

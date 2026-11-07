@@ -18,6 +18,9 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+import threading
+import time
+
 import rospy
 from moveit_msgs.msg import MoveItErrorCodes
 
@@ -129,25 +132,70 @@ def motion_failure_text(what, code):
     return f'{what} failed: {moveit_code_text(code)}{arm_stop_text()}'
 
 
-def arm_stop_text(service='ur_hardware_interface/dashboard/get_safety_mode', timeout=0.5):
+# service name -> the thread of a call whose reply never came (left behind by _reply_by)
+_waiting_calls = {}
+_waiting_lock = threading.Lock()
+
+
+def _reply_by(service, service_type, deadline, what, discovery=0.5):
+    '''
+    The reply of an argument-free call of service, or None (and a log) when the service is not found within discovery
+    seconds or gives no reply before deadline (a time.monotonic() value). Discovery and the call run in a daemon thread,
+    so a service that takes the request but never replies cannot hold back the failed motion's result. Such a thread is
+    left behind, at most one per service: later checks skip that service until it has replied, and its late reply
+    reaches no one.
+    '''
+    with _waiting_lock:
+        waiting = _waiting_calls.get(service)
+        if waiting is not None and waiting.is_alive():
+            rospy.logwarn(f'{what} not checked ({service}): an earlier call still waits for its reply')
+            return None
+        _waiting_calls.pop(service, None)
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        rospy.logwarn(f'{what} not checked ({service}): no time left for it')
+        return None
+    reply = []
+
+    def call():
+        try:
+            rospy.wait_for_service(service, min(discovery, remaining))
+            reply.append(rospy.ServiceProxy(service, service_type)())
+        except Exception as error:  # any failure of the lookup only drops the extra words
+            reply.append(error)
+
+    worker = threading.Thread(target=call, name=f'reply_by {service}', daemon=True)
+    worker.start()
+    worker.join(max(deadline - time.monotonic(), 0.0))
+    if worker.is_alive():
+        with _waiting_lock:
+            _waiting_calls[service] = worker
+        rospy.logwarn(f'{what} not checked ({service}): no reply within {remaining:.1f} s')
+        return None
+    if isinstance(reply[0], Exception):
+        rospy.logwarn(f'{what} not checked ({service}): {reply[0]}')
+        return None
+    return reply[0]
+
+
+def arm_stop_text(service='ur_hardware_interface/dashboard/get_safety_mode', timeout=1.0):
     '''
     "; the arm is in a protective stop (UR safety mode PROTECTIVE_STOP)" while the UR safety mode stops the arm,
     else ''. Asked after a failed motion so the planner hears about a stop (the sim cable monitor presses one) in
-    the failure itself and not only from a later event. Never raises: no dashboard (unknown state) gives '' and a log.
+    the failure itself and not only from a later event. Never raises and returns within timeout seconds: a missing or
+    silent dashboard gives '' and a log.
     '''
+    deadline = time.monotonic() + timeout
     try:
         from ur_dashboard_msgs.msg import SafetyMode
         from ur_dashboard_msgs.srv import GetSafetyMode
     except ImportError as error:
         rospy.logwarn(f'arm safety mode not checked: {error}')
         return ''
-    try:
-        rospy.wait_for_service(service, timeout)
-        mode = rospy.ServiceProxy(service, GetSafetyMode)().safety_mode.mode
-    except (rospy.ROSException, rospy.ServiceException) as error:
-        rospy.logwarn(f'arm safety mode not checked ({service}): {error}')
+    reply = _reply_by(service, GetSafetyMode, deadline, 'arm safety mode')
+    if reply is None:
         return ''
     for name, words in _STOPPING_SAFETY_MODES.items():
-        if getattr(SafetyMode, name, None) == mode:
+        if getattr(SafetyMode, name, None) == reply.safety_mode.mode:
             return f'; the arm is in a {words} (UR safety mode {name})'
     return ''
