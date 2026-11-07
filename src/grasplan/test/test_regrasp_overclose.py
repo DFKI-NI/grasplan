@@ -344,6 +344,30 @@ class TestPickProgress(unittest.TestCase):
         self.assertEqual(self.run_execute(m), MoveItErrorCodes.SUCCESS)
         self.assertEqual(m.pick_progress, {'closed': True, 'attached': True, 'lifted': True})
 
+    def test_the_test_switch_refuses_the_lift_without_moving_the_arm(self):
+        m = self.mtc(MoveItErrorCodes.SUCCESS)
+        moved = []
+        m.execute_arm = lambda t: moved.append(t) or MoveItErrorCodes.SUCCESS
+        params = {'~test_fail_pick_lift': True}
+        with mock.patch.object(mpp.rospy, 'get_param', lambda name, default=None: params.get(name, default)), \
+                mock.patch.object(mpp.rospy, 'logwarn'):
+            self.assertEqual(self.run_execute(m), MoveItErrorCodes.CONTROL_FAILED)
+        self.assertEqual(moved, [])
+        self.assertEqual(m.pick_progress, {'closed': True, 'attached': True, 'lifted': False})
+        self.assertIn('test_fail_pick_lift', m.execution_failure)
+
+    def test_the_test_switch_leaves_the_approach_and_a_place_alone(self):
+        m = self.mtc(MoveItErrorCodes.SUCCESS)
+        moved = []
+        m.execute_arm = lambda t: moved.append(t) or MoveItErrorCodes.SUCCESS
+        m.detach = lambda *a: MoveItErrorCodes.SUCCESS
+        params = {'~test_fail_pick_lift': True}
+        with mock.patch.object(mpp.rospy, 'get_param', lambda name, default=None: params.get(name, default)):
+            # an arm motion before the attach (the approach) runs; a place has no attach, so its motions all run
+            code = m.execute(None, [mpp.ARM, mpp.GRIPPER, mpp.DETACH], [], posture(0.14), detach='can')
+        self.assertEqual(code, MoveItErrorCodes.SUCCESS)
+        self.assertEqual(len(moved), 1)
+
 
 if __name__ == '__main__':
     unittest.main()

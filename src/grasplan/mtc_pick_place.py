@@ -2031,6 +2031,9 @@ class MtcPickPlace:
             stage_names = []
         # how far a pick got, for pickup(): closed on the object, attached to the scene, lifted
         self.pick_progress = {'closed': False, 'attached': False, 'lifted': False}
+        # test switch for sim tests, off in code, never a launch option: the pick refuses its lift after the close and
+        # the attach, as a lift the controller rejects would, so the failure path between close and lift can be run
+        fail_lift = bool(rospy.get_param('~test_fail_pick_lift', False))
         announce_trajectory_start('mtc solution')  # the whole solution is one executed trajectory for the cable monitor
         for step, (role, sub) in enumerate(steps):
             if self.is_preempt_requested():
@@ -2038,7 +2041,13 @@ class MtcPickPlace:
             if role == ARM:
                 if not sub.trajectory.joint_trajectory.points:
                     continue
-                code = self.execute_arm(sub.trajectory)
+                if fail_lift and self.pick_progress['attached'] and not self.pick_progress['lifted']:
+                    self.execution_failure = ('the lift was refused on purpose by the test switch ~test_fail_pick_lift '
+                                              '(a sim test of a pick that fails after the close and before the lift)')
+                    rospy.logwarn(f'mtc: {self.execution_failure}')
+                    code = MoveItErrorCodes.CONTROL_FAILED
+                else:
+                    code = self.execute_arm(sub.trajectory)
             elif role == GRIPPER:
                 posture = postures.pop(0)
                 recorder = self.start_close_recording(regrasp) if check_grasp and not postures else None
