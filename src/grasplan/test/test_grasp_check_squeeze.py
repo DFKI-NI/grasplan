@@ -35,7 +35,7 @@ class TestGraspCheckSqueeze(unittest.TestCase):
         return self.params.get(name, default)
 
     def setUp(self):
-        self.params = {'/use_sim_time': True}
+        self.params = {'~mtc_grasp_check_squeeze': True}   # what the sim launch profile passes
         for target, stub in ((mpp.rospy, 'get_param'), (mpp.rospy, 'sleep')):
             patcher = mock.patch.object(target, stub, self.param if stub == 'get_param' else (lambda *a: None))
             patcher.start()
@@ -72,13 +72,13 @@ class TestGraspCheckSqueeze(unittest.TestCase):
             self.assertEqual(m.commands, [])
 
     def test_real_robot_default_keeps_the_old_check(self):
-        self.params = {'/use_sim_time': False}
+        self.params = {'/use_sim_time': True}   # the real-robot default stays off, also with the sim clock
         m = self.mtc([False])
         self.assertFalse(m.closed_on_object(posture(0.045)))
         self.assertEqual(m.commands, [])
 
     def test_squeeze_param_overrides_the_default(self):
-        self.params = {'/use_sim_time': False, '~mtc_grasp_check_squeeze': True}
+        self.params = {'~mtc_grasp_check_squeeze': True}
         m = self.mtc([False, True])
         self.assertTrue(m.closed_on_object(posture(0.045)))
         self.params = {'/use_sim_time': True, '~mtc_grasp_check_squeeze': False}

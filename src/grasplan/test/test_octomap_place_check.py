@@ -46,8 +46,8 @@ def location(lid, x, y, yaw=0.0):
     return loc
 
 
-def planner(points, params=None):
-    params = {'/use_sim_time': True, **(params or {})}   # the sim default: the check is on
+def planner(points, params=None, sim_profile=True):
+    params = {'~mtc_place_reject_octomap_occupied': sim_profile, '/use_sim_time': True, **(params or {})}   # the sim profile switches the check on
     m = mpp.MtcPickPlace.__new__(mpp.MtcPickPlace)
     scene = NS(world=NS(octomap=octomap_msg(points)), robot_state=NS(attached_collision_objects=[attached_klt()]))
     m.get_planning_scene_srv = lambda request: NS(scene=scene)
@@ -104,7 +104,7 @@ class TestPlaceCheck(unittest.TestCase):
         m, patcher = planner(CAN, {'~mtc_place_reject_octomap_occupied': False})
         with patcher:
             self.assertIsNone(m.octomap_place_check('klt_1'))
-        m, patcher = planner(CAN, {'/use_sim_time': False})   # the real robot default: off until tested there
+        m, patcher = planner(CAN, sim_profile=False)   # the default: off, also with the sim clock
         with patcher:
             self.assertIsNone(m.octomap_place_check('klt_1'))
         m, patcher = planner(CAN)

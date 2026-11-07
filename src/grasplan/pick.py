@@ -123,15 +123,14 @@ def external_grasp_ik_timeout():
     '''#198 (f) ~external_grasp_ik_timeout (s): the compute_ik timeout per call of the open-set IK pre-filter. TRAC-IK in
     Distance mode always spends its whole timeout (then returns the solution closest to the seed), so 0.1 s x up to 2
     calls x ~46 grasps cost 3.4-5.3 s per pick (claude-7e2a, #198 23:53; 12.3 s for 66 grasps in the sim 2026-09-29).
-    Default 0.01 in the sim (/use_sim_time), 0.1 on the real robot until tested there (Oscar 2026-09-28)'''
-    default = 0.01 if rospy.get_param('/use_sim_time', False) else 0.1
-    return max(0.001, float(rospy.get_param('~external_grasp_ik_timeout', default)))
+    Default 0.1; the sim launch profile passes 0.01 (Oscar 2026-09-28)'''
+    return max(0.001, float(rospy.get_param('~external_grasp_ik_timeout', 0.1)))
 
 
 def pick_from_current_state():
-    '''#198 (d) ~open_set_pick_from_current_state: default on in the sim (/use_sim_time), off on the real robot until
-    tested there (Oscar 2026-09-28)'''
-    return bool(rospy.get_param('~open_set_pick_from_current_state', rospy.get_param('/use_sim_time', False)))
+    '''#198 (d) ~open_set_pick_from_current_state: off by default; the sim launch profile switches it on
+    (Oscar 2026-09-28)'''
+    return bool(rospy.get_param('~open_set_pick_from_current_state', False))
 
 
 def anygrasp_default_names(prefix):
@@ -819,14 +818,13 @@ class PickTools:
         floats more than this above its support (supports: support_boxes()) is left out too: a real object neither
         hovers nor reaches into another one, and any box inside the target's blocks every lift, as the held object
         starts in collision with it (#192, real 2026-09-28 20:37: a false DOPE screwdriver_1 box ~12 cm above table_2,
-        1.7 % into the Pringles can box, failed all 12 grasps at the lift). Default 0.03 in the sim (/use_sim_time),
-        off on the real robot until tested there (Oscar 2026-09-28).
+        1.7 % into the Pringles can box, failed all 12 grasps at the lift). Default 0 (off); the sim launch profile
+        passes 0.03 (Oscar 2026-09-28).
         '''
         if target is None or pose_stamped.header.frame_id != target[0].header.frame_id:
             return False
         limit = rospy.get_param('~drop_boxes_overlapping_target', 0.2)
-        float_limit = rospy.get_param('~drop_floating_boxes_at_target',
-                                      0.03 if rospy.get_param('/use_sim_time', False) else 0.0)
+        float_limit = rospy.get_param('~drop_floating_boxes_at_target', 0.0)
         if limit <= 0.0 and float_limit <= 0.0:
             return False
         p, o = pose_stamped.pose.position, pose_stamped.pose.orientation

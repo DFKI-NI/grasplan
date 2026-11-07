@@ -32,7 +32,7 @@ ON_CAN = box('multimeter', (0.1, 0.0, 0.86), (0.06, 0.06, 0.05))                
 
 class TestPlaceSceneBoxes(unittest.TestCase):
     def setUp(self):
-        self.params = {'/use_sim_time': True}
+        self.params = {'~place_drop_implausible_boxes': True}   # what the sim launch profile passes
         patcher = mock.patch.object(place.rospy, 'get_param', lambda name, default=None: self.params.get(name, default))
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -55,7 +55,7 @@ class TestPlaceSceneBoxes(unittest.TestCase):
         self.assertEqual(self.removed, ['screwdriver_1'])   # an old copy in the scene goes too
 
     def test_real_robot_default_adds_everything(self):
-        self.params['/use_sim_time'] = False
+        self.params = {'/use_sim_time': True}   # the real-robot default stays off, also with the sim clock
         self.assertEqual(len(self.scene(CAN, SCREWDRIVER, BLEACH, KLT, ON_CAN)), 5)
 
     def test_switches(self):

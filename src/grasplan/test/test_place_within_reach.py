@@ -88,7 +88,7 @@ class TestFreeFirst(unittest.TestCase):
 
 class TestPlaceNode(unittest.TestCase):
     def setUp(self):
-        self.params = {'/use_sim_time': True}
+        self.params = {'~place_sample_within_reach': True, '~place_free_footprints_first': True}   # the sim profile
         patcher = mock.patch.object(place.rospy, 'get_param', lambda name, default=None: self.params.get(name, default))
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -108,13 +108,13 @@ class TestPlaceNode(unittest.TestCase):
 
     def test_reach_disk_in_the_support_frame(self):
         self.assertEqual(self.p.reach_disk('table_3'), (-0.117, 0.93, 0.8))
-        self.params['/use_sim_time'] = False
+        self.params = {'/use_sim_time': True}   # the real-robot default stays off, also with the sim clock
         self.assertIsNone(self.p.reach_disk('table_3'))   # real robot default: as before
 
     def test_reach_radii(self):
         self.assertEqual(self.p.place_reach_radii(), [0.8, 0.9])   # the fallback when 0.8 holds no free spot
         self.assertEqual(self.p.reach_disk('table_3', 0.9), (-0.117, 0.93, 0.9))
-        self.params['/use_sim_time'] = False
+        self.params = {'/use_sim_time': True}   # the real-robot default stays off, also with the sim clock
         self.assertEqual(self.p.place_reach_radii(), [0.8])        # real robot: the old single draw
 
     def test_free_first_in_place(self):
@@ -122,7 +122,7 @@ class TestPlaceNode(unittest.TestCase):
         poses.header.frame_id = 'map'
         self.p.order_free_footprints_first(poses, 'banana_1', 'table_3')
         self.assertEqual(round(poses.objects[0].pose.position.y, 2), 13.80)
-        self.params['/use_sim_time'] = False
+        self.params = {'/use_sim_time': True}   # the real-robot default stays off, also with the sim clock
         poses = ObjectList(objects=[candidate(20.98, 14.05), candidate(21.00, 13.80)])
         poses.header.frame_id = 'map'
         self.p.order_free_footprints_first(poses, 'banana_1', 'table_3')

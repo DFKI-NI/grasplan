@@ -72,19 +72,18 @@ from std_msgs.msg import Header
 
 
 def place_within_reach():
-    '''#217 ~place_sample_within_reach: default on in the sim (/use_sim_time), off on the real robot until tested there'''
-    return bool(rospy.get_param('~place_sample_within_reach', rospy.get_param('/use_sim_time', False)))
+    '''#217 ~place_sample_within_reach: off by default; the sim launch profile switches it on'''
+    return bool(rospy.get_param('~place_sample_within_reach', False))
 
 
 def place_free_footprints_first():
-    '''#217 ~place_free_footprints_first: default on in the sim (/use_sim_time), off on the real robot until tested'''
-    return bool(rospy.get_param('~place_free_footprints_first', rospy.get_param('/use_sim_time', False)))
+    '''#217 ~place_free_footprints_first: off by default; the sim launch profile switches it on'''
+    return bool(rospy.get_param('~place_free_footprints_first', False))
 
 
 def drop_implausible_place_boxes():
-    '''#202 ~place_drop_implausible_boxes: default on in the sim (/use_sim_time), off on the real robot until tested
-    there (Oscar 2026-09-28)'''
-    return bool(rospy.get_param('~place_drop_implausible_boxes', rospy.get_param('/use_sim_time', False)))
+    '''#202 ~place_drop_implausible_boxes: off by default; the sim launch profile switches it on'''
+    return bool(rospy.get_param('~place_drop_implausible_boxes', False))
 
 
 def detour_only_when_needed():

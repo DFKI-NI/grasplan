@@ -47,13 +47,14 @@ class TestIkPrefilterTimeout(unittest.TestCase):
         self.p = p
         self.grasps = [NS(id='anygrasp_1', grasp_pose='pose_a'), NS(id='anygrasp_2', grasp_pose='pose_b')]
 
-    def test_sim_default_10_ms(self):
-        self.params['/use_sim_time'] = True
+    def test_sim_profile_10_ms(self):
+        self.params['~external_grasp_ik_timeout'] = 0.01   # what the sim launch profile passes
         kept = self.p.reachable_external_grasps(self.grasps)
         self.assertEqual([g.id for g in kept], ['anygrasp_1'])
         self.assertEqual(self.ik.timeouts, [0.01, 0.01])
 
     def test_real_robot_default_as_before(self):
+        self.params['/use_sim_time'] = True   # the default never follows the sim clock
         self.p.reachable_external_grasps(self.grasps)
         self.assertEqual(self.ik.timeouts, [0.1, 0.1])
 

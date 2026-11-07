@@ -135,8 +135,8 @@ class PickFlow(unittest.TestCase):
         self.assertEqual(self.calls[:3], [('move', 'transport'), ('open', None), ('rank', None)])
         self.assertEqual(self.calls.count(('plan', None)), 1)   # no retry without the switch
 
-    def test_sim_default_plans_from_here_then_retries_from_transport(self):
-        self.params['/use_sim_time'] = True
+    def test_sim_profile_plans_from_here_then_retries_from_transport(self):
+        self.params['~open_set_pick_from_current_state'] = True   # what the sim launch profile passes
         self.assertFalse(self.pick())
         self.assertEqual(self.calls, [('open', None), ('rank', None), ('plan', None), ('move', 'transport'),
                                       ('rank', None), ('plan', None), ('topdown', None)])
@@ -170,7 +170,7 @@ class SeedAndBoundedStay(PickFlow):
         self.assertIs(p.ik_seed_state(state), state)
 
     def test_stay_offers_only_the_predicted_pass_grasps_then_transport_without_new_ik(self):
-        self.params['/use_sim_time'] = True
+        self.params['~open_set_pick_from_current_state'] = True
         p = self.p
         g1, g2 = NS(id='anygrasp_1', grasp_quality=0.9), NS(id='anygrasp_2', grasp_quality=0.8)
         p.grasp_planner = mock.Mock(make_grasps_msgs_from_candidates=lambda *a: [g1, g2])

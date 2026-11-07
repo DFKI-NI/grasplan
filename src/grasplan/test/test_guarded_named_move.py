@@ -49,7 +49,7 @@ class FakeArm:
 
 class TestGuardedNamedMove(unittest.TestCase):
     chain_stops = True   # ~mtc_cable_named_move_rope_stops; the default (False) only logs a chain stop
-    mode = 'enforce'    # ~mtc_cable_guard_named_moves (None: default from /use_sim_time)
+    mode = 'enforce'    # ~mtc_cable_guard_named_moves (None: the default, log)
     sim_time = True
 
     def param(self, name, default=None):   # no master
@@ -151,9 +151,9 @@ class TestGuardedNamedMove(unittest.TestCase):
         self.assertTrue(guarded_named_move(arm, 'home', self.guard))
         self.assertEqual((arm.gos, arm.executed), (1, []))
 
-    def test_default_mode_enforce_in_sim_log_on_the_real_robot(self):
+    def test_default_mode_is_log_whatever_the_sim_clock(self):
         self.mode = None
-        self.assertEqual(mpp.named_move_guard_mode(), 'enforce')
+        self.assertEqual(mpp.named_move_guard_mode(), 'log')   # also with the sim clock: the sim profile passes enforce
         self.sim_time = False
         self.assertEqual(mpp.named_move_guard_mode(), 'log')
 

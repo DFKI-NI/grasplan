@@ -422,11 +422,11 @@ class CableGuard:
 
 def named_move_guard_mode():
     '''~mtc_cable_guard_named_moves: enforce (refuse, replan, go via transport), log (move as without the guard, only
-    log what it would do) or off; default enforce in the sim (/use_sim_time) and log on the real robot (Oscar
+    log what it would do) or off; default log; the sim launch profile passes enforce (Oscar
     2026-09-28: the real named moves only log for now). Booleans of the old param: true enforce, false off.'''
     mode = rospy.get_param('~mtc_cable_guard_named_moves', None)
     if mode is None:
-        return 'enforce' if rospy.get_param('/use_sim_time', False) else 'log'
+        return 'log'
     if isinstance(mode, bool):
         return 'enforce' if mode else 'off'
     mode = str(mode).strip().lower()
@@ -1552,7 +1552,7 @@ class MtcPickPlace:
         placed with a few cm of gap next to a can only the octomap saw brushed and pushed it on the way down, #185).
         None when off, or without an octomap or a box shape of the held object.
         '''
-        if not rospy.get_param('~mtc_place_reject_octomap_occupied', rospy.get_param('/use_sim_time', False)):
+        if not rospy.get_param('~mtc_place_reject_octomap_occupied', False):
             return None
         try:
             request = GetPlanningSceneRequest()
@@ -2354,7 +2354,7 @@ class MtcPickPlace:
         3) and the fact says empty, like a close on air (#188: the bleach bottle held twice on the real robot, both
         picks failed as "closed on nothing"). With ~mtc_grasp_check_squeeze such a grasp closes on to fully closed:
         an object stalls the fingers short of it and the fact confirms it, on air they close fully and the pick fails
-        as before. Default on in the sim (/use_sim_time), off on the real robot until tested there (Oscar 2026-09-28).
+        as before. Off by default; the sim launch profile switches it on (Oscar 2026-09-28).
         '''
         if self.gripper_holds_object('after closing'):
             return True
@@ -2363,7 +2363,7 @@ class MtcPickPlace:
         width = close_posture.points[-1].positions[0] if close_posture.points else 0.0
         if width <= GRASP_CHECK_SQUEEZE_MIN_WIDTH:
             return False  # already sent to fully closed: nothing between the fingers
-        if not rospy.get_param('~mtc_grasp_check_squeeze', rospy.get_param('/use_sim_time', False)):
+        if not rospy.get_param('~mtc_grasp_check_squeeze', False):
             return False
         rospy.logwarn(f'mtc: the gripper reached its {width:.3f} m close width without an object: closing fully to '
                       'check whether the object is between the fingers')

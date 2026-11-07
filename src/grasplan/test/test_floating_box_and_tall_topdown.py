@@ -28,7 +28,7 @@ class TestFloatHeight(unittest.TestCase):
 class TestFloatingBoxAtTheTarget(Params):
     def setUp(self):
         super().setUp()
-        self.params['/use_sim_time'] = True
+        self.params['~drop_floating_boxes_at_target'] = 0.03   # what the sim launch profile passes
         self.target = (stamped(*PRINGLES[:2]), list(PRINGLES[2]))
 
     def drops(self, box, name='screwdriver_1'):
@@ -38,7 +38,8 @@ class TestFloatingBoxAtTheTarget(Params):
         self.assertTrue(self.drops(SCREWDRIVER))
 
     def test_real_robot_default_keeps_it(self):
-        self.params['/use_sim_time'] = False
+        self.params.pop('~drop_floating_boxes_at_target')
+        self.params['/use_sim_time'] = True   # the default never follows the sim clock
         self.assertFalse(self.drops(SCREWDRIVER))
         self.params['~drop_floating_boxes_at_target'] = 0.03
         self.assertTrue(self.drops(SCREWDRIVER))
