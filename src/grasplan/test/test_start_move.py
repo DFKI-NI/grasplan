@@ -93,7 +93,7 @@ class Base(unittest.TestCase):
     def param(self, name, default=None):   # no master
         if 'guard_named_moves' in name:
             return 'enforce'
-        if 'rope_stops' in name:   # a chain catch refuses, as in test_guarded_named_move
+        if 'named_move_carrier_stops' in name:   # a chain catch refuses, as in test_guarded_named_move
             return True
         return self.params.get(name, default)
 

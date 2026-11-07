@@ -41,7 +41,7 @@ apply_planning_scene. This also makes the execution preemptible, which the picku
 Optional, experimental arm cable guard (~mtc_cable_plan_check, old name ~mtc_cable_constraints, re-read on every goal): the cable model of
 mobipick_cable_entanglement (#118) turns into constraints on the joint path instead of joint limits that
 reject grasps (#120, #124). Every free motion (Connect) gets a MoveIt path constraint that keeps wrist_3 within
-half a turn of the angle where the tube is least wound (no extra winding), several solutions are planned, and
+half a turn of the angle where the cable carrier is least wound (no extra winding), several solutions are planned, and
 the cheapest one whose whole joint path keeps the cable model's stretch below ~mtc_cable_max_stretch is executed.
 With ~mtc_cable_replay_live_state (careful flag, off in code) the path is also replayed through the monitor's carrier
 link chain from the cable monitor's live chain, on top of the replay from a fresh chain: the path passes only when
@@ -94,8 +94,8 @@ from grasplan.tools.moveit_errors import arm_stop_text, moveit_code_text
 OCTOMAP_COLLISION_NAME = '<octomap>'
 
 # STOPGAP until the cable model refit (#118): default ~mtc_cable_max_stretch, sim and real. On the real robot the
-# guarded plans that caught or nearly caught the tube had a wrist stretch of -0.108 / -0.103, all clean ones
-# -0.126..-0.217 (#121), so the model's 0.0 (tube just taut) let tangling plans through. Revisit after the refit.
+# guarded plans that caught or nearly caught the cable carrier had a wrist stretch of -0.108 / -0.103, all clean ones
+# -0.126..-0.217, so the model's 0.0 (cable carrier just taut) let tangling plans through. Revisit after the refit.
 DEFAULT_CABLE_MAX_STRETCH = -0.115
 # the margin with the support anchor (the sim's wrist anchor), behind the careful flag ~mtc_cable_support_margin. On
 # the 629 real motions of 2026-09-27/28 the support anchor's geometric stretch of the five real cable stops lies at
@@ -231,10 +231,11 @@ class CableGuard:
     mobipick_cable_entanglement (doc/cable_model.md there, #118):
 
     - path constraint: wrist_3 stays within ~mtc_cable_wrist_3_half_window_deg of the neutral angle of the model's
-      wrist span (where the tube takes the short way around the joint), so no motion adds a turn of winding. The
-      model alone cannot see extra turns once the wrist_3 housing no longer holds the tube, hence this bound.
+      wrist span (where the cable carrier takes the short way around the joint), so no motion adds a turn of winding.
+      The model alone cannot see extra turns once the wrist_3 housing no longer holds the cable carrier, hence this
+      bound.
     - trajectory check: the stretch s = L_req / L_free - 1 of every span, evaluated along the whole joint path
-      (geometry only, no chain history), must stay below ~mtc_cable_max_stretch (0 = tube just taut; default
+      (geometry only, no chain history), must stay below ~mtc_cable_max_stretch (0 = cable carrier just taut; default
       DEFAULT_CABLE_MAX_STRETCH, a stopgap).
     '''
 
@@ -263,10 +264,9 @@ class CableGuard:
         )
 
     def update_params(self):
-        # the disc chain replay (the monitor's chain, #228); the parameter names keep the word rope from the removed
-        # radius rope so launch files and profiles stay valid
-        self.chain_check = bool(rospy.get_param('~mtc_cable_rope_check', True))
-        self.chain_rate = float(rospy.get_param('~mtc_cable_rope_rate', 10.0))
+        # the carrier link chain replay (the monitor's chain)
+        self.chain_check = bool(carrier_param('~mtc_cable_carrier_check', '~mtc_cable_rope_check', True))
+        self.chain_rate = float(carrier_param('~mtc_cable_carrier_rate', '~mtc_cable_rope_rate', 10.0))
         self.max_stretch = rospy.get_param('~mtc_cable_max_stretch', DEFAULT_CABLE_MAX_STRETCH)
         if getattr(self.cfg, 'wrist_anchor', None) == 'support' and rospy.get_param('~mtc_cable_support_margin', False):
             # careful flag, off in code; only with the support anchor (the tip anchor keeps its own margin)
@@ -339,15 +339,15 @@ class CableGuard:
 
     @timed('guard_replay')
     def chain_verdict(self, solution_msg):
-        '''the cable monitor's decision (disc chain with history, same model and thresholds) along the whole joint
-        path of the solution, from a freshly settled chain at its start (mobipick_cable_entanglement.path_check);
+        '''the cable monitor's decision (carrier link chain with history, same model and thresholds) along the whole
+        joint path of the solution, from a freshly settled chain at its start (mobipick_cable_entanglement.path_check);
         with ~mtc_cable_replay_live_state also from the monitor's live chain, which keeps what the motions before did:
         the path stops when either replay stops (the fresh one first), so the live chain never loosens the guard'''
         from mobipick_cable_entanglement.cable_model import CableModel
         from mobipick_cable_entanglement.path_check import carrier_replay
         if getattr(self, 'chain_model', None) is None:
             cfg = copy.deepcopy(self.cfg)
-            cfg.rope.enabled = True
+            cfg.cable_carrier.enabled = True
             self.chain_model = CableModel(rospy.get_param('robot_description'), cfg)
         samples, offset = [], 0.0
         for sub in solution_msg.sub_trajectory:
@@ -473,6 +473,19 @@ def announce_trajectory_start(source):
         rospy.logwarn(f'cable trajectory start not announced ({source}): {e}')
 
 
+def carrier_param(name, old_name, default):
+    '''
+    the parameter under its cable carrier name (the arm's cable guide is the cable carrier), else under its old rope
+    name (still read, warns once), else the default
+    '''
+    value = rospy.get_param(name, None)
+    if value is None:
+        value = rospy.get_param(old_name, None)
+        if value is not None:
+            rospy.logwarn_once(f'{old_name} is deprecated, use {name} (the arm cable guide is the cable carrier)')
+    return default if value is None else value
+
+
 def _plain_named_move(arm, name):
     '''the old named move: go, one retry after 1 s'''
     if arm.go():
@@ -524,12 +537,12 @@ def guarded_named_move(arm, name, guard, attempts=2, via=None, chain_stops=None,
     standard anygrasp view (-0.09) after a place (night19). A rejected plan is replanned (the planner is randomized) up
     to attempts times, then the move goes via ~mtc_cable_named_move_via (default [transport]); if that fails too,
     nothing more moves and False is returned with the reason logged. guard None: the old behaviour (go, one retry).
-    A chain replay stop only logs unless ~mtc_cable_named_move_rope_stops is true: it refused a re-pick the unguarded
+    A chain replay stop only logs unless ~mtc_cable_named_move_carrier_stops is true: it refused a re-pick the unguarded
     code does fine (suite 2026-09-28, #121). ~mtc_cable_guard_named_moves (see named_move_guard_mode) can make the
     whole guard log only: the arm then moves as without it and the checks are only logged.
     chain_stops: True/False decides for this move and its via legs whether a chain replay stop refuses a plan
     (the cable replay detour must not take a leg the chain replay would stop); None keeps
-    ~mtc_cable_named_move_rope_stops. report: a dict that collects the guard's verdict per plan
+    ~mtc_cable_named_move_carrier_stops. report: a dict that collects the guard's verdict per plan
     ('plans': [(pose, attempt, stretch, ok, span)]), the via pose taken ('via') and the last refusal ('reason').
     '''
     arm.set_named_target(name)
@@ -562,11 +575,11 @@ def guarded_named_move(arm, name, guard, attempts=2, via=None, chain_stops=None,
 def _plan_named_checked(arm, name, guard, attempts, w3, chain_stops=None, report=None):
     '''the enforce mode of guarded_named_move without the motion: plan arm's target (set by the caller, from its start
     state) up to attempts times until the cable guard passes a plan; w3 is the start's wrist_3 angle (rad, None if
-    unknown); chain_stops None: ~mtc_cable_named_move_rope_stops; report: see guarded_named_move. Returns
+    unknown); chain_stops None: ~mtc_cable_named_move_carrier_stops; report: see guarded_named_move. Returns
     (trajectory, '') or (None, reason).'''
     guard.update_params()
     if chain_stops is None:
-        chain_stops = rospy.get_param('~mtc_cable_named_move_rope_stops', False)
+        chain_stops = carrier_param('~mtc_cable_named_move_carrier_stops', '~mtc_cable_named_move_rope_stops', False)
     chain_stops = bool(chain_stops)
     lo, hi = guard.wrist_3_neutral - guard.half_window, guard.wrist_3_neutral + guard.half_window
     if w3 is not None and lo <= w3 <= hi:
@@ -1128,7 +1141,7 @@ class MtcPickPlace:
         '''
         after the cable guard rejected every plan of grasp: plan it once more turned about its approach axis
         (gripper_tcp +x, which is the wrist_3 axis, so only wrist_3 changes) by the angle the cable model predicts to
-        give the tube the most slack (#121); the guard checks the new plan as usual. Round objects
+        give the cable carrier the most slack; the guard checks the new plan as usual. Round objects
         (~yaw_free_objects, set per goal by pick.py) approached within TURN_ANY_ANGLE_MAX_TILT_DEG of straight down may
         turn by any angle, everything else only by 180 deg (the fingers are symmetric). Returns (turned grasp, task, roles) when that plan passed, else (None, None, None).
         '''

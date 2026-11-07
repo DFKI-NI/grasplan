@@ -1,6 +1,6 @@
-'''#121: the MTC cable guard also rejects a plan the sim monitor's disc chain would stop (the chain caught on the tool
-while the geometry stays slack, as in the two 2026-09-28 night sim stops). Fake MTC solution messages, no ROS master;
-needs the Mobipick image and mobipick_cable_entanglement.'''
+'''the MTC cable guard also rejects a plan the sim monitor's carrier link chain would stop (the chain caught on the
+tool while the geometry stays slack, as in the two 2026-09-28 night sim stops). Fake MTC solution messages, no ROS
+master; needs the Mobipick image and mobipick_cable_entanglement.'''
 import math
 import os
 import unittest
@@ -18,7 +18,7 @@ PLACE_END = [-90.4, -131.3, 140.3, -148.3, -91.0, 83.5]
 VIA = [-90.0, -100.0, 120.0, -100.0, -90.0, 180.0]
 ANYGRASP = [-90, -90, 114.6, -43, 90, 270]
 HOME = [0.0, -149.0, 139.2, -117.5, -90.0, 179.9]   # SRDF home
-# the committed disc chain (2026-10-01) catches on HOME -> PLACE_END (+0.18, geometry -0.24) and stays slack on
+# the committed carrier link chain (2026-10-01) catches on HOME -> PLACE_END (+0.18, geometry -0.24) and stays slack on
 # HOME -> ANYGRASP; the radius rope's catch PLACE_END -> VIA -> ANYGRASP (removed 2026-09-30) is slack for the chain
 CATCH = (HOME, PLACE_END)
 CLEAN = (HOME, ANYGRASP)
@@ -48,7 +48,7 @@ class TestChainGuard(unittest.TestCase):
         guard = CableGuard.__new__(CableGuard)              # without rospy params / robot_description
         guard.cfg, guard.model = cfg, CableModel(urdf, cfg)
         chain_cfg = copy.deepcopy(cfg)
-        chain_cfg.rope.enabled = True
+        chain_cfg.cable_carrier.enabled = True
         guard.chain_model = CableModel(urdf, chain_cfg)
         guard.wrist_3_neutral, guard.half_window = math.radians(165.7), math.radians(170.0)
         guard.wrist_3_joint = 'mobipick/ur5_wrist_3_joint'

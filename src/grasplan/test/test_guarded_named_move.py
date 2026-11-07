@@ -1,5 +1,6 @@
 '''#121: named-pose arm moves (anygrasp, observe, transport, home) are planned and cable-checked before they run.
-Fake MoveGroupCommander, the real CableGuard with the disc chain replay (fixture of test_cable_chain_guard); Mobipick image.'''
+Fake MoveGroupCommander, the real CableGuard with the carrier link chain replay (fixture of test_cable_chain_guard);
+Mobipick image.'''
 import math
 import unittest
 from unittest import mock
@@ -48,12 +49,12 @@ class FakeArm:
 
 
 class TestGuardedNamedMove(unittest.TestCase):
-    chain_stops = True   # ~mtc_cable_named_move_rope_stops; the default (False) only logs a chain stop
+    chain_stops = True   # ~mtc_cable_named_move_carrier_stops; the default (False) only logs a chain stop
     mode = 'enforce'    # ~mtc_cable_guard_named_moves (None: the default, log)
     sim_time = True
 
     def param(self, name, default=None):   # no master
-        if 'rope_stops' in name:
+        if 'named_move_carrier_stops' in name:
             return self.chain_stops
         if 'guard_named_moves' in name:
             return self.mode
@@ -111,7 +112,8 @@ class TestGuardedNamedMove(unittest.TestCase):
         self.assertEqual(arm.gos, 0)
 
     def test_chain_stop_only_logs_by_default(self):
-        # suite 2026-09-28: the rope check (now the chain) refused a re-pick the unguarded code does fine; log only
+        # suite 2026-09-28: the rope check (now the carrier link chain) refused a re-pick the unguarded code does fine;
+        # log only
         # unless asked for
         self.chain_stops = False
         catch = trajectory(*CATCH)
@@ -187,6 +189,31 @@ class TestGuardedNamedMove(unittest.TestCase):
         with mock.patch.object(mpp, 'announce_trajectory_start', lambda source: events.append(source)):
             self.assertFalse(guarded_named_move(arm, 'anygrasp', self.guard))
         self.assertEqual((events, arm.executed), ([], []))
+
+    def test_the_old_rope_parameter_names_still_work_and_the_new_ones_win(self):
+        # ~mtc_cable_rope_* became ~mtc_cable_carrier_*; the old names are read with a warning
+        new, old = '~mtc_cable_named_move_carrier_stops', '~mtc_cable_named_move_rope_stops'
+        with mock.patch.object(mpp.rospy, 'get_param', lambda n, d=None: True if n == old else d), \
+                mock.patch.object(mpp.rospy, 'logwarn_once') as warn:
+            self.assertTrue(mpp.carrier_param(new, old, False))
+            warn.assert_called_once()
+        with mock.patch.object(mpp.rospy, 'get_param', lambda n, d=None: {new: False, old: True}.get(n, d)), \
+                mock.patch.object(mpp.rospy, 'logwarn_once') as warn:
+            self.assertFalse(mpp.carrier_param(new, old, True))
+            warn.assert_not_called()
+        with mock.patch.object(mpp.rospy, 'get_param', lambda n, d=None: d):
+            self.assertTrue(mpp.carrier_param(new, old, True))
+
+    def test_the_guard_reads_its_chain_replay_switches_under_both_names(self):
+        guard = mpp.CableGuard.__new__(mpp.CableGuard)   # not the shared fixture: update_params sets every limit
+        guard.cfg = None
+        for check, rate in (('~mtc_cable_carrier_check', '~mtc_cable_carrier_rate'),
+                            ('~mtc_cable_rope_check', '~mtc_cable_rope_rate')):
+            params = {check: False, rate: 5.0}
+            with mock.patch.object(mpp.rospy, 'get_param', lambda n, d=None, p=params: p.get(n, d)), \
+                    mock.patch.object(mpp.rospy, 'logwarn_once'):
+                guard.update_params()
+            self.assertEqual((guard.chain_check, guard.chain_rate), (False, 5.0), check)
 
 
 if __name__ == '__main__':
