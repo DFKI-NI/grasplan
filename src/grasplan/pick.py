@@ -240,8 +240,8 @@ class PickTools:
         # once at startup (a missing server at startup is fatal) and reused for every request
         self.moveit_action_startup_timeout = rospy.get_param('~moveit_action_startup_timeout', 60.0)
         self.moveit_action_server_timeout = rospy.get_param('~moveit_action_server_timeout', 10.0)
-        # plan and execute the grasps with MoveIt Task Constructor instead of move_group's pickup action
-        self.use_mtc = rospy.get_param('~use_mtc', False)
+        # plan and execute the grasps with MoveIt Task Constructor (the default) instead of move_group's pickup action (false)
+        self.use_mtc = rospy.get_param('~use_mtc', True)
         # TODO: include octomap
 
         if self.anygrasp_server_timeout < 0 or self.anygrasp_result_timeout < 0 or self.gripper_action_timeout < 0:

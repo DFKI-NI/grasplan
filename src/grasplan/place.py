@@ -126,8 +126,8 @@ class PlaceTools:
         self.poses_to_go_before_place = rospy.get_param('~poses_to_go_before_place', [])
         self.max_batch_size = rospy.get_param('~max_batch_size', 20)
         self.clear_octomap_flag = rospy.get_param('~clear_octomap', False)
-        # plan and execute place (and insert) with MoveIt Task Constructor instead of move_group's place action
-        self.use_mtc = rospy.get_param('~use_mtc', False)
+        # plan and execute place (and insert) with MoveIt Task Constructor (the default) instead of move_group's place action (false)
+        self.use_mtc = rospy.get_param('~use_mtc', True)
 
         self.plane_vis_pub = rospy.Publisher('~support_plane_as_marker', Marker, queue_size=1, latch=True)
         self.place_poses_pub = rospy.Publisher('~place_poses', ObjectList, queue_size=50)
