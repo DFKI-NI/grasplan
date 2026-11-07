@@ -57,6 +57,7 @@ class MotionFailureText(unittest.TestCase):
 
 class ArmStop(unittest.TestCase):
     def mode(self, value, controllers=()):
+        # one proxy answers both the safety mode and the controller list
         proxy = mock.MagicMock(return_value=NS(safety_mode=NS(mode=value), controller=list(controllers)))
         with mock.patch.object(moveit_errors.rospy, 'wait_for_service'), \
                 mock.patch.object(moveit_errors.rospy, 'ServiceProxy', return_value=proxy):
@@ -71,6 +72,18 @@ class ArmStop(unittest.TestCase):
         from ur_dashboard_msgs.msg import SafetyMode
         self.assertEqual(self.mode(SafetyMode.NORMAL), '')
 
+    def test_emergency_stop_takes_an(self):
+        from ur_dashboard_msgs.msg import SafetyMode
+        self.assertEqual(self.mode(SafetyMode.ROBOT_EMERGENCY_STOP),
+                         '; the arm is in an emergency stop (UR safety mode ROBOT_EMERGENCY_STOP)')
+
+    def test_a_stopped_arm_controller_is_named_when_the_safety_mode_is_normal(self):
+        from ur_dashboard_msgs.msg import SafetyMode
+        text = self.mode(SafetyMode.NORMAL, [NS(name='arm_velocity_controller', state='running'),
+                                             NS(name='arm_controller', state='stopped')])
+        self.assertTrue(text.startswith('; the arm controller arm_controller is not running (stopped): '), text)
+        self.assertEqual(self.mode(SafetyMode.NORMAL, [NS(name='arm_controller', state='running')]), '')
+
     def test_no_dashboard_says_nothing(self):
         def missing(name, timeout):
             raise moveit_errors.rospy.ROSException('timeout exceeded')
@@ -79,8 +92,17 @@ class ArmStop(unittest.TestCase):
             self.assertEqual(moveit_errors.arm_stop_text(), '')
 
 
+class ArmStopWithoutUrMessages(unittest.TestCase):
+    def test_a_robot_without_the_ur_messages_still_gets_the_controller_check(self):
+        with mock.patch.dict('sys.modules', {'ur_dashboard_msgs.msg': None, 'ur_dashboard_msgs.srv': None}), \
+                mock.patch.object(moveit_errors, 'arm_controller_text', return_value='; words') as controller, \
+                mock.patch.object(moveit_errors.rospy, 'logwarn'):
+            self.assertEqual(moveit_errors.arm_stop_text(), '; words')
+        self.assertIn('deadline', controller.call_args.kwargs)
+
+
 class ArmStopDeadline(unittest.TestCase):
-    '''A dashboard that is found but never replies must not hold back the motion's failure'''
+    '''A dashboard or controller manager that is found but never replies must not hold back the motion's failure'''
     def setUp(self):
         moveit_errors._waiting_calls.clear()
         self.release = threading.Event()
@@ -121,6 +143,11 @@ class ArmStopDeadline(unittest.TestCase):
         self.assertLess(took, 0.6)
         self.assertTrue(any('no reply within' in w for w in warnings), warnings)
 
+    def test_a_silent_controller_manager_returns_by_the_deadline(self):
+        text, took, warnings = self.timed(self.services({'controller_manager/list_controllers'}), timeout=0.3)
+        self.assertEqual(text, '')
+        self.assertLess(took, 0.6)
+
     def test_a_stalled_discovery_returns_by_the_deadline(self):
         dashboard = 'ur_hardware_interface/dashboard/get_safety_mode'
         text, took, _ = self.timed(self.services({dashboard}, stall_discovery=True), timeout=0.3)
@@ -152,6 +179,15 @@ class ArmStopDeadline(unittest.TestCase):
                 mock.patch.object(moveit_errors.rospy, 'logwarn') as warn:
             self.assertEqual(moveit_errors.arm_stop_text(timeout=0.3), '')
         self.assertTrue(any('reply without safety_mode' in c.args[0] for c in warn.call_args_list))
+
+    def test_the_controller_check_shares_the_deadline_of_the_whole_check(self):
+        dashboard = 'ur_hardware_interface/dashboard/get_safety_mode'
+        text, took, warnings = self.timed(self.services({dashboard, 'controller_manager/list_controllers'}),
+                                          timeout=0.3)
+        self.assertLess(took, 0.6)
+        self.assertNotIn('controller_manager/list_controllers', self.calls)
+        self.assertTrue(any('no time left' in w for w in warnings), warnings)
+
 
 class Stage:
     '''an MTC stage: children by index, or a leaf with solutions and failures'''

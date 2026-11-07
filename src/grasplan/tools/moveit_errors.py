@@ -181,9 +181,10 @@ def _reply_by(service, service_type, deadline, what, discovery=0.5):
 def arm_stop_text(service='ur_hardware_interface/dashboard/get_safety_mode', timeout=1.0):
     '''
     "; the arm is in a protective stop (UR safety mode PROTECTIVE_STOP)" while the UR safety mode stops the arm,
-    else ''. Asked after a failed motion so the planner hears about a stop (the sim cable monitor presses one) in
-    the failure itself and not only from a later event. Never raises and returns within timeout seconds: a missing or
-    silent dashboard gives '' and a log.
+    else the arm controller's state (arm_controller_text) or ''. Asked after a failed motion so the planner hears about
+    a stop (the sim cable monitor presses one) in the failure itself and not only from a later event. Never raises and
+    returns within timeout seconds for the whole check: a missing or silent dashboard or controller manager gives ''
+    and a log.
     '''
     deadline = time.monotonic() + timeout
     try:
@@ -191,11 +192,34 @@ def arm_stop_text(service='ur_hardware_interface/dashboard/get_safety_mode', tim
         from ur_dashboard_msgs.srv import GetSafetyMode
     except ImportError as error:
         rospy.logwarn(f'arm safety mode not checked: {error}')
-        return ''
+        return arm_controller_text(deadline=deadline)
     reply = _reply_by(service, GetSafetyMode, deadline, 'arm safety mode')
     if reply is None:
-        return ''
+        return arm_controller_text(deadline=deadline)
     for name, words in _STOPPING_SAFETY_MODES.items():
         if getattr(SafetyMode, name, None) == reply.safety_mode.mode:
-            return f'; the arm is in a {words} (UR safety mode {name})'
+            article = 'an' if words[0] in 'aeiou' else 'a'
+            return f'; the arm is in {article} {words} (UR safety mode {name})'
+    return arm_controller_text(deadline=deadline)
+
+
+def arm_controller_text(service='controller_manager/list_controllers', name='arm_controller', deadline=None):
+    '''
+    "; the arm controller arm_controller is not running (stopped): ..." when the controller that runs the arm
+    trajectories (name) is loaded but not running, else ''. A stopped joint
+    trajectory controller rejects every goal (INVALID_GOAL, no text), e.g. while an e-stop is pressed or after a stop
+    was released again before the safety mode was asked. Never raises and returns by deadline (time.monotonic(),
+    default half a second from now): no controller manager or no reply gives '' and a log.
+    '''
+    deadline = time.monotonic() + 0.5 if deadline is None else deadline
+    try:
+        from controller_manager_msgs.srv import ListControllers
+    except ImportError as error:
+        rospy.logwarn(f'arm controller state not checked: {error}')
+        return ''
+    reply = _reply_by(service, ListControllers, deadline, 'arm controller state')
+    for controller in reply.controller if reply is not None else ():
+        if controller.name == name and controller.state != 'running':
+            return (f'; the arm controller {name} is not running ({controller.state}): an e-stop, a protective stop or '
+                    f'a controller switch stopped it, so it rejects arm motions until it runs again')
     return ''
