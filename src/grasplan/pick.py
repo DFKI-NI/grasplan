@@ -71,7 +71,7 @@ from grasplan.tools.action_client_helper import ActionClientHelper
 from grasplan.tools.stage_timing import TIMER, action, timed, watch_server
 from grasplan.tools.gripper_envelope import fingertip_envelope, lowest_point_offset
 from grasplan.tools.finger_series import closing_axis_tilt_deg
-from grasplan.tools.pad_footprint import width_across_pads
+from grasplan.tools.pad_footprint import pinch_width, width_across_pads
 from grasplan.tools.pad_gap import (
     box_extent_along,
     box_max_x_in_tcp,
@@ -169,6 +169,11 @@ def strip_box_padding(name, size, reported=0.0):
     rospy.loginfo(f'{name}: detector box padding of {padding * 100:.1f} cm ({source}) taken off every side, size '
                   f'{[round(float(v), 3) for v in size]} -> {[round(v, 3) for v in stripped]}')
     return stripped
+
+
+def padding_left(reported, detected_side, stripped_side):
+    '''the detector's padding per side (m) still in a box whose side went from detected_side to stripped_side'''
+    return max(float(reported) - (float(detected_side) - float(stripped_side)) / 2.0, 0.0)
 
 
 class PickTools:
@@ -627,12 +632,15 @@ class PickTools:
         perceived = {f'{o.class_id}_{o.instance_id}' for o in resp.poses.objects} | {external_object_name}
         supports = self.support_boxes(exclude=perceived) if self.clamp_object_boxes_to_support else []
         target = None   # (pose, size) of the verified open-set target: perceived boxes overlapping it are left out
+        self.target_padding_left = 0.0   # the detector's padding per side still in the target's box
         if external_object is not None:
             target_pose = PoseStamped()
             target_pose.header.frame_id = external_object.header.frame_id or self.global_reference_frame
             target_pose.pose = copy.deepcopy(external_object.pose)
             target_size = [external_object.size.x, external_object.size.y, external_object.size.z]
+            detected_side = target_size[0]
             target_size = strip_box_padding(external_object_name, target_size, external_object.box_padding)
+            self.target_padding_left = padding_left(external_object.box_padding, detected_side, target_size[0])
             self.complete_one_sided_box(external_object_name, target_pose, target_size)
             target = (target_pose, target_size)
         if len(resp.poses.objects) > 0:
@@ -1675,13 +1683,15 @@ class PickTools:
             opening = (width + offset) if (open_set and width) else None
             same_frame = grasp.grasp_pose.header.frame_id == frame
             box_width, source, confidence = None, 'opening' if opening else None, 'low'
+            width_pinch = None
             if bounding_box and object_pose is not None and same_frame:
                 o = object_pose.pose.orientation
                 box = tf.transformations.quaternion_matrix([o.x, o.y, o.z, o.w])
                 box[:3, 3] = [object_pose.pose.position.x, object_pose.pose.position.y, object_pose.pose.position.z]
                 if open_set:   # closed-set grasps keep the box extent along the finger axis, measured only
-                    box_width, source, confidence = width_across_pads(
-                        bounding_box, np.linalg.inv(tcp).dot(box), opening)
+                    box_in_tcp = np.linalg.inv(tcp).dot(box)
+                    box_width, source, confidence = width_across_pads(bounding_box, box_in_tcp, opening)
+                    width_pinch = pinch_width(bounding_box, box_in_tcp, opening, getattr(self, 'target_padding_left', 0.0))
                 else:
                     box_width, source, confidence = self.box_width_for_grasp(grasp, object_pose, bounding_box), 'box', 'medium'
             # the AnyGrasp opening carries a margin over the object (T2: 10-30 mm), so it is only an upper bound; the
@@ -1689,7 +1699,8 @@ class PickTools:
             # open-set objects: a box with two equal sides is confidence low)
             perceived, disagree = perceived_width(opening, box_width)
             extent = self.box_width_for_grasp(grasp, object_pose, bounding_box) if same_frame else None
-            info = {'width': perceived, 'width_open': opening, 'width_box': box_width, 'width_extent': extent,
+            info = {'width': perceived, 'width_open': opening, 'width_box': box_width, 'width_pinch': width_pinch,
+                    'width_extent': extent,
                     'tilt_deg': closing_axis_tilt_deg(tcp[:3, :3]) if same_frame else None, 'disagree': disagree,
                     'source': source, 'confidence': confidence,
                     'open_set': open_set, 'max_depth': 0.0, 'reason': 'no box'}

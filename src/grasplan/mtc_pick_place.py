@@ -2083,6 +2083,7 @@ class MtcPickPlace:
             return None
         return {'object': goal.target_name, 'grasp_id': grasp.id, 'width': info.get('width'),
                 'width_open': info.get('width_open'), 'width_box': info.get('width_box'),
+                'width_pinch': info.get('width_pinch'),
                 'width_extent': info.get('width_extent'), 'tilt_deg': info.get('tilt_deg'),
                 'disagree': info.get('disagree'),
                 'source': info.get('source'), 'confidence': info.get('confidence'),
@@ -2134,14 +2135,15 @@ class MtcPickPlace:
     def pinched(self, request):
         '''
         careful flag ~grasp_standing_tilt_band, after the close held: the pads sit on a rim or a corner when the
-        finger gap is below PINCH_GAP_RATIO (0.7, ~grasp_pinch_gap_ratio) of the object's width across the pads (the box
-        width of the grasp, the reading the re-grasp uses; open-set grasps only: a closed-set close is bounded by its
-        configured width). True sets failure_reason ("pinch (gap X of width Y)"); the failed close opens the gripper
+        finger gap is below PINCH_GAP_RATIO (0.7, ~grasp_pinch_gap_ratio) of the object's width across the pads (pick.py's
+        pinch_width of the grasp: no detector padding, and a box closed near one side counts that side, it turns flat
+        between the pads; else the box width the re-grasp reads; open-set grasps only: a closed-set close is bounded by
+        its configured width). True sets failure_reason ("pinch (gap X of width Y)"); the failed close opens the gripper
         like a close on nothing. Every check is one log line. A grasp whose closing axis is tilted more than
         ~grasp_pinch_max_tilt_deg (25, the band edge) out of the horizontal is not checked (log line): the box length along
         a tilted axis is no width across the pads (a can at 53 deg read 111 mm for 66 mm and a good grasp failed).
         '''
-        width = request.get('width_box')
+        width = request.get('width_pinch') or request.get('width_box')
         if not request.get('open_set', True) or not width:
             return False
         tilt, max_tilt = request.get('tilt_deg'), rospy.get_param('~grasp_pinch_max_tilt_deg', PINCH_MAX_TILT_DEG)
@@ -2156,7 +2158,8 @@ class MtcPickPlace:
         ratio = rospy.get_param('~grasp_pinch_gap_ratio', PINCH_GAP_RATIO)
         pinch = is_pinch(gap, width, ratio)
         rospy.loginfo(f"mtc: pinch check: {request['object']} grasp {request['grasp_id']} gap {gap * 1000:.0f} mm "
-                      f"width_box {width * 1000:.0f} mm ratio {gap / width:.2f} (limit {ratio:.2f}) conf "
+                      f"width {width * 1000:.0f} mm (box footprint {(request.get('width_box') or width) * 1000:.0f}) "
+                      f"ratio {gap / width:.2f} (limit {ratio:.2f}) conf "
                       f"{request.get('confidence')}: {'PINCH' if pinch else 'ok'}")
         if pinch:
             self.failure_reason = (f"pinch (gap {gap * 1000:.0f} of width {width * 1000:.0f} mm): the fingertips hold "

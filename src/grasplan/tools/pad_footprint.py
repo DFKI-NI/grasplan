@@ -6,6 +6,7 @@ half the pad width), computed geometrically for any pose of the object in the TC
 functions (numpy, scipy), no ROS.
 '''
 import logging
+import math
 import numpy as np
 
 from grasplan.tools.pad_gap import PAD_LENGTH_M, PAD_WIDTH_M
@@ -67,3 +68,26 @@ def width_across_pads(dims, object_in_tcp, opening=None):
             return full, 'box-extent', 'low'
         width = found
     return width, source, confidence
+
+
+PINCH_SIDE_MAX_OFF_DEG = 20.0   # a closing axis this close to a box side turns the free box flat between the pads
+MIN_PINCH_SIDE_M = 0.005
+
+
+def pinch_width(dims, object_in_tcp, opening=None, padding=0.0, side_max_off_deg=PINCH_SIDE_MAX_OFF_DEG):
+    '''
+    (m) the object's width a finger gap is judged against after a close that held, for the rim pinch check. Not the footprint
+    width as it stands: the perceived box still carries the detector's padding (``padding`` per side, what is left of it), and
+    the footprint is the width at the pose before the close, while the closing pads turn a free box flat between them. A box
+    9 deg off its 45 mm side, perceived 53 mm with a padding of 5 mm: footprint 60 mm, the pads end at about 40 mm and that is
+    a good grasp. So the footprint of the box without the padding, and at most the box side nearest the closing axis when the
+    axis is within ``side_max_off_deg`` of it. Further off (a jaw across the diagonal) the footprint stays: there the pads
+    really close on two edges.
+    '''
+    sides = [max(float(side) - 2.0 * float(padding), MIN_PINCH_SIDE_M) for side in dims]
+    width = width_across_pads(sides, object_in_tcp, opening)[0]
+    closing_along_sides = np.abs(np.asarray(object_in_tcp, dtype=float)[1, :3])   # the TCP y on the box axes
+    nearest = int(np.argmax(closing_along_sides))
+    if math.degrees(math.acos(min(1.0, float(closing_along_sides[nearest])))) <= side_max_off_deg:
+        width = min(width, sides[nearest])
+    return width

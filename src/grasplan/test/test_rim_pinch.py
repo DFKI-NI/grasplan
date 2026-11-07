@@ -2,11 +2,13 @@
 the object's width across the pads is a pinch and fails the grasp before the attach; a closing axis tilted beyond 25 deg
 is not checked (the box length along it is no width). Values from a sim table of 31 picks. Fake MTC (no ROS master);
 needs the Mobipick image for the module imports.'''
+import math
 import unittest
 from types import SimpleNamespace as NS
 from unittest import mock
 
-from moveit_msgs.msg import MoveItErrorCodes
+from geometry_msgs.msg import PoseStamped
+from moveit_msgs.msg import Grasp, MoveItErrorCodes
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 import grasplan.mtc_pick_place as mpp
@@ -136,6 +138,59 @@ class TestPinchCheck(unittest.TestCase):
 
     def test_the_pad_gap_table_agrees_with_the_inverse(self):
         self.assertAlmostEqual(pad_gap(theta_for_gap(0.040)), 0.040, delta=0.002)
+
+
+class TestPinchWidthIsPreferred(TestPinchCheck):
+    def test_the_pinch_width_decides_and_the_log_names_both(self):
+        # the sim's box: footprint 60 mm with the padding and off its side, 43 mm without; the pads ended at 40 mm
+        m = self.mtc(0.040, {'width_box': 0.060, 'width_pinch': 0.043, 'tilt_deg': 3.0})
+        request = m.regrasp_request(Goal, FakeGrasp)
+        with mock.patch.object(mpp.rospy, 'loginfo') as log:
+            self.assertFalse(m.pinched(request))
+        self.assertIn('width 43 mm (box footprint 60)', log.call_args[0][0])
+
+    def test_without_it_the_box_width_decides(self):
+        m = self.mtc(0.040, {'width_box': 0.060, 'tilt_deg': 3.0})
+        self.assertTrue(m.pinched(m.regrasp_request(Goal, FakeGrasp)))
+
+
+class TestWiringInThePickNode(unittest.TestCase):
+    def setUp(self):
+        import grasplan.pick as pick
+        self.pick = pick
+        patcher = mock.patch.object(pick.rospy, 'get_param', lambda name, default=None: {'~grasp_standing_tilt_band': True}.get(name, default))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def info(self, padding_left):
+        tools = self.pick.PickTools.__new__(self.pick.PickTools)
+        tools.mtc = NS(regrasp_info={})
+        tools.grasp_planner = NS()
+        tools.target_padding_left = padding_left
+        # TCP at the origin: approach x, closing y; the box 9 deg off its thin side, in the same frame
+        turn = math.radians(9.0) / 2.0
+        grasp = Grasp(id='g1')
+        grasp.grasp_pose.header.frame_id = 'map'
+        grasp.grasp_pose.pose.orientation.z, grasp.grasp_pose.pose.orientation.w = math.sin(turn), math.cos(turn)
+        box = PoseStamped()
+        box.header.frame_id = 'map'
+        box.pose.orientation.w = 1.0
+        tools.note_regrasp_info([grasp], [0.09], box, [0.102, 0.053, 0.179], '', True)
+        return tools.mtc.regrasp_info['g1']
+
+    def test_the_pinch_width_reaches_the_request_without_the_padding(self):
+        info = self.info(0.005)
+        self.assertAlmostEqual(info['width_pinch'], 0.043)
+        self.assertGreater(info['width_box'], 0.055)   # the re-grasp reads the box width as before
+
+    def test_a_box_without_padding_left_counts_the_side_as_it_is(self):
+        self.assertAlmostEqual(self.info(0.0)['width_pinch'], 0.053)
+
+    def test_what_is_left_of_the_padding(self):
+        self.assertAlmostEqual(self.pick.padding_left(0.01, 0.063, 0.063), 0.01)      # nothing taken off
+        self.assertAlmostEqual(self.pick.padding_left(0.01, 0.063, 0.043), 0.0)       # all taken off
+        self.assertAlmostEqual(self.pick.padding_left(0.01, 0.063, 0.053), 0.005)     # half taken off
+        self.assertAlmostEqual(self.pick.padding_left(0.0, 0.063, 0.053), 0.0)        # none reported, some configured
 
 
 if __name__ == '__main__':
