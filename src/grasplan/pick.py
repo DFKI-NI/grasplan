@@ -187,6 +187,20 @@ def padding_left(reported, detected_side, stripped_side):
     return max(float(reported) - (float(detected_side) - float(stripped_side)) / 2.0, 0.0)
 
 
+def no_open_set_grasp_reason(name, support, offered, clear):
+    '''
+    why no open-set grasp of name is left to offer: AnyGrasp gave none (offered 0), none keeps the fingertips clear of
+    the support (clear 0), or none of the clear ones has an IK solution (the IK pre-filter, no collision check: the
+    grasp is out of the arm's reach from where the robot stands)
+    '''
+    if not offered:
+        return f'no open-set grasp of {name}: the grasp generator offered none'
+    if not clear:
+        return f'no open-set grasp of {name} keeps the fingertips clear of {support} ({offered} offered)'
+    return (f'none of the {clear} open-set grasps of {name} that keep the fingertips clear of {support} has an IK '
+            f'solution ({offered} offered): out of the arm\'s reach from where the robot stands')
+
+
 class PickTools:
     def __init__(self):
 
@@ -1215,6 +1229,7 @@ class PickTools:
         '''
         rospy.loginfo(f'attempting to pick object : {object_name_as_string}')
         self.pick_failure_reason = ''   # only this attempt's check counts (the AnyGrasp pick may try twice)
+        self.topdown_fallback_reason = ''   # why no open-set grasp was offered, when only the fallback was
         if len(ignore_object_list) > 0:
             rospy.logwarn(f'the following objects: {ignore_object_list} will be ignored from the planning scene')
 
@@ -1337,7 +1352,7 @@ class PickTools:
             )
             self.note_regrasp_info(grasps, [None] * len(grasps), object_pose, bounding_box, support_surface_name, False)
         else:
-            grasps = []
+            grasps, candidates = [], []
             self.grasp_funnel_start(object_to_pick.get_object_class_and_id_as_string(), object_pose)
             if external_grasp_candidates:
                 grasps = self.grasp_planner.make_grasps_msgs_from_candidates(
@@ -1362,13 +1377,14 @@ class PickTools:
                 if self.pick_start_failed:
                     return self.start_pose_failed()
             if not grasps:
-                rospy.logwarn(f'no open-set grasp of {object_to_pick.get_object_class_and_id_as_string()} keeps the '
-                              f'fingertips clear of {support_surface_name}')
+                self.topdown_fallback_reason = no_open_set_grasp_reason(
+                    object_to_pick.get_object_class_and_id_as_string(), support_surface_name,
+                    len(external_grasp_candidates or []), len(candidates))
+                rospy.logwarn(f'{self.topdown_fallback_reason}: trying the top-down fallback')
                 grasps = self.topdown_fallback_grasps(object_to_pick, object_pose, bounding_box, support_surface_name)
                 self.grasp_funnel('topdown_fallback', grasps)
                 if not grasps:
-                    return self.fail(f'no grasp of {object_to_pick.get_object_class_and_id_as_string()} keeps the '
-                                     f'fingertips clear of {support_surface_name} and the top-down fallback found none')
+                    return self.fail(f'{self.topdown_fallback_reason} and the top-down fallback found none')
 
         # clear octomap from the planning scene if needed
         if self.clear_octomap_flag:
@@ -1463,6 +1479,7 @@ class PickTools:
                 print_moveit_error(result)  # only print moveit error if result is different than None
             if not self.failure_text():   # the MTC reason (named code, stop) is the better one when it exists
                 self.fail(motion_failure_text('the pick', result))
+            self.add_fallback_reason()
             if self.mtc is not None and self.mtc.executed and not self.pick_action_server.is_preempt_requested():
                 self.retract_after_failure('pick')
         return False
@@ -1884,6 +1901,18 @@ class PickTools:
                           f'{max_backoff * 100:.1f} cm back): '
                           f'{", ".join(dropped)}')
         return kept
+
+    def add_fallback_reason(self):
+        '''
+        the pick failed after only the top-down fallback grasps were planned: its failure text also says why no
+        open-set grasp was offered (e.g. none within the arm's reach), not only that the fallback found no plan
+        '''
+        why = getattr(self, 'topdown_fallback_reason', '')
+        if not why:
+            return
+        mtc = getattr(self, 'mtc', None)
+        reason = getattr(self, 'pick_failure_reason', '') or (mtc.failure_reason if mtc is not None else '')
+        self.fail(f'{reason} (only the top-down fallback grasps were tried: {why})')
 
     def fail(self, reason):
         '''Log why the pick cannot go on and keep it for the action's status text; returns False'''
