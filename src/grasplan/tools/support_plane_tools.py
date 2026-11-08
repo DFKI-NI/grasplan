@@ -19,10 +19,13 @@
 # SOFTWARE.
 
 import copy
+import os
 import random
 import rospy
 import tf
 import math
+import numpy as np
+import yaml
 
 from std_msgs.msg import ColorRGBA
 from visualization_msgs.msg import Marker
@@ -79,8 +82,72 @@ OBJECT_HEIGHTS = {
 }
 
 
+# classes whose mesh frame lies flat (z is its smallest extent) and that rest upright: their place and insert
+# poses roll the model by -pi/2 about x so the mesh y axis points up. This is the resting pose grasplan chooses; it
+# cannot be read from the mesh (a mesh has no preferred resting side), so the choice stays a named constant.
+UPRIGHT_ROLL_CLASSES = ['power_drill_with_grip', 'hot_glue_gun', 'bleach', 'mustard', 'soup', 'meat']
+
+
+def resting_roll(object_class):
+    '''roll (rad) applied to the model of a closed-set object in its place and insert poses'''
+    return -math.pi / 2.0 if object_class in UPRIGHT_ROLL_CLASSES else 0.0
+
+
+def _object_package_config(file_name, package='pbr_objects'):
+    import rospkg
+
+    path = os.path.join(rospkg.RosPack().get_path(package), 'config', file_name)
+    with open(path) as config_file:
+        return yaml.safe_load(config_file)
+
+
+def mesh_resting_height(object_class, dimensions=None, model_transforms=None):
+    '''
+    resting height (m) of a closed-set object read from the bounding box of its recognised mesh (`dimensions.yaml` of
+    pbr_objects, cm along the mesh x, y, z): the box is turned like the object stands, first by the optional model
+    transform of the detector, then by the roll of its resting pose, and the vertical extent is taken. Returns None
+    when the class has no box.
+    dimensions, model_transforms : the parsed config files (read from pbr_objects when None)
+    '''
+    if dimensions is None:
+        dimensions = _object_package_config('dimensions.yaml').get('dimensions', {})
+    if model_transforms is None:
+        model_transforms = _object_package_config('model_transforms.yaml').get('model_transforms', {})
+    box = dimensions.get(object_class)
+    if box is None:
+        return None
+    extent = np.abs(np.array(box, dtype=float)) / 100.0
+    if object_class in model_transforms:
+        extent = np.abs(np.array(model_transforms[object_class], dtype=float)[:3, :3]).dot(extent)
+    roll = resting_roll(object_class)
+    # a roll about x mixes y and z only
+    return abs(math.sin(roll)) * extent[1] + abs(math.cos(roll)) * extent[2]
+
+
+def object_height(object_class, use_mesh_heights=False):
+    '''
+    resting height of a closed-set object: the hand-typed table value, or with use_mesh_heights (feature flag
+    `use_mesh_object_heights`) the mesh bounding box value when the class has one. The table also tells which classes
+    are known: a class outside OBJECT_HEIGHTS raises KeyError whatever the flag says.
+    '''
+    table_height = OBJECT_HEIGHTS[object_class]
+    if not use_mesh_heights:
+        return table_height
+    try:
+        mesh_height = mesh_resting_height(object_class)
+    except Exception as exception:  # no pbr_objects or a broken config: keep the table
+        rospy.logwarn_once(f'mesh heights unavailable ({exception}), using the height table')
+        return table_height
+    return table_height if mesh_height is None else mesh_height
+
+
 def compute_object_height_for_insertion(
-    object_class_tbi, support_obj_class, gap_between_objects=0.02, object_tbi_height=None, support_obj_height=None
+    object_class_tbi,
+    support_obj_class,
+    gap_between_objects=0.02,
+    object_tbi_height=None,
+    support_obj_height=None,
+    use_mesh_heights=False,
 ):
     '''
     height of the insert pose above the support object centre: half of each object plus a gap
@@ -88,15 +155,16 @@ def compute_object_height_for_insertion(
     object_tbi_height, support_obj_height : measured heights (e.g. from the planning scene or pose selector) for
         objects that are not in OBJECT_HEIGHTS, such as open-set objects picked through AnyGrasp; when given they
         take precedence over the table
+    use_mesh_heights : read the table classes' heights from their mesh boxes (flag `use_mesh_object_heights`)
     '''
     if object_tbi_height is None:
         if object_class_tbi not in OBJECT_HEIGHTS:
             raise ValueError(f'unknown height of object to insert: {object_class_tbi}, pass object_tbi_height')
-        object_tbi_height = OBJECT_HEIGHTS[object_class_tbi]
+        object_tbi_height = object_height(object_class_tbi, use_mesh_heights)
     if support_obj_height is None:
         if support_obj_class not in OBJECT_HEIGHTS:
             raise ValueError(f'unknown height of support object: {support_obj_class}, pass support_obj_height')
-        support_obj_height = OBJECT_HEIGHTS[support_obj_class]
+        support_obj_height = object_height(support_obj_class, use_mesh_heights)
     return (support_obj_height / 2.0) + (object_tbi_height / 2.0) + gap_between_objects
 
 
@@ -120,9 +188,7 @@ def gen_insert_poses_from_obj(
     roll = 0.0
     pitch = 0.0
     yaw = 0.0
-    # HACK: object specific rotations
-    if object_class in ['power_drill_with_grip', 'hot_glue_gun', 'bleach', 'mustard', 'soup', 'meat']:
-        roll = -math.pi / 2.0
+    roll = resting_roll(object_class)
 
     if not same_orientation_as_support_obj:
         for i in range(8):
@@ -143,7 +209,7 @@ def gen_insert_poses_from_obj(
             support_object_pose.pose.orientation.w,
         ]
         euler_rot = tf.transformations.euler_from_quaternion(q)
-        if object_class in ['power_drill_with_grip', 'hot_glue_gun', 'bleach', 'mustard', 'soup', 'meat']:
+        if roll != 0.0:
             q_new = tf.transformations.quaternion_from_euler(
                 euler_rot[0] + roll, euler_rot[1], euler_rot[2]
             )  # yaw + 180 degree
@@ -158,7 +224,7 @@ def gen_insert_poses_from_obj(
         object_pose_msg.instance_id = insert_poses_id
         object_list_msg.objects.append(copy.deepcopy(object_pose_msg))
         insert_poses_id += 1
-        if object_class in ['power_drill_with_grip', 'hot_glue_gun', 'bleach', 'mustard', 'soup', 'meat']:
+        if roll != 0.0:
             q_new = tf.transformations.quaternion_from_euler(
                 euler_rot[0] + roll, euler_rot[1], euler_rot[2] + 3.14159
             )  # yaw + 180 degree
@@ -279,9 +345,7 @@ def gen_place_poses_from_plane(
         roll = 0.0
         pitch = 0.0
         yaw = round(random.uniform(0.0, yaw_range), 4)
-        # HACK: object specific rotations
-        if object_class in ['power_drill_with_grip', 'hot_glue_gun', 'bleach', 'mustard', 'soup', 'meat']:
-            roll = -math.pi / 2.0
+        roll = resting_roll(object_class)
         if number_of_poses > 20:
             rospy.loginfo(f'trying {len(yaws)} yaws for each pose')
             for yaw in yaws:
@@ -449,10 +513,10 @@ def attached_obj_height(support_object: str, planning_scene: PlanningScene, offs
     support_object_collision_obj = get_obj_from_planning_scene(support_object, planning_scene)
     dimension_index = 2
 
-    # HACK: for this objects the dimension index needs to be 1, TODO: find a better solution
+    # the upright classes are rolled: their vertical mesh axis is y
     if any(
         object_class in key
-        for object_class in ['power_drill_with_grip', 'hot_glue_gun', 'bleach', 'mustard', 'soup', 'meat']
+        for object_class in UPRIGHT_ROLL_CLASSES
         for key in planning_scene.get_attached_objects()
     ):
         dimension_index = 1

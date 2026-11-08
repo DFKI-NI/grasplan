@@ -40,6 +40,7 @@ from grasplan.tools.support_plane_tools import (
     gen_insert_poses_from_obj,
     compute_object_height_for_insertion,
     OBJECT_HEIGHTS,
+    object_height,
 )
 from grasplan.tools.moveit_errors import motion_failure_text, print_moveit_error
 from object_pose_msgs.msg import ObjectList
@@ -77,6 +78,8 @@ class InsertTools:
         # means place_same_orientation_as_picked decides (true: as_picked, false: gripper_down); gripper_down
         # applies only to objects up to comfortable_orientation_max_size (longest side, m)
         self.insert_orientation = rospy.get_param('~insert_orientation', '')
+        # careful flag: resting heights of the table classes from their mesh boxes instead of the hand-typed table
+        self.use_mesh_object_heights = rospy.get_param('~use_mesh_object_heights', False)
         self.place_same_orientation_as_picked = rospy.get_param('~place_same_orientation_as_picked', True)
         self.comfortable_orientation_max_size = rospy.get_param('~comfortable_orientation_max_size', 0.15)
         self.tcp_frame = rospy.get_param('~tcp_frame', f'{robot_prefix()}/gripper_tcp')
@@ -360,6 +363,7 @@ class InsertTools:
                     support_object.obj_class,
                     object_tbi_height=object_tbi_height,
                     support_obj_height=support_obj_height,
+                    use_mesh_heights=self.use_mesh_object_heights,
                 ),
                 frame_id=self.place.global_reference_frame,
                 same_orientation_as_support_obj=same_orientation_as_support_obj,
@@ -479,8 +483,10 @@ class InsertTools:
             if len(collision_object.primitive_poses) > 0
             else np.eye(4)
         )
-        support_height = support_obj_height if support_obj_height is not None else OBJECT_HEIGHTS.get(
-            support_object.obj_class, 0.0
+        support_height = support_obj_height if support_obj_height is not None else (
+            object_height(support_object.obj_class, self.use_mesh_object_heights)
+            if support_object.obj_class in OBJECT_HEIGHTS
+            else 0.0
         )
         support = support_object_pose.pose
         support_yaw = math.atan2(
