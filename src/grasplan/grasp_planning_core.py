@@ -28,7 +28,7 @@ from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from visualization_msgs.msg import MarkerArray
 
 from grasplan.grasp_markers import scored_grasp_markers
-from grasplan.tools.common import separate_object_class_from_id
+from grasplan.tools.common import robot_prefix, separate_object_class_from_id
 
 
 class GraspPlanningCore:
@@ -61,7 +61,8 @@ class GraspPlanningCore:
         self.pre_grasp_approach_desired = rospy.get_param('~pre_grasp_approach/desired')
         self.pre_grasp_approach_axis = rospy.get_param('~pre_grasp_approach/axis')
         # post grasp retreat parameters
-        self.post_grasp_retreat_frame_id = rospy.get_param('~post_grasp_retreat/frame_id')
+        # the lift goes up in this robot's own odom frame unless the config names a frame
+        self.post_grasp_retreat_frame_id = rospy.get_param('~post_grasp_retreat/frame_id', f'{robot_prefix()}/odom')
         self.post_grasp_retreat_min_dist = rospy.get_param('~post_grasp_retreat/min_dist')
         self.post_grasp_retreat_desired = rospy.get_param('~post_grasp_retreat/desired')
         self.post_grasp_retreat_axis = rospy.get_param('~post_grasp_retreat/axis')
