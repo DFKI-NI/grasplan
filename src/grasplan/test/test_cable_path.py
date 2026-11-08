@@ -1,5 +1,5 @@
 '''the cable model's path search (tools/cable_path.py, cable_shaping.verified_path) on synthetic stretch grids,
-and on the real model (mobipick_cable_entanglement, amenable_ws) with a coarse grid. No ROS master.'''
+and on the real model (mobipick_cable_entanglement) with a coarse grid. No ROS master.'''
 import math
 import os
 import tempfile

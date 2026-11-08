@@ -2139,7 +2139,7 @@ class PickTools:
             rospy.get_param('~open_set_min_grasp_height', 0.0),
             rospy.get_param('~open_set_topdown_max_width', 0.10),
             rospy.get_param('~open_set_topdown_min_overlap', 0.01),
-            # the Robotiq 2F-140 knuckles and base start ~0.14 m above the TCP (URDF, temp_code/finger_reach.py): a
+            # the Robotiq 2F-140 knuckles and base start ~0.14 m above the TCP (URDF): a
             # taller object puts them inside its box (#192)
             rospy.get_param('~open_set_topdown_max_depth', 0.12),
         )
