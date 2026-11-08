@@ -42,6 +42,7 @@ from grasplan.tools.support_plane_tools import (
     OBJECT_HEIGHTS,
 )
 from grasplan.tools.common import separate_object_class_from_id, connect_move_groups, roscpp_initialize_named, robot_prefix
+from grasplan.tools.scene_frames import objects_in_frame, tf_matrix
 from grasplan import cable_detour
 from grasplan.tools.moveit_errors import motion_failure_text, print_moveit_error
 from grasplan.tools.place_reach import order_by_reach, order_free_first
@@ -398,11 +399,29 @@ class PlaceTools:
         '''
         return self.scene_boxes(exclude, table_sized=True)
 
+    def scene_objects(self):
+        '''
+        The planning scene's world objects, expressed in ~global_reference_frame: move_group returns them in its model
+        frame (map), a robot in its own scene copy works in its own map frame (robot2/map), and the support checks look
+        boxes up by frame (see grasplan.tools.scene_frames). With one robot nothing changes.
+        '''
+        return objects_in_frame(self.scene.get_objects(), getattr(self, 'global_reference_frame', ''), self.frame_matrix)
+
+    def frame_matrix(self, target, source):
+        '''4x4 matrix that maps points of source into target from tf, None if tf does not know it'''
+        try:
+            t = self.tf_buffer.lookup_transform(target, source, rospy.Time(0), rospy.Duration(0.5)).transform
+        except tf2_ros.TransformException as error:
+            rospy.logwarn(f'planning scene objects: no transform from {source} to {target}, kept in {source}: {error}')
+            return None
+        return tf_matrix((t.translation.x, t.translation.y, t.translation.z),
+                         (t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w))
+
     def scene_boxes(self, exclude=(), table_sized=True):
         '''{frame: [(center, orientation, size)]} of the planning scene's boxes: table-sized ones (both horizontal sides
         >= 30 cm) or the others (the objects)'''
         boxes = {}
-        for name, obj in self.scene.get_objects().items():
+        for name, obj in self.scene_objects().items():
             if name in exclude:
                 continue
             for primitive, pose in zip(obj.primitives, obj.primitive_poses):
@@ -648,7 +667,8 @@ class PlaceTools:
     def add_planning_scene_objects(self, planning_scene) -> None:
         """Adds all objects in the planning scene to the local tf buffer as static transforms."""
         # One query for all objects: a query per object took about 1 s each over Wi-Fi to the real robot
-        for obj_name, obj in planning_scene.get_objects().items():
+        for obj_name, obj in objects_in_frame(planning_scene.get_objects(), self.global_reference_frame,
+                                              self.frame_matrix).items():
             tf = TransformStamped(
                 header=Header(frame_id=self.global_reference_frame),   # #226: mobipick2/map for a second robot
                 child_frame_id=obj_name,

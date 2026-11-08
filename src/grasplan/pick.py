@@ -67,6 +67,7 @@ from grasplan.msg import (
 )
 from grasplan.srv import ViewObject
 from grasplan.tools.common import objectToPick, connect_move_groups, roscpp_initialize_named, robot_prefix
+from grasplan.tools.scene_frames import boxes_in_robot_map, objects_in_frame, tf_matrix
 from grasplan.tools.action_client_helper import ActionClientHelper
 from grasplan.tools.stage_timing import TIMER, action, timed, watch_server
 from grasplan.tools.gripper_envelope import fingertip_envelope, lowest_point_offset
@@ -190,7 +191,10 @@ class PickTools:
         self.planning_time = rospy.get_param('~planning_time', 20.0)
         self.pregrasp_posture_required = rospy.get_param('~pregrasp_posture_required', False)
         self.pregrasp_posture = rospy.get_param('~pregrasp_posture', 'home')
-        self.planning_scene_boxes = rospy.get_param('~planning_scene_boxes', [])
+        # the config gives the tables in the robot's own map ('map'): a robot in its own scene copy of a multi-robot sim
+        # adds them in its map frame (~global_reference_frame), not in the first robot's room
+        self.planning_scene_boxes = boxes_in_robot_map(rospy.get_param('~planning_scene_boxes', []),
+                                                       self.global_reference_frame)
         # raise the bottom of perceived object boxes that reach into a table of the planning scene (noisy depth) to its
         # top, so the object does not collide with its support, e.g. during the lift (#148)
         self.clamp_object_boxes_to_support = rospy.get_param('~clamp_object_boxes_to_support', False)
@@ -589,6 +593,24 @@ class PickTools:
     def graspTypeCB(self, msg):
         self.grasp_type = msg.data
 
+    def scene_objects(self, names=None):
+        '''
+        The planning scene's world objects, expressed in ~global_reference_frame: move_group returns them in its model
+        frame (map), a robot in its own scene copy works in its own map frame (robot2/map), and the support and height
+        checks compare frames (see grasplan.tools.scene_frames). With one robot nothing changes.
+        '''
+        objects = self.scene.get_objects(names) if names is not None else self.scene.get_objects()
+        return objects_in_frame(objects, getattr(self, 'global_reference_frame', ''), self.frame_matrix)
+
+    def frame_matrix(self, target, source):
+        '''4x4 matrix that maps points of source into target from tf, None if tf does not know it'''
+        try:
+            self.tf_listener.waitForTransform(target, source, rospy.Time(0), rospy.Duration(0.5))
+            return tf_matrix(*self.tf_listener.lookupTransform(target, source, rospy.Time(0)))
+        except (tf.Exception, tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException) as error:
+            rospy.logwarn(f'planning scene objects: no transform from {source} to {target}, kept in {source}: {error}')
+            return None
+
     def transform_pose(self, pose, target_reference_frame):
         '''
         transform a pose from any rerence frame into the target reference frame
@@ -708,8 +730,10 @@ class PickTools:
                 + '; perceive it again or pick one that is there'
             )
             return None, None, None
+        # in the robot's map frame, like its grasps and the support boxes the open-set checks compare it with (several
+        # robots in one sim: robot k's map frame is not the planning frame)
         return (
-            self.transform_pose(object_to_pick_pose, self.robot.get_planning_frame()),
+            self.transform_pose(object_to_pick_pose, self.global_reference_frame),
             object_to_pick_bounding_box,
             object_to_pick_id,
         )
@@ -728,7 +752,7 @@ class PickTools:
                 (b['box_orientation_x'], b['box_orientation_y'], b['box_orientation_z'], b['box_orientation_w']),
                 (b['box_x_dimension'], b['box_y_dimension'], b['box_z_dimension']),
             ))
-        for name, obj in self.scene.get_objects().items():
+        for name, obj in self.scene_objects().items():
             if name in exclude or any(b['scene_name'] == name for b in self.planning_scene_boxes):
                 continue
             for primitive, pose in zip(obj.primitives, obj.primitive_poses):
@@ -1720,7 +1744,7 @@ class PickTools:
 
     def support_top_z(self, support_surface_name, frame):
         '''z of the top of the support surface's boxes in frame, None if unknown'''
-        support = self.scene.get_objects([support_surface_name]).get(support_surface_name)
+        support = self.scene_objects([support_surface_name]).get(support_surface_name)
         if support is None or not support.primitives or support.header.frame_id != frame:
             return None
         return max(support.pose.position.z + pose.position.z + primitive.dimensions[2] / 2.0
@@ -1757,7 +1781,7 @@ class PickTools:
         max_backoff = rospy.get_param('~open_set_max_grasp_backoff', 0.0)
         if (min_height <= 0.0 and min_fingertip_height <= 0.0) or not support_surface_name or not grasps:
             return grasps
-        support = self.scene.get_objects([support_surface_name]).get(support_surface_name)
+        support = self.scene_objects([support_surface_name]).get(support_surface_name)
         frame = grasps[0].grasp_pose.header.frame_id
         if support is None or not support.primitives or support.header.frame_id != frame:
             rospy.logwarn(f'open-set grasp height: no {support_surface_name} box in frame {frame}, grasps unchanged')
@@ -2000,7 +2024,7 @@ class PickTools:
         '''top z of the support surface box in frame, None if it is not in the planning scene in that frame'''
         if not support_surface_name:
             return None
-        support = self.scene.get_objects([support_surface_name]).get(support_surface_name)
+        support = self.scene_objects([support_surface_name]).get(support_surface_name)
         if support is None or not support.primitives or support.header.frame_id != frame:
             return None
         return max(
