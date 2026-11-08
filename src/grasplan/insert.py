@@ -26,6 +26,7 @@ example on how to insert an object using grasplan and moveit
 
 import copy
 import math
+import time
 
 import numpy as np
 import rospy
@@ -42,7 +43,7 @@ from grasplan.tools.support_plane_tools import (
     OBJECT_HEIGHTS,
     object_height,
 )
-from grasplan.tools.moveit_errors import motion_failure_text, print_moveit_error
+from grasplan.tools.moveit_errors import motion_failure_text, print_moveit_error, tried_text
 from object_pose_msgs.msg import ObjectList
 from moveit_msgs.msg import MoveItErrorCodes
 from moveit_msgs.srv import GetPositionIK, GetPositionIKRequest
@@ -122,6 +123,26 @@ class InsertTools:
         self.insert_failure_reason = reason
         return False
 
+    def count_insert_poses(self, count):
+        '''one failed insert attempt that offered count insert poses'''
+        tried = getattr(self, 'insert_tried', None)
+        if tried is not None:
+            tried['poses'] += count
+            tried['attempts'] += 1
+
+    def count_offered(self, result, count):
+        '''one MTC run (a whole goal, or one cable gate group of it) that did not insert: count its poses'''
+        if result is None or result.error_code.val != MoveItErrorCodes.SUCCESS:
+            self.count_insert_poses(count)
+
+    def insert_tried_text(self, support_object):
+        '''"24 insert poses into klt_1 tried in 2 attempts, 28.2 s", for the failure text'''
+        tried = getattr(self, 'insert_tried', None)
+        if not tried:
+            return ''
+        return tried_text(tried['poses'], 'insert pose', f'into {support_object}', time.time() - tried['started'],
+                          tried['attempts'])
+
     def failure_text(self):
         '''Why the last insert failed: a check before MTC, else MTC's reason, else empty'''
         reason = getattr(self, 'insert_failure_reason', '')
@@ -133,6 +154,7 @@ class InsertTools:
     def insert_obj_action_callback(self, goal):
         success = False
         self.insert_failure_reason = ''   # why a check before MTC stopped the insert
+        self.insert_tried = {'poses': 0, 'attempts': 0, 'started': time.time()}   # for the failure text
         if getattr(self.place, 'mtc', None) is not None:
             self.place.mtc.failure_reason, self.place.mtc.executed = '', False  # nothing left over from the previous goal
         self.place.reset_detour()
@@ -414,7 +436,8 @@ class InsertTools:
                     # self.place.clear_place_poses_markers() # leave markers for debugging if failed to insert
                     print_moveit_error(result.error_code.val)
                     if not self.failure_text():   # the MTC reason is the better one when it exists
-                        self.fail(motion_failure_text('the insert', result.error_code.val))
+                        self.fail(motion_failure_text('the insert', result.error_code.val,
+                                                      self.insert_tried_text(support_object_name_as_string)))
                 return False
         else:
             return self.fail(f'cannot insert: the action server {INSERT_OBJECT_SERVER_NAME} is not available')
@@ -554,7 +577,9 @@ class InsertTools:
         passing = self.insert_gate_passing
         gated = self.place.mtc is not None and 0 < passing < len(goal.place_locations)
         if not gated:
-            return self.place.run_place_goal(goal, self.insert_action_server, self.action_client_helper)
+            result = self.place.run_place_goal(goal, self.insert_action_server, self.action_client_helper)
+            self.count_offered(result, len(goal.place_locations))
+            return result
         result = None
         for start, end in gate_chunks(len(goal.place_locations), passing, 0):
             if start == passing:
@@ -563,6 +588,7 @@ class InsertTools:
             offer = copy.copy(goal)
             offer.place_locations = goal.place_locations[start:end]
             result = self.place.run_place_goal(offer, self.insert_action_server, self.action_client_helper)
+            self.count_offered(result, len(offer.place_locations))
             if result is None or self.insert_action_server.is_preempt_requested():
                 break
             if result.error_code.val == MoveItErrorCodes.SUCCESS or self.place.mtc.executed:

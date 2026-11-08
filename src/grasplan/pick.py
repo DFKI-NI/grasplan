@@ -47,7 +47,7 @@ from pose_selector.srv import ClassQuery, PoseDelete, GetPoses
 from geometry_msgs.msg import PoseStamped
 from shape_msgs.msg import SolidPrimitive
 from grasplan import cable_detour
-from grasplan.tools.moveit_errors import motion_failure_text, print_moveit_error
+from grasplan.tools.moveit_errors import motion_failure_text, print_moveit_error, tried_text
 from moveit_msgs.msg import (
     AllowedCollisionEntry,
     MoveItErrorCodes,
@@ -1299,6 +1299,7 @@ class PickTools:
             self.mtc.regrasp_info = {}   # set per pick by note_regrasp_info
             self.mtc.grasp_ik_branches = {}   # the cable-ranked IK branches per grasp
         self.cable_gate_passing = 0
+        self.grasps_tried, self.pick_started = 0, time.time()   # for the failure text: how hard this pick tried
         self.open_set_pick = external_grasp_candidates is not None   # the cable replay detour is for closed-set picks
         self.detoured = ''   # the pose the cable replay detour moved the arm to in this pick
 
@@ -1478,7 +1479,7 @@ class PickTools:
             if result:  # if result is None it means moveit action server was not found within 2 secs
                 print_moveit_error(result)  # only print moveit error if result is different than None
             if not self.failure_text():   # the MTC reason (named code, stop) is the better one when it exists
-                self.fail(motion_failure_text('the pick', result))
+                self.fail(motion_failure_text('the pick', result, self.pick_tried_text(object_to_pick)))
             self.add_fallback_reason()
             if self.mtc is not None and self.mtc.executed and not self.pick_action_server.is_preempt_requested():
                 self.retract_after_failure('pick')
@@ -1920,6 +1921,14 @@ class PickTools:
         self.pick_failure_reason = reason
         return False
 
+    def pick_tried_text(self, object_to_pick):
+        '''"12 grasps of relay_1 tried, 4.1 s": every grasp handed to MoveIt or MTC in this pick (batches, retry from
+        the start pose, top-down fallback), for the failure text'''
+        started = getattr(self, 'pick_started', None)
+        return tried_text(getattr(self, 'grasps_tried', 0), 'grasp',
+                          f'of {object_to_pick.get_object_class_and_id_as_string()}',
+                          time.time() - started if started else 0.0)
+
     def failure_text(self):
         '''Why the last pick failed: a check before MTC, else MTC's reason, else empty'''
         reason = getattr(self, 'pick_failure_reason', '')
@@ -2193,6 +2202,7 @@ class PickTools:
         """
         result = None
         PICK_OBJECT_SERVER_NAME = 'pickup'
+        self.grasps_tried = getattr(self, 'grasps_tried', 0) + len(grasps)
 
         if self.mtc is not None:
             return self._pick_with_mtc(object_to_pick, grasps, support_surface_name)

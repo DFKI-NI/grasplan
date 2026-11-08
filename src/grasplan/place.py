@@ -26,6 +26,7 @@ example on how to place an object using grasplan and moveit
 
 import math
 import sys
+import time
 import copy
 import tf.transformations
 import tf2_ros
@@ -44,7 +45,7 @@ from grasplan.tools.support_plane_tools import (
 from grasplan.tools.common import separate_object_class_from_id, connect_move_groups, roscpp_initialize_named, robot_prefix
 from grasplan.tools.scene_frames import objects_in_frame, tf_matrix
 from grasplan import cable_detour
-from grasplan.tools.moveit_errors import motion_failure_text, print_moveit_error
+from grasplan.tools.moveit_errors import arm_stop_text, motion_failure_text, print_moveit_error, tried_text
 from grasplan.tools.place_reach import order_by_reach, order_free_first
 from grasplan.tools.topdown_grasps import depth_below_support_top, height_above_support_top, rests_on_other
 from shape_msgs.msg import SolidPrimitive
@@ -548,6 +549,44 @@ class PlaceTools:
         self.place_failure_reason = reason
         return False
 
+    def note_failed_place_batch(self, code, count, support_object):
+        '''a batch of count place poses failed with MoveIt error code: count them and word the failure, unless a better
+        reason (a check before MTC, MTC's own) exists; this text itself is renewed with every batch, so it counts all'''
+        tried = getattr(self, 'place_tried', None)
+        if tried is not None:
+            tried['poses'] += count
+        if not self.failure_text() or self.place_failure_reason == getattr(self, 'planning_failure', None):
+            self.planning_failure = motion_failure_text('the place', code, self.place_tried_text(support_object))
+            self.fail(self.planning_failure)
+
+    def nothing_attached_text(self, support_object, earlier=''):
+        '''no attached object to place: say so, whether the arm is stopped, and why an earlier attempt of the same
+        goal failed, as that attempt is often where the object was lost (real robot 2026-11-03: a protective stop
+        during the first attempt dropped it, and the agent heard only "no object is attached")'''
+        if 'no object is attached to the gripper' in earlier:
+            return earlier   # a later attempt that finds the same: one sentence, not nested ones
+        text = (f'cannot place on {support_object}: no object is attached to the gripper in the planning scene, so the '
+                'place has nothing to plan with (the object may have been dropped, or the pick never attached it)')
+        if 'the arm is in a' not in earlier:
+            text += arm_stop_text()
+        if earlier:
+            text += f'; the attempt before this one failed: {earlier}'
+        return text
+
+    def place_tried_text(self, support_object):
+        '''"80 place poses on table_3 tried in 3 attempts, 47.4 s; 0 of the last 50 had a free footprint": every
+        place pose handed to MoveIt or MTC in this goal, and how many of the last drawn ones cleared the perceived
+        objects (only with ~place_free_footprints_first), for the failure text'''
+        tried = getattr(self, 'place_tried', None)
+        if not tried:
+            return ''
+        text = tried_text(tried['poses'], 'place pose', f'on {support_object}', time.time() - tried['started'],
+                          tried['attempts'])
+        if text and tried['free'] is not None:
+            free, drawn = tried['free']
+            text += f'; {free} of the last {drawn} had a free footprint'
+        return text
+
     def failure_text(self):
         '''Why the last place failed: a check before MTC, else MTC's reason, else empty'''
         reason = getattr(self, 'place_failure_reason', '')
@@ -559,6 +598,8 @@ class PlaceTools:
     def place_obj_action_callback(self, goal):
         success = False
         self.place_failure_reason = ''   # why a check before MTC stopped the place
+        self.place_tried = {'poses': 0, 'attempts': 0, 'free': None, 'started': time.time()}   # for the failure text
+        self.planning_failure = None   # the text below, renewed per batch while no better reason exists
         if self.mtc is not None:
             self.mtc.failure_reason, self.mtc.executed = '', False  # nothing left over from the previous goal
         self.reset_detour()
@@ -705,12 +746,11 @@ class PlaceTools:
         PLACE_OBJECT_SERVER_NAME = 'place'
         assert isinstance(observe_before_place, bool)
         rospy.loginfo(f'Received request to place object on {support_object}')
+        earlier = self.failure_text()   # an earlier attempt of this goal: kept if this one cannot even start
         self.place_failure_reason = ''   # only this attempt's check counts
 
         if len(self.scene.get_attached_objects().keys()) == 0:
-            return self.fail(f'cannot place on {support_object}: no object is attached to the gripper in the planning '
-                             'scene, so the place has nothing to plan with (the object may have been dropped, or the '
-                             'pick never attached it)')
+            return self.fail(self.nothing_attached_text(support_object, earlier))
 
         # deduce object_to_be_placed by querying which object the gripper currently has attached to its gripper
         object_to_be_placed = list(self.scene.get_attached_objects().keys())[0]
@@ -820,6 +860,10 @@ class PlaceTools:
 
         rospy.loginfo(f'Found {PLACE_OBJECT_SERVER_NAME} action server')
 
+        tried = getattr(self, 'place_tried', None)
+        if tried is not None:
+            tried['attempts'] += 1
+            tried['free'] = None if free is None else (free, len(global_place_poses.objects))
         for i in range(0, len(global_place_poses.objects), max_batch_size):
             # for 25 objs and max_batch_size of 10, "i" would be 0 in the first loop, 10 in the 2nd and 20 in the last
             if i and object_class_tbp not in OBJECT_HEIGHTS:
@@ -897,8 +941,7 @@ class PlaceTools:
                 self.place_pose_selector_clear_srv()
                 self.clear_place_poses_markers()
                 print_moveit_error(result.error_code.val)
-                if not self.failure_text():   # the MTC reason is the better one when it exists
-                    self.fail(motion_failure_text('the place', result.error_code.val))
+                self.note_failed_place_batch(result.error_code.val, len(batch_poses.objects), support_object)
                 if self.mtc is not None and self.mtc.executed:
                     # the arm moved (maybe the gripper already opened): report instead of retrying from a changed state
                     return False

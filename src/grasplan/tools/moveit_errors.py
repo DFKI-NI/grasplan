@@ -121,15 +121,27 @@ def moveit_code_text(code):
     return f'{label}: {cause}' if cause else label
 
 
-def motion_failure_text(what, code):
+def motion_failure_text(what, code, tried=''):
     '''"the pick failed: CONTROL_FAILED (-4): ...; the arm is in a protective stop" for the MoveIt action paths
     that used to only print the code (the stop is asked after the failure, see arm_stop_text); a missing result (None,
-    False: the action server did not answer or the goal was preempted) is worded as that'''
+    False: the action server did not answer or the goal was preempted) is worded as that. tried, e.g. "12 grasps of
+    relay_1 tried, 4.1 s", says what was planned for, so a bare PLANNING_FAILED tells how hard the robot tried'''
     if code is None:
         return f'{what} failed: the MoveIt action server gave no result (not found within 2 s)'
     if code is False:
         return f'{what} was cancelled'
-    return f'{what} failed: {moveit_code_text(code)}{arm_stop_text()}'
+    detail = f' ({tried})' if tried else ''
+    return f'{what} failed: {moveit_code_text(code)}{detail}{arm_stop_text()}'
+
+
+def tried_text(count, noun, target, seconds, attempts=1):
+    '''"12 grasps of relay_1 tried, 4.1 s" / "80 place poses on table_3 tried in 3 attempts, 47.4 s"; '' when
+    nothing was counted'''
+    if not count:
+        return ''
+    plural = noun if count == 1 else f'{noun}s'
+    rounds = f' in {attempts} attempts' if attempts > 1 else ''
+    return f'{count} {plural} {target} tried{rounds}, {seconds:.1f} s'
 
 
 # service name -> the thread of a call whose reply never came (left behind by _reply_by)
