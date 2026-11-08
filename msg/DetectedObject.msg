@@ -7,3 +7,5 @@ geometry_msgs/Vector3 min
 geometry_msgs/Vector3 max
 # metres the detector added to every side of size (min and max likewise); 0: size is the measured extent, or unknown
 float32 box_padding
+# generic shape features measured from the object's point cloud; valid false when not computed
+grasplan/ShapeFeatures shape

@@ -39,6 +39,7 @@ add_message_files(
     GraspDetection.msg
     GraspScore.msg
     OrientedBox.msg
+    ShapeFeatures.msg
     Verdict.msg
 )
 

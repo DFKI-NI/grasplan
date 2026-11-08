@@ -124,7 +124,7 @@ class TestGraspTypeFromGeometry(Params):
 
     def test_signature_has_no_name_input(self):
         self.assertEqual(list(inspect.signature(pick.PickTools.top_grasps_for_low_objects).parameters),
-                         ['self', 'grasps', 'widths', 'object_pose', 'bounding_box'])
+                         ['self', 'grasps', 'widths', 'object_pose', 'bounding_box', 'external_object'])
 
     def test_low_object_rule_follows_the_box(self):
         grasps = [Grasp(id='v'), Grasp(id='t30')]

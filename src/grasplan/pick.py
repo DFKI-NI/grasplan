@@ -112,6 +112,16 @@ from grasplan.grasp_scoring import (
     tilt_from_vertical_deg,
 )
 from grasplan.grasp_markers import delete_all_marker, funnel_step_markers
+from grasplan.shape_grasp_choice import (
+    AUTO,
+    SIDE_MIN_HEIGHT,
+    SIDE_SHORT_AXIS,
+    SIDE_STANDING,
+    SPHERE_TOP_MAX_HEIGHT,
+    TOP_ONLY,
+    choose_grasp_rule,
+)
+from grasplan.shape_message import features_from_message
 from visualization_msgs.msg import Marker, MarkerArray
 
 ACTION_STATES = {value: name for name, value in vars(GoalStatus).items() if name.isupper() and isinstance(value, int)}
@@ -1338,7 +1348,8 @@ class PickTools:
                 )
                 self.grasp_funnel('candidates', grasps)
                 widths = [candidate.width for candidate in external_grasp_candidates]
-                grasps, widths, low = self.top_grasps_for_low_objects(grasps, widths, object_pose, bounding_box)
+                grasps, widths, low = self.top_grasps_for_low_objects(
+                    grasps, widths, object_pose, bounding_box, external_object)
                 self.grasp_funnel('low_object_kept', grasps)
                 grasps, widths = self.standing_tilt_band_grasps(grasps, widths, object_pose, bounding_box)
                 grasps, widths = self.align_jaws_to_box(grasps, widths, object_pose, bounding_box)
@@ -1520,7 +1531,30 @@ class PickTools:
         if not self.move_arm_to_posture(pose):
             rospy.logwarn(f'could not retract the arm to {pose} after the failed {what}')
 
-    def top_grasps_for_low_objects(self, grasps, widths, object_pose, bounding_box):
+    def shape_rule(self, external_object):
+        '''
+        careful flag ~grasp_shape_features (code default off): the grasp-type rule from the shape features the
+        perception measured from the object's point cloud (grasplan.shape_grasp_choice: top_only, side_standing,
+        side_short_axis or auto), logged with its reason; None when the flag is off, the detection carries no valid
+        features or the rule is auto, so the box rules decide as before. Limits: ~open_set_low_object_max_height,
+        ~shape_sphere_top_max_height, ~shape_side_min_height.
+        '''
+        if not rospy.get_param('~grasp_shape_features', False) or external_object is None:
+            return None
+        features = features_from_message(external_object.shape) if hasattr(external_object, 'shape') else None
+        if features is None:
+            rospy.loginfo('shape features: none in the detection, the box rules decide')
+            return None
+        rule, why = choose_grasp_rule(
+            features,
+            low_max_height=rospy.get_param('~open_set_low_object_max_height', LOW_OBJECT_MAX_HEIGHT),
+            sphere_top_max_height=rospy.get_param('~shape_sphere_top_max_height', SPHERE_TOP_MAX_HEIGHT),
+            side_min_height=rospy.get_param('~shape_side_min_height', SIDE_MIN_HEIGHT),
+        )
+        rospy.loginfo(f'shape features: rule {rule} ({why})')
+        return None if rule == AUTO else rule
+
+    def top_grasps_for_low_objects(self, grasps, widths, object_pose, bounding_box, external_object=None):
         '''
         Oscar (2026-09-28, real strawberry, #151): a very low object is grasped from the top only. Low: its box
         (object_pose orientation, gravity-aligned frame) lower than ~open_set_low_object_max_height, or both horizontal
@@ -1536,7 +1570,10 @@ class PickTools:
         rotation = tf.transformations.quaternion_matrix([o.x, o.y, o.z, o.w])[:3, :3].tolist()
         max_height = rospy.get_param('~open_set_low_object_max_height', LOW_OBJECT_MAX_HEIGHT)
         max_footprint = rospy.get_param('~open_set_small_object_max_footprint', SMALL_OBJECT_MAX_FOOTPRINT)
-        if not is_low_object(bounding_box, rotation, max_height, max_footprint):
+        rule = self.shape_rule(external_object)   # flag ~grasp_shape_features
+        if rule in (SIDE_STANDING, SIDE_SHORT_AXIS):
+            return grasps, widths, False
+        if rule != TOP_ONLY and not is_low_object(bounding_box, rotation, max_height, max_footprint):
             return grasps, widths, False
         kept, kept_widths, dropped = [], [], []
         for grasp, width in zip(grasps, widths):
