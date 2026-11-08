@@ -1,4 +1,4 @@
-'''#198 (f): the open-set IK pre-filter asks compute_ik with ~external_grasp_ik_timeout per call (TRAC-IK Distance always
+'''the open-set IK pre-filter asks compute_ik with ~external_grasp_ik_timeout per call (TRAC-IK Distance always
 spends its whole timeout: 0.1 s x up to 2 calls x ~46 grasps = 3.4-5.3 s per pick). Default 0.01 s in the sim, 0.1 s on
 the real robot until tested there. Fake compute_ik (no ROS master); needs the Mobipick image for the module imports.'''
 import unittest

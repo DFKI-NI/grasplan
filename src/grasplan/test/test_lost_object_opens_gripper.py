@@ -1,4 +1,4 @@
-'''#151 real 2026-09-28: a Pringles can slipped out before a place and the failed place left the gripper closed; every
+'''real 2026-09-28: a Pringles can slipped out before a place and the failed place left the gripper closed; every
 later pick then failed at "grasp pose: eef in collision: <object> - gripper_left_inner_finger" (the closed fingers sit
 inside the target box at every grasp pose). The place now opens the empty gripper (and pick.py opens it before planning,
 see test_open_set_view_and_start). Fake MTC (no ROS master); needs the Mobipick image for the module imports.'''

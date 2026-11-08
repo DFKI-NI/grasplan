@@ -39,8 +39,8 @@ the GripperCommand action with the metre values of the goal, attach and detach t
 apply_planning_scene. This also makes the execution preemptible, which the pickup action was not.
 
 Optional, experimental arm cable guard (~mtc_cable_plan_check, old name ~mtc_cable_constraints, re-read on every goal): the cable model of
-mobipick_cable_entanglement (#118) turns into constraints on the joint path instead of joint limits that
-reject grasps (#120, #124). Every free motion (Connect) gets a MoveIt path constraint that keeps wrist_3 within
+mobipick_cable_entanglement turns into constraints on the joint path instead of joint limits that
+reject grasps. Every free motion (Connect) gets a MoveIt path constraint that keeps wrist_3 within
 half a turn of the angle where the cable carrier is least wound (no extra winding), several solutions are planned, and
 the cheapest one whose whole joint path keeps the cable model's stretch below ~mtc_cable_max_stretch is executed.
 With ~mtc_cable_replay_live_state (careful flag, off in code) the path is also replayed through the monitor's carrier
@@ -93,7 +93,7 @@ from grasplan.tools.moveit_errors import arm_stop_text, moveit_code_text
 # the name MoveIt gives the octomap inside the planning scene (planning_scene::PlanningScene::OCTOMAP_NS)
 OCTOMAP_COLLISION_NAME = '<octomap>'
 
-# STOPGAP until the cable model refit (#118): default ~mtc_cable_max_stretch, sim and real. On the real robot the
+# STOPGAP until the cable model refit: default ~mtc_cable_max_stretch, sim and real. On the real robot the
 # guarded plans that caught or nearly caught the cable carrier had a wrist stretch of -0.108 / -0.103, all clean ones
 # -0.126..-0.217, so the model's 0.0 (cable carrier just taut) let tangling plans through. Revisit after the refit.
 DEFAULT_CABLE_MAX_STRETCH = -0.115
@@ -104,7 +104,7 @@ DEFAULT_CABLE_MAX_STRETCH = -0.115
 SUPPORT_CABLE_MAX_STRETCH = -0.07
 
 # a close width (m) above this is a per-object width short of fully closed, which ~mtc_grasp_check_squeeze may close
-# on to check the grasp (#188); the klt and materialbox widths (0.0005) count as fully closed
+# on to check the grasp; the klt and materialbox widths (0.0005) count as fully closed
 GRASP_CHECK_SQUEEZE_MIN_WIDTH = 0.005
 
 # pinch (m) the fingers may close past the object's width before the re-grasp fires
@@ -133,13 +133,13 @@ def matrix_to_pose(matrix, pose):
     return pose
 
 
-# a round object's grasp may turn by any angle about its approach only this close to straight down (#121)
+# a round object's grasp may turn by any angle about its approach only this close to straight down
 TURN_ANY_ANGLE_MAX_TILT_DEG = 20.0
 
 
 def turn_grasp_about_approach(grasp, turn_deg):
     '''copy of a moveit_msgs/Grasp whose grasp pose (of the gripper_tcp) is turned by turn_deg about its own x axis,
-    the approach axis and, on the Mobipick, the wrist_3 axis (#121)'''
+    the approach axis and, on the Mobipick, the wrist_3 axis'''
     turned = copy.deepcopy(grasp)
     turned.id = f'{grasp.id}_turned{turn_deg:+.0f}'
     matrix_to_pose(pose_to_matrix(grasp.grasp_pose.pose).dot(tft.rotation_matrix(math.radians(turn_deg), (1, 0, 0))),
@@ -150,7 +150,7 @@ def turn_grasp_about_approach(grasp, turn_deg):
 def speed_changes_on():
     """~mtc_speed_changes (default true, read per goal): false turns off the untested 2026-09-28 pick speed changes
     (IK pin, one solution per candidate without a replan after a cable guard reject; pick.py's cable gate reads it too)
-    for a real-robot run where they misbehave (#151)"""
+    for a real-robot run where they misbehave"""
     return bool(rospy.get_param('~mtc_speed_changes', True))
 
 
@@ -166,7 +166,7 @@ def solution_joint_state(msg):
 
 
 def pinned_ik_cost(reference, tolerance):
-    '''MTC cost term for the grasp-pose IK stage (#151): an IK solution farther than tolerance (rad, any joint) from
+    '''MTC cost term for the grasp-pose IK stage: an IK solution farther than tolerance (rad, any joint) from
     reference (joint name -> rad, the IK the cable ranking judged) is marked as failed; the others cost their summed
     joint distance, so the pinned branch is planned (and cable-checked) first. MTC 0.1.3 calls it with
     (SubTrajectory, comment): pybind picks that overload for any callable. The state comes from the solution message:
@@ -218,7 +218,7 @@ def transform_to_matrix(transform):
 
 def place_retreat_passes(relaxed_min_distance, force_straight_up=False):
     '''
-    (retreat_min_distance or None for the configured one, straight_up) per place pass (#136): the retreat along the
+    (retreat_min_distance or None for the configured one, straight_up) per place pass: the retreat along the
     gripper axis, straight up, then both with the relaxed minimum distance; each later pass runs only when locations
     of the earlier ones failed at the retreat. force_straight_up (a test switch) leaves out the axis passes.
     '''
@@ -227,8 +227,8 @@ def place_retreat_passes(relaxed_min_distance, force_straight_up=False):
 
 class CableGuard:
     '''
-    Arm cable entanglement as constraints on MTC paths (#124), from the cable model of
-    mobipick_cable_entanglement (doc/cable_model.md there, #118):
+    Arm cable entanglement as constraints on MTC paths, from the cable model of
+    mobipick_cable_entanglement (doc/cable_model.md there):
 
     - path constraint: wrist_3 stays within ~mtc_cable_wrist_3_half_window_deg of the neutral angle of the model's
       wrist span (where the cable carrier takes the short way around the joint), so no motion adds a turn of winding.
@@ -249,7 +249,7 @@ class CableGuard:
         )
         with open(config) as f:
             self.cfg = config_from_dict(yaml.safe_load(f))
-        self.cfg.tf_prefix = robot_prefix() + '/'   # #226: this robot's links (mobipick/, mobipick2/, ...)
+        self.cfg.tf_prefix = robot_prefix() + '/'   # this robot's links (mobipick/, mobipick2/, ...)
         self.model = CableModel(rospy.get_param('robot_description'), self.cfg)
         wrist_3 = [wj for span in self.cfg.spans for wj in span.joints if wj.joint == 'ur5_wrist_3_joint']
         self.wrist_3_neutral = wrist_3[0].neutral if wrist_3 else math.pi - 0.25
@@ -411,7 +411,7 @@ class CableGuard:
     def turn_for_slack(self, q, round_object):
         '''(turn in degrees, predicted stretch) about the grasp approach axis (= the wrist_3 axis) that gives the most
         slack at the rejected joint state q (radians): any angle within +-60 deg or the 180 deg flip for a round
-        object, only the flip otherwise; None when no turn is predicted to pass (#121)'''
+        object, only the flip otherwise; None when no turn is predicted to pass'''
         from mobipick_cable_entanglement.slack import FLIP_ONLY, ROUND_TURNS, best_wrist_3_turn
         return best_wrist_3_turn(
             self.model, q, self.max_stretch,
@@ -531,14 +531,14 @@ def _plan_named_logged(arm, name, guard):
 def guarded_named_move(arm, name, guard, attempts=2, via=None, chain_stops=None, report=None):
     '''
     Move a MoveGroupCommander arm to the SRDF pose name like arm.go(), but plan first and let the MTC cable guard
-    (geometry and the monitor's chain replay, #121) check the joint path before anything moves: the 2026-09-28 sim
+    (geometry and the monitor's chain replay) check the joint path before anything moves: the 2026-09-28 sim
     stop at 02:03 came from such an unguarded move (to the anygrasp pose). The check uses the monitor's own stop
     criterion (decision.stop_stretch, chain stop), not the MTC planning margin ~mtc_cable_max_stretch, which refused the
     standard anygrasp view (-0.09) after a place (night19). A rejected plan is replanned (the planner is randomized) up
     to attempts times, then the move goes via ~mtc_cable_named_move_via (default [transport]); if that fails too,
     nothing more moves and False is returned with the reason logged. guard None: the old behaviour (go, one retry).
     A chain replay stop only logs unless ~mtc_cable_named_move_carrier_stops is true: it refused a re-pick the unguarded
-    code does fine (suite 2026-09-28, #121). ~mtc_cable_guard_named_moves (see named_move_guard_mode) can make the
+    code does fine (suite 2026-09-28). ~mtc_cable_guard_named_moves (see named_move_guard_mode) can make the
     whole guard log only: the arm then moves as without it and the checks are only logged.
     chain_stops: True/False decides for this move and its via legs whether a chain replay stop refuses a plan
     (the cable replay detour must not take a leg the chain replay would stop); None keeps
@@ -916,8 +916,8 @@ class MtcPickPlace:
         self.cable_shaper = None  # cable_shaping.CablePathShaper of that guard, with ~mtc_cable_path_shaping
         self.shaped_path = None   # the ShapedPath of the task being built, None when unshaped
         self.no_shaping = False   # set while a grasp is replanned unshaped after its shaped plan failed
-        # solutions the cable guard rejected since the caller last set it to 0 (place/insert goal: #198 (e) takes the
-        # untangle detour only after such a rejection)
+        # solutions the cable guard rejected since the caller last set it to 0 (place/insert goal:
+        # ~untangle_detour_only_when_needed takes the untangle detour only after such a rejection)
         self.cable_rejections = 0
         self.cable_solutions = 1
         self.chosen_solution = None
@@ -925,7 +925,7 @@ class MtcPickPlace:
         self.failure_reason = ''
         self.executed = False
         # ~mtc_check_grasp, ~mtc_grasp_check_delay and ~mtc_grasp_check_squeeze are read at every check, so the check
-        # can be switched off without a restart (#188); the fact is built anyway, it only subscribes to gripper topics
+        # can be switched off without a restart; the fact is built anyway, it only subscribes to gripper topics
         self.gripper_fact = self.make_gripper_fact()
         server_timeout = rospy.get_param('~moveit_action_startup_timeout', 60.0)
 
@@ -1046,7 +1046,7 @@ class MtcPickPlace:
         When no location can be planned but some only failed at the retreat (the gripper opened, then could not
         back off the full min_distance), the locations are tried again: first retreating straight up (planning
         frame +z) instead of back along the gripper axis, which on a tilted grasp (open-set, insert with free_yaw)
-        runs into the box wall (#136); then accepting a retreat of at least ~mtc_relaxed_retreat_min_distance
+        runs into the box wall; then accepting a retreat of at least ~mtc_relaxed_retreat_min_distance
         (e.g. the camera touches the box rim) along the axis, then straight up. The object is already released
         there and the next arm motion is planned collision free anyway.
         '''
@@ -1073,12 +1073,12 @@ class MtcPickPlace:
             return result
         # place locations whose footprint holds octomap-only obstacles are not offered (see octomap_blocks_place)
         octomap_check = self.octomap_place_check(goal.attached_object_name)
-        # testing #136 (read per goal): skip the axis retreat so the straight-up retreat is planned and executed
+        # testing (read per goal): skip the axis retreat so the straight-up retreat is planned and executed
         force_straight_up = bool(rospy.get_param('~mtc_test_force_straight_up', False))
         if force_straight_up:
             rospy.logwarn('mtc: TEST ~mtc_test_force_straight_up: planning the place locations with a retreat straight up')
         passes = place_retreat_passes(self.relaxed_retreat_min_distance, force_straight_up)
-        # per location, nearest first (#132): its later retreat variants are tried before the next location, so a
+        # per location, nearest first: its later retreat variants are tried before the next location, so a
         # near spot whose axis retreat is blocked is placed with a straight-up retreat instead of the object going to
         # a far spot that plans at once (sim 2026-09-28 night20: tennis ball 27 cm deep into table 2, re-pick no IK)
         blocked = []
@@ -1184,7 +1184,7 @@ class MtcPickPlace:
             rospy.loginfo(f'mtc: lift of {obj} tolerates touching neighbours only: {neighbours}')
         task, roles = self.start_task(f'pick {obj} {grasp.id}')
         touch = self.gripper_links + [obj]
-        # the gripper may touch the object only from the grasp pose on (MTC pick demo layout, #151): allowed from the
+        # the gripper may touch the object only from the grasp pose on (MTC pick demo layout): allowed from the
         # start, the free-space Connect to the pregrasp and the approach could sweep the open gripper through the
         # object (night10: a side grasp knocked the Pringles can off the table). ~mtc_allow_gripper_contacts_early
         # restores the old layout if the stricter check rejects too many grasps (e.g. padded object boxes).
@@ -1210,7 +1210,7 @@ class MtcPickPlace:
         roles.append(ARM)
         ik = self.compute_ik('grasp pose', self.to_planning_frame(grasp.grasp_pose), task['allow octomap contact'])
         if ik_state is not None and speed_changes_on() and rospy.get_param('~mtc_pin_grasp_ik', True):
-            # the IK solution pick.py's cable ranking judged (#151): MTC's own IK branch differed and failed the guard
+            # the IK solution pick.py's cable ranking judged: MTC's own IK branch differed and failed the guard
             reference = {n: p for n, p in zip(ik_state.name, ik_state.position) if 'ur5_' in n}
             tolerance = math.radians(rospy.get_param('~mtc_pin_grasp_ik_tolerance_deg', 20.0))
             ik.setCostTerm(pinned_ik_cost(reference, tolerance))
@@ -1505,7 +1505,7 @@ class MtcPickPlace:
     # ------------------------------------------------------------------ frames
 
     def log_place_pose(self, location):
-        '''log only (#202): where the held object is set down (planning frame, z includes the release clearance), so a
+        '''log only: where the held object is set down (planning frame, z includes the release clearance), so a
         place that ends with the object on the floor can be tied to a pose, a table edge distance and a yaw'''
         try:
             pose = self.to_planning_frame(location.place_pose)
@@ -1564,7 +1564,7 @@ class MtcPickPlace:
         place pose and the lowering allow octomap contact for the held object): (occupied octomap leaves in the octomap
         frame, octomap frame, 4x4 box pose relative to the object frame, box half extents with the bottom raised by
         ~mtc_place_octomap_clearance and the sides grown by ~mtc_place_octomap_margin, default 0.05 m: in the sim a klt
-        placed with a few cm of gap next to a can only the octomap saw brushed and pushed it on the way down, #185).
+        placed with a few cm of gap next to a can only the octomap saw brushed and pushed it on the way down).
         None when off, or without an octomap or a box shape of the held object.
         '''
         if not rospy.get_param('~mtc_place_reject_octomap_occupied', False):
@@ -1815,7 +1815,7 @@ class MtcPickPlace:
     def plan(self, task, what):
         '''plan task; sets self.chosen_solution (the cheapest solution, or with the cable guard the cheapest one
         whose joint path passes the cable check). With the guard one solution is planned, and a rejected one is not
-        replanned for more (#151): asked for 4 at once, MTC searched until its stage timeouts for solutions that mostly
+        replanned for more: asked for 4 at once, MTC searched until its stage timeouts for solutions that mostly
         do not exist (~9 s per grasp, suite 2026-09-28), and asked again after a reject it returned copies of the
         rejected path (same cost, stretch and worst point; real run A1 2026-09-28: ~9 s lost per grasp). The caller
         turns a rejected grasp about its approach axis (guard_rejected_q) or tries the next candidate instead.
@@ -2419,7 +2419,7 @@ class MtcPickPlace:
         the check after closing. A per-object close width (gripper_distance_values_per_object.yaml, e.g. bleach
         0.045 m) can be reached with the object between the fingers but without stalling on it: soft plastic gives
         way, or the object is a little narrower there. The Robotiq then reports "reached the requested position" (gOBJ
-        3) and the fact says empty, like a close on air (#188: the bleach bottle held twice on the real robot, both
+        3) and the fact says empty, like a close on air (the bleach bottle held twice on the real robot, both
         picks failed as "closed on nothing"). With ~mtc_grasp_check_squeeze such a grasp closes on to fully closed:
         an object stalls the fingers short of it and the fact confirms it, on air they close fully and the pick fails
         as before. Off by default; the sim launch profile switches it on (Oscar 2026-09-28).

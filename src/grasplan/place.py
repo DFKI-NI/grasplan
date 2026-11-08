@@ -74,17 +74,17 @@ from std_msgs.msg import Header
 
 
 def place_within_reach():
-    '''#217 ~place_sample_within_reach: off by default; the sim launch profile switches it on'''
+    '''~place_sample_within_reach: off by default; the sim launch profile switches it on'''
     return bool(rospy.get_param('~place_sample_within_reach', False))
 
 
 def place_free_footprints_first():
-    '''#217 ~place_free_footprints_first: off by default; the sim launch profile switches it on'''
+    '''~place_free_footprints_first: off by default; the sim launch profile switches it on'''
     return bool(rospy.get_param('~place_free_footprints_first', False))
 
 
 def drop_implausible_place_boxes():
-    '''#202 ~place_drop_implausible_boxes: off by default; the sim launch profile switches it on'''
+    '''~place_drop_implausible_boxes: off by default; the sim launch profile switches it on'''
     return bool(rospy.get_param('~place_drop_implausible_boxes', False))
 
 
@@ -287,7 +287,7 @@ class PlaceTools:
     def add_objs_to_planning_scene(self):
         # query all poses available in pose selector
         resp = self.get_all_poses_pick_pose_selector_srv()
-        # #202 (~place_drop_implausible_boxes): the pick's plausibility rules for perceived boxes, here too
+        # ~place_drop_implausible_boxes: the pick's plausibility rules for perceived boxes, here too
         drop = drop_implausible_place_boxes()
         boxes = [(o.class_id + '_' + str(o.instance_id), o) for o in resp.poses.objects]
         supports = self.scene_support_boxes(exclude={name for name, _ in boxes}) if drop and boxes else {}
@@ -318,9 +318,9 @@ class PlaceTools:
         whether a perceived box (pose selector object, map frame) may go into the place scene: not more than
         ~max_box_sink_into_support (default 0.09) inside its support, and not floating more than
         ~max_box_float_above_support (default 0.03) above it unless it rests on or in another perceived box (an object in
-        a klt). The pick node leaves such boxes out of its scene already (#151, #192); in the place scene the false
+        a klt). The pick node leaves such boxes out of its scene already; in the place scene the false
         screwdriver_1 box of 2026-09-28 (13 cm above table_2) blocked the spots near the pick, the Pringles can went to
-        the table corner and tipped off (#202).
+        the table corner and tipped off.
         '''
         p, o = obj.pose.position, obj.pose.orientation
         center, orientation, size = (p.x, p.y, p.z), (o.x, o.y, o.z, o.w), (obj.size.x, obj.size.y, obj.size.z)
@@ -346,7 +346,7 @@ class PlaceTools:
         return True
 
     def place_reach_radii(self):
-        '''#217: the reach radii to draw place poses within, in order: [~place_max_reach, ~place_max_reach_fallback
+        '''the reach radii to draw place poses within, in order: [~place_max_reach, ~place_max_reach_fallback
         (default 0.9)] with ~place_sample_within_reach, else [~place_max_reach] (the old single draw)'''
         max_reach = rospy.get_param('~place_max_reach', 0.8)
         fallback = rospy.get_param('~place_max_reach_fallback', 0.9)
@@ -356,7 +356,7 @@ class PlaceTools:
 
     def reach_disk(self, support_object, max_reach=None):
         '''
-        #217 (~place_sample_within_reach, sim on / real off): (x, y, max_reach (default ~place_max_reach)) of
+        ~place_sample_within_reach (sim on / real off): (x, y, max_reach (default ~place_max_reach)) of
         ~place_reach_frame in the support object's frame, so the place poses are drawn where the reach ordering keeps them
         (sim 2026-09-29, table 3: 228 of 300 drawn poses were beyond reach, the 72 left all on the drill); None when off
         or unknown
@@ -376,7 +376,7 @@ class PlaceTools:
 
     def order_free_footprints_first(self, place_poses, held_name, support_name):
         '''
-        #217 (~place_free_footprints_first, sim on / real off): the place candidates whose held-object footprint (grown by
+        ~place_free_footprints_first (sim on / real off): the place candidates whose held-object footprint (grown by
         ~place_footprint_margin, default 0.04 m, plus the gripper above it) clears every perceived object box on the
         support come first, the others after them in their order (MTC's collision check still decides)
         '''
@@ -515,7 +515,7 @@ class PlaceTools:
 
     def detour_needed_after_first_try(self):
         '''
-        after a failed first try whose untangle detour was left out (#198 (e)): take it on the next try when the cable
+        after a failed first try whose untangle detour was left out: take it on the next try when the cable
         guard rejected a plan and the arm has not moved; otherwise it stays out
         '''
         if getattr(self, 'detour_state', '') != 'deferred' or getattr(self, 'mtc', None) is None or self.mtc.executed:
@@ -535,7 +535,7 @@ class PlaceTools:
         defined in srdf
         '''
         rospy.loginfo(f'moving arm to {arm_posture_name}')
-        # with the MTC cable guard on, the named-pose move is planned and cable-checked before it runs (#121)
+        # with the MTC cable guard on, the named-pose move is planned and cable-checked before it runs
         from grasplan.mtc_pick_place import guarded_named_move
         guard = None
         if getattr(self, 'mtc', None) is not None:
@@ -615,7 +615,7 @@ class PlaceTools:
                 override_disentangle_dont_doit = False
                 override_observe_before_place_dont_doit = False
             else:
-                # the detour left out of the first try (#198 (e)) only when the cable guard rejected a plan without it
+                # the detour left out of the first try only when the cable guard rejected a plan without it
                 override_disentangle_dont_doit = not (i == 1 and self.detour_needed_after_first_try())
                 override_observe_before_place_dont_doit = True
             # do not disentangle if we dont go to observe arm pose, unless configured to
@@ -636,7 +636,7 @@ class PlaceTools:
                     success = False
                     break
                 if self.mtc is not None and self.mtc.executed:
-                    break  # the arm moved: the caller decides about a retry (#128)
+                    break  # the arm moved: the caller decides about a retry
         if not success and self.mtc is not None and self.mtc.executed and not self.place_action_server.is_preempt_requested():
             self.retract_after_failure('place')
         if success:
@@ -653,7 +653,7 @@ class PlaceTools:
     @timed('order_poses')
     def order_place_poses_by_reach(self, place_poses: ObjectList, max_reach=None):
         """
-        ~place_prefer_near_arm (#132): try the place poses nearest to the arm base (~place_reach_frame) first, as MTC
+        ~place_prefer_near_arm: try the place poses nearest to the arm base (~place_reach_frame) first, as MTC
         and MoveIt try them in order; ~place_max_reach > 0 also drops those farther away (unless none is closer).
         """
         if not rospy.get_param('~place_prefer_near_arm', True) or not place_poses.objects:
@@ -711,7 +711,7 @@ class PlaceTools:
         for obj_name, obj in objects_in_frame(planning_scene.get_objects(), self.global_reference_frame,
                                               self.frame_matrix).items():
             tf = TransformStamped(
-                header=Header(frame_id=self.global_reference_frame),   # #226: mobipick2/map for a second robot
+                header=Header(frame_id=self.global_reference_frame),   # mobipick2/map for a second robot
                 child_frame_id=obj_name,
                 transform=Transform(
                     translation=Vector3(x=obj.pose.position.x, y=obj.pose.position.y, z=obj.pose.position.z),
@@ -806,8 +806,8 @@ class PlaceTools:
                 f'{object_class_tbp} is an open-set object: {steps} yaws around the full circle, '
                 f'released {clearance * 100:.1f} cm above {support_object}'
             )
-        # #217: drawn within ~place_max_reach; when none of them has a free footprint, drawn again within
-        # ~place_max_reach_fallback (the comfortable re-pick distance of #132 is no hard limit, MTC decides the reach)
+        # drawn within ~place_max_reach; when none of them has a free footprint, drawn again within
+        # ~place_max_reach_fallback (the comfortable re-pick distance is no hard limit, MTC decides the reach)
         radii = self.place_reach_radii()
         for k, radius in enumerate(radii):
             local_place_poses = gen_place_poses_from_plane(

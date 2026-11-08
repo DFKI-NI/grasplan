@@ -1,4 +1,4 @@
-'''#217 (sim 2026-09-29 07:26, a banana place on table_3 failed 96 of 96): the place poses were drawn over the whole table
+'''(sim 2026-09-29 07:26, a banana place on table_3 failed 96 of 96): the place poses were drawn over the whole table
 (shrunk by 15 cm), 228 of 300 then dropped as beyond ~place_max_reach, and the rest lay on the drill. With
 ~place_sample_within_reach the poses are drawn inside the reach disk, and with ~place_free_footprints_first the ones whose
 footprint clears the perceived object boxes are tried first (both sim on, real off). Geometry of the cic table 3 stop.
@@ -71,7 +71,7 @@ class TestFreeFirst(unittest.TestCase):
         self.assertEqual([c.pose.position.x for c in ordered[1:]], [20.98, 21.25, 21.12])   # the rest in their order
 
     def test_table_3_stop_no_free_spot_within_0_8_but_within_0_9(self):
-        # the finding behind #217: from the table 3 stop the reachable band of the shrunk plane (y >= 13.97) is taken by
+        # the finding behind it: from the table 3 stop the reachable band of the shrunk plane (y >= 13.97) is taken by
         # the drill (x 20.87-21.07) and the klt (x 21.10-21.40); the gap between them is 3 cm. Drawing within reach and
         # trying free spots first makes the place fail fast there instead of planning 96 poses, it cannot make it work
         random.seed(5)

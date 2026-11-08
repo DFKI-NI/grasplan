@@ -1,4 +1,4 @@
-'''#151 real 2026-09-28: a place smashed klt_1 into an object on table_3 that only the octomap knew, because the place
+'''real 2026-09-28: a place smashed klt_1 into an object on table_3 that only the octomap knew, because the place
 task allowed octomap contact for the held object and the gripper from the start, so the transfer ignored it. Now the
 octomap contact holds only for the place pose and the final lowering ('octomap blocks the transfer' before the
 Connect). And a failed pick/place/insert that moved the arm retracts it to transport. Stubbed MTC stages and arm (no

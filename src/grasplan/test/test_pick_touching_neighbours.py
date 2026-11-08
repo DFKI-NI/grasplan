@@ -1,4 +1,4 @@
-'''#229: with ~mtc_lift_tolerate_touching_neighbours the attach stage of the MTC pick may touch only the scene boxes that
+'''with ~mtc_lift_tolerate_touching_neighbours the attach stage of the MTC pick may touch only the scene boxes that
 already touch the target, the lift goes straight up (planning frame +z), and a stage after the lift forbids these
 contacts again. Flag off or no neighbours: the old task. Also the neighbour search itself on a fake planning scene.
 Stubbed MTC stages (no robot model, no ROS master); needs the Mobipick image for the module imports.'''

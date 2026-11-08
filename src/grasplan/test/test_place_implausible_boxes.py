@@ -1,4 +1,4 @@
-'''#202 (real 2026-09-28 places after the Pringles picks): the place node added every pick pose selector box, also the
+'''(real 2026-09-28 places after the Pringles picks): the place node added every pick pose selector box, also the
 false DOPE screwdriver_1 box floating 13 cm above table_2, which blocked the spots near the pick and sent the can to the
 table corner, where it tipped off. With ~place_drop_implausible_boxes (sim on, real off) the place scene leaves out a
 box more than ~max_box_sink_into_support inside its table and one floating more than ~max_box_float_above_support above

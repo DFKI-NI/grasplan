@@ -7,7 +7,7 @@ container: an oblique AnyGrasp grasp then needs a large wrist rotation that wind
 out, both sorted by the least rotation from the current TCP (which keeps the wrist and its cable where it is):
 
 - free_yaw_insert_candidates: the object keeps the roll and pitch it had when it was picked (how it stood on
-  the table), only its yaw about the vertical is free (Oscar's decision in #106)
+  the table), only its yaw about the vertical is free (Oscar's decision)
 - comfortable_insert_candidates: the gripper orientation is chosen instead, the approach axis (+x of the TCP)
   points straight down like the multimeter insert; changes the object's roll and pitch after an oblique grasp
 

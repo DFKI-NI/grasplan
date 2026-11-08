@@ -1,4 +1,4 @@
-'''#198 (d) (Oscar 2026-09-28: fewer arm motions): with ~open_set_pick_from_current_state an open-set pick ranks its
+'''(Oscar 2026-09-28: fewer arm motions): with ~open_set_pick_from_current_state an open-set pick ranks its
 grasps from the current arm state and moves to the start pose (transport) only when the first grasp is not predicted to
 pass the cable gate or would turn wrist_3 more than ~open_set_pick_from_current_max_wrist_3_deg; when every grasp then
 fails before the arm moved, it tries once more from the start pose. Default on in the sim, off on the real robot.

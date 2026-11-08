@@ -1,4 +1,4 @@
-'''#121: named-pose arm moves (anygrasp, observe, transport, home) are planned and cable-checked before they run.
+'''named-pose arm moves (anygrasp, observe, transport, home) are planned and cable-checked before they run.
 Fake MoveGroupCommander, the real CableGuard with the carrier link chain replay (fixture of test_cable_chain_guard);
 Mobipick image.'''
 import math

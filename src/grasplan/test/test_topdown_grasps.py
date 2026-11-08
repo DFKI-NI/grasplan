@@ -1,4 +1,4 @@
-'''unit tests of grasplan.tools.topdown_grasps (#148, numpy only, no ROS): python3 -m pytest <this file>'''
+'''unit tests of grasplan.tools.topdown_grasps (numpy only, no ROS): python3 -m pytest <this file>'''
 import math
 
 import numpy as np

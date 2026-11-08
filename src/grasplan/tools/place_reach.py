@@ -18,7 +18,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 '''
-Order place candidates by how comfortably the arm reaches them (#132), no ROS.
+Order place candidates by how comfortably the arm reaches them, no ROS.
 
 gen_place_poses_from_plane() samples place poses anywhere on the support plane, and MTC and MoveIt try them in the
 given order, so an object could end up about 1 m away, where a later pick from the same base pose fails. The
@@ -49,7 +49,7 @@ def order_by_reach(objects, base_xy, max_reach=0.0):
 
 def footprint_is_free(center, orientation, size, boxes, margin=0.04, headroom=0.15):
     '''
-    #217: whether the held object's box at a place pose (center, orientation (x, y, z, w), size), grown by margin on each
+    whether the held object's box at a place pose (center, orientation (x, y, z, w), size), grown by margin on each
     horizontal side and by headroom above it (the gripper around it), clears every box of boxes ([(center, orientation,
     size)], the perceived objects on the support). Exact for boxes standing on a face (tools.topdown_grasps prisms).
     '''

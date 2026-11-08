@@ -1,4 +1,4 @@
-'''#202: the MTC place logs the chosen place pose (planning frame) before it executes, log only. Stubbed (no ROS master).'''
+'''the MTC place logs the chosen place pose (planning frame) before it executes, log only. Stubbed (no ROS master).'''
 import math
 import unittest
 from unittest import mock

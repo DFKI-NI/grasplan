@@ -85,7 +85,7 @@ class InsertTools:
         self.comfortable_orientation_max_size = rospy.get_param('~comfortable_orientation_max_size', 0.15)
         self.tcp_frame = rospy.get_param('~tcp_frame', f'{robot_prefix()}/gripper_tcp')
         # free_yaw: order the yaws by the wrist_3 change an IK solution (seeded with the current arm state) needs,
-        # instead of by the TCP rotation, which does not predict wrist_3 when the arm has to reconfigure (#106)
+        # instead of by the TCP rotation, which does not predict wrist_3 when the arm has to reconfigure
         self.insert_sort_by_ik = rospy.get_param('~insert_sort_by_ik', True)
         self.compute_ik_srv = rospy.ServiceProxy('compute_ik', GetPositionIK)
         self.tf_buffer = tf2_ros.Buffer()
@@ -171,7 +171,7 @@ class InsertTools:
                 if not goal.observe_before_insert:
                     override_disentangle_dont_doit = True
             else:  # second try, generate 360 degree orientations
-                # the detour left out of the first try (#198 (e)) only when the cable guard rejected a plan without it
+                # the detour left out of the first try only when the cable guard rejected a plan without it
                 override_disentangle_dont_doit = not self.place.detour_needed_after_first_try()
                 override_observe_before_place_dont_doit = True
                 same_orientation_as_support_obj = False
@@ -191,7 +191,7 @@ class InsertTools:
                 success = True
                 break
             if getattr(self.place, 'mtc', None) is not None and self.place.mtc.executed:
-                break  # the arm moved (maybe the gripper already opened): report instead of retrying (#128)
+                break  # the arm moved (maybe the gripper already opened): report instead of retrying
         if (not success and getattr(self.place, 'mtc', None) is not None and self.place.mtc.executed
                 and not self.insert_action_server.is_preempt_requested()):
             self.place.retract_after_failure('insert')
@@ -207,9 +207,9 @@ class InsertTools:
             )
 
     # as_picked: the object keeps its grasp orientation (the container's yaw or 8 fixed yaws), can need large
-    #     wrist rotations that wind up the arm cable (#103)
+    #     wrist rotations that wind up the arm cable
     # free_yaw: the object keeps the roll and pitch it was picked with, its yaw about the vertical is chosen for the
-    #     least wrist rotation (#106)
+    #     least wrist rotation
     # gripper_down: small objects are released with the gripper pointing straight down and turned as little as
     #     possible, changes the object's roll and pitch after an oblique grasp
     INSERT_ORIENTATIONS = ('as_picked', 'free_yaw', 'gripper_down')
@@ -600,7 +600,7 @@ class InsertTools:
         '''
         Object body poses sorted by how far wrist_3 turns from the current state (collision-aware IK). With
         ~insert_cable_gate and the MTC guard enabled, predict cable stretch along the joint-linear path to each IK
-        state; offer predicted-pass poses before the rest (#219, #151). MTC samples its own IK, so this prediction
+        state; offer predicted-pass poses before the rest. MTC samples its own IK, so this prediction
         ranks candidates rather than fixing the solution. Unsorted when IK is unavailable.
         '''
         self.insert_gate_passing = 0

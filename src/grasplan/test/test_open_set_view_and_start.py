@@ -1,4 +1,4 @@
-'''#151 open-set pick (Oscar, 2026-09-28): the grasp view comes only from the view service (no fixed anygrasp pose
+'''open-set pick (Oscar, 2026-09-28): the grasp view comes only from the view service (no fixed anygrasp pose
 fallback unless ~anygrasp_named_view_fallback), and the grasp is planned from ~open_set_pick_start_pose (transport)
 instead of from the upside-down view. Mocks for the services, the arm and the scene (no ROS master); needs the
 Mobipick image for the module imports.'''

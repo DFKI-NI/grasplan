@@ -1,4 +1,4 @@
-'''#151 (Oscar, 2026-09-28, real Pringles can shaken out of the gripper): place and insert of an object picked open-set
+'''(Oscar, 2026-09-28, real Pringles can shaken out of the gripper): place and insert of an object picked open-set
 (its class is not in the pick node's handcoded grasp catalog) skip the closed-set untangle_cable_guide detour and move
 to transport instead; closed-set objects keep the detour. Mocks for rosparam and the arm (no ROS master); needs the
 Mobipick image for the module imports.'''

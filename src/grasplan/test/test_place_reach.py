@@ -1,4 +1,4 @@
-'''unit tests of grasplan.tools.place_reach (#132, no ROS): python3 -m pytest <this file>'''
+'''unit tests of grasplan.tools.place_reach (no ROS): python3 -m pytest <this file>'''
 from types import SimpleNamespace
 
 from grasplan.tools.place_reach import order_by_reach

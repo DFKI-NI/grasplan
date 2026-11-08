@@ -1,4 +1,4 @@
-'''#198 (e) (Oscar 2026-09-28: fewer arm motions): with ~untangle_detour_only_when_needed a closed-set place or insert
+'''(Oscar 2026-09-28: fewer arm motions): with ~untangle_detour_only_when_needed a closed-set place or insert
 leaves the untangle_cable_guide detour out of its first try; the second try takes it (once) only when the first failed
 before the arm moved and the MTC cable guard rejected a plan. Off in the code (hack mode only). Mocks for
 rosparam, the arm and MTC (no ROS master); needs the Mobipick image for the module imports.'''

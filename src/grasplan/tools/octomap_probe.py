@@ -3,7 +3,7 @@
 Occupied voxels of a planning scene octomap (octomap_msgs/Octomap in the full "OcTree" format, which is what
 move_group's get_planning_scene returns), and the ones inside an oriented box, so a place location whose footprint
 holds something that only the octomap sees (an open-set object on the table, a missed DOPE object) can be rejected
-before it is planned (#180 follow-up, real 2026-09-28: a klt placed into objects on table_1 and table_3).
+before it is planned (real 2026-09-28: a klt placed into objects on table_1 and table_3).
 '''
 import struct
 

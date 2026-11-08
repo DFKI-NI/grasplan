@@ -1,4 +1,4 @@
-'''#151 one-sided boxes (real Pringles can 2026-09-28): the grasp view's box holds only the front of the object, so a
+'''one-sided boxes (real Pringles can 2026-09-28): the grasp view's box holds only the front of the object, so a
 standing elongated box whose side along the line of sight is the shorter one gets its full depth behind the visible
 face; flat, lying and wide boxes stay. Fake tf (no ROS master); needs the Mobipick image for the module imports.'''
 import math

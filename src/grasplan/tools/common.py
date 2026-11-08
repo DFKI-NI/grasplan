@@ -20,7 +20,7 @@
 
 
 def robot_prefix(fallback='mobipick'):
-    """The robot's name for per-robot defaults (#226, several Mobipicks in one sim): ~robot_prefix if set, else the
+    """The robot's name for per-robot defaults (several Mobipicks in one sim): ~robot_prefix if set, else the
     node's namespace (the grasplan nodes run in the robot namespace, ns="mobipick"), else ``fallback``. Frames are
     '<prefix>/gripper_tcp', robot names '/<prefix>/gripper_hw'; a single robot keeps 'mobipick'."""
     import rospy

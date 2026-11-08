@@ -1,4 +1,4 @@
-'''#192 real 2026-09-28, Pringles can on table_2: (1) a false DOPE screwdriver_1 box floating ~12 cm above the table and
+'''real 2026-09-28, Pringles can on table_2: (1) a false DOPE screwdriver_1 box floating ~12 cm above the table and
 reaching 1.7 % into the can box (under the 20 % overlap rule) held the can at the lift start: all 12 grasps failed at
 the lift. A box that reaches into the target at all and floats more than ~drop_floating_boxes_at_target above its
 support now stays out of the planning scene (default on in the sim, off on the real robot until tested). (2) the

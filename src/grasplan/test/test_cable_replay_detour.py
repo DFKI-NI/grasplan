@@ -1,4 +1,4 @@
-'''#271 phase 3: the cable replay detour of the MTC pick (~mtc_cable_replay_detour, careful, off in code): a closed-set
+'''The cable replay detour of the MTC pick (~mtc_cable_replay_detour, careful, off in code): a closed-set
 pick the chain replay refused goes to a detour pose as a separate motion and is planned once more; never after a cancel,
 for open-set picks or while the named-move guard only logs. The trigger is the count of chain replay rejections that
 plan() keeps. Mocks (no ROS master); needs the Mobipick image for the module imports.'''
@@ -138,7 +138,7 @@ class CableReplayDetour(unittest.TestCase):
         self.assertEqual((self.moves, len(p.mtc.goals)), ([], 1))
 
     def test_arm_moved_after_a_detour(self):
-        # the #198(d) retry and the top-down fallback must not take a detoured arm for one that did not move
+        # the current-state retry and the top-down fallback must not take a detoured arm for one that did not move
         p = self.tools([MoveItErrorCodes.PLANNING_FAILED, MoveItErrorCodes.PLANNING_FAILED], 1)
         self.assertTrue(p.arm_did_not_move(MoveItErrorCodes.PLANNING_FAILED))
         self.pick(p)

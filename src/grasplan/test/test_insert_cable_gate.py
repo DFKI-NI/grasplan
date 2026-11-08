@@ -1,4 +1,4 @@
-'''#219: insert pose gate ranks cable-safe IK solutions and delays held-back MTC offers.'''
+'''insert pose gate ranks cable-safe IK solutions and delays held-back MTC offers.'''
 import unittest
 from types import SimpleNamespace as NS
 from unittest import mock

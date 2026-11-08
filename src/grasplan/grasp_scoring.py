@@ -28,7 +28,7 @@ both rank candidates identically: the raw network score ("nn") is multiplied
 by a top-down bonus that grows with how well the approach direction points
 straight down in a gravity-aligned frame, and by an extra straight bonus for
 approaches within a few degrees of vertical: a tilted gripper dips one finger
-towards the table (#134), so near-vertical grasps must win clearly. Every
+towards the table, so near-vertical grasps must win clearly. Every
 function is ROS-free apart from the GraspCandidate message fields it reads and
 writes.
 '''
@@ -38,7 +38,7 @@ import math
 from grasplan.grasp_markers import make_candidate_scores
 
 NN_SCORE_NAME = 'nn'
-# default straight bonus of the AnyGrasp server and the mockup (#134): x1.5 at vertical, fading out at 20 deg
+# default straight bonus of the AnyGrasp server and the mockup: x1.5 at vertical, fading out at 20 deg
 STRAIGHT_GRASP_SCORE_MULTIPLIER = 1.5
 STRAIGHT_GRASP_MAX_ANGLE_DEG = 20.0
 
@@ -196,7 +196,7 @@ def side_grasp_axis(size, rotation=None, up=(0.0, 0.0, 1.0)):
 
 
 # ---------------------------------------------------------------- low objects: top grasps only (Oscar, 2026-09-28)
-# A real strawberry (#151) was grasped 16 deg off vertical with the fingertips at its top and slipped out in the lift. An
+# A real strawberry was grasped 16 deg off vertical with the fingertips at its top and slipped out in the lift. An
 # object lower than LOW_OBJECT_MAX_HEIGHT is grasped from the top only: within LOW_OBJECT_MAX_TILT_DEG of straight down,
 # as low as the fingertip clearance above the table allows (Oscar: below 5 cm, the strawberry yes, the 6.4 cm apple and
 # the tennis ball keep their side grasps). A small dark object often has no real depth and its box height is filled in

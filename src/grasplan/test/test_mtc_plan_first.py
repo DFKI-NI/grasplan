@@ -1,4 +1,4 @@
-'''#151 pick speed: with the cable guard MTC plans one solution and does not replan a rejected one for more (the
+'''pick speed: with the cable guard MTC plans one solution and does not replan a rejected one for more (the
 replan returned copies of the rejected path); ~mtc_speed_changes false restores the old search for all at once; the
 IK pin cost term takes MTC's (SubTrajectory, comment) call and reads the IK state from the solution message.
 Fake task and guard (no ROS master, no robot model); needs the Mobipick image for the module imports.'''

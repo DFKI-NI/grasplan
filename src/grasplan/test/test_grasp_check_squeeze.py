@@ -1,4 +1,4 @@
-'''#188 real 2026-09-28: the gripper held the bleach bottle twice but both picks failed as "closed on nothing": the fingers
+'''real 2026-09-28: the gripper held the bleach bottle twice but both picks failed as "closed on nothing": the fingers
 reached the per-object close width (bleach 0.045 m) without stalling on the soft bottle, so the Robotiq reported
 "reached the requested position" (gOBJ 3) like a close on air. With ~mtc_grasp_check_squeeze such a grasp closes on to
 fully closed and checks again: an object stalls the fingers (held), air lets them close (still a miss). The params are

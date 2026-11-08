@@ -1,4 +1,4 @@
-'''unit tests of grasplan.tools.gripper_envelope and the straight bonus of grasplan.grasp_scoring (#134, no ROS master
+'''unit tests of grasplan.tools.gripper_envelope and the straight bonus of grasplan.grasp_scoring (no ROS master
 needed): python3 -m pytest <this file>'''
 import math
 
@@ -76,7 +76,7 @@ def test_straight_bonus():
 
 
 def test_straight_grasp_beats_a_better_oblique_one():
-    '''#134: an oblique grasp (30 deg) with a 20 % higher network score no longer wins over a vertical one'''
+    '''an oblique grasp (30 deg) with a 20 % higher network score no longer wins over a vertical one'''
     limit = math.radians(20)
     oblique = 1.2 * top_down_multiplier(math.cos(math.radians(30)), 2.0, 1.5, limit)
     straight = 1.0 * top_down_multiplier(1.0, 2.0, 1.5, limit)

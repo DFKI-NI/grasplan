@@ -19,7 +19,7 @@
 # SOFTWARE.
 
 '''
-Geometry of the open-set fallback grasp and of the object box clamp (#148), numpy only (no ROS).
+Geometry of the open-set fallback grasp and of the object box clamp, numpy only (no ROS).
 
 topdown_grasps(): when AnyGrasp offers no usable grasp of a small object, grasp it straight down from its box: the
 TCP (x = approach, y = closing axis) above the box centre, closing across a horizontal box axis (the narrow one
@@ -118,7 +118,7 @@ def topdown_grasps(
     fingertips would then reach less than min_overlap below the box top would close on air and is skipped.
     lowest_point_offset(orientation, width): lowest fingertip z relative to the TCP while closing down to width
     (grasplan.tools.gripper_envelope). max_depth (m, 0 = off): how far the TCP may go below the box top before the
-    gripper body above the fingers would enter the box (#192: a 23.5 cm Pringles can put the coupling inside its box,
+    gripper body above the fingers would enter the box (a 23.5 cm Pringles can put the coupling inside its box,
     every top-down grasp failed at the grasp pose); a taller object gets no grasp.
     Returns ([(position, orientation, width)], [reasons for skipped axes]).
     '''

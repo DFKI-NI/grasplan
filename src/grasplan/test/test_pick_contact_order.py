@@ -1,4 +1,4 @@
-'''#151: in the MTC pick task the gripper may touch the object only from the grasp pose on (MTC demo layout), so the
+'''in the MTC pick task the gripper may touch the object only from the grasp pose on (MTC demo layout), so the
 free-space move to the pregrasp and the approach cannot sweep the open gripper through the object. Stubs the MTC
 stages (no robot model, no ROS master); needs the Mobipick image for the module imports.'''
 import unittest

@@ -1,4 +1,4 @@
-'''#226: the pick node's AnyGrasp action and grasp view service names default to its own robot (a second Mobipick
+'''the pick node's AnyGrasp action and grasp view service names default to its own robot (a second Mobipick
 asked robot 1's AnyGrasp and view service before); a single robot keeps the old names. Stubbed (no ROS master).'''
 import unittest
 

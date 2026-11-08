@@ -1,4 +1,4 @@
-'''#185 (real 2026-09-28 16:48 and 18:23: a held klt placed into objects only the octomap knew, protective stops): a place
+'''(real 2026-09-28 16:48 and 18:23: a held klt placed into objects only the octomap knew, protective stops): a place
 location whose footprint holds occupied octomap voxels higher than ~mtc_place_octomap_clearance above the held object's
 bottom is skipped (~mtc_place_reject_octomap_occupied, default on in the sim, off on the real robot until tested). Fake
 octomap and scene (no ROS master); needs the Mobipick image for the module imports.'''

@@ -1,4 +1,4 @@
-'''#151: MTC's grasp-pose IK is pinned to the IK solution pick.py's cable ranking judged (mtc.grasp_ik_states).
+'''MTC's grasp-pose IK is pinned to the IK solution pick.py's cable ranking judged (mtc.grasp_ik_states).
 Stubbed MTC stages / fake solutions (no robot model, no master); needs the Mobipick image for the imports.'''
 import math
 import unittest

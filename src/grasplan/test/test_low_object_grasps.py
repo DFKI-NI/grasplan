@@ -1,4 +1,4 @@
-'''#151 low objects (Oscar, 2026-09-28, real strawberry): an object lower than 5 cm, or with both horizontal sides below
+'''low objects (Oscar, 2026-09-28, real strawberry): an object lower than 5 cm, or with both horizontal sides below
 6 cm (a filled-in, too tall box of a small dark object), is grasped from the top only: open-set grasps more than 10 deg
 off vertical are dropped and the others lowered to the fingertip clearance above the table. Fake planning scene and
 fingertip envelope (no ROS master); needs the Mobipick image for the module imports.'''

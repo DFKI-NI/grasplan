@@ -1,4 +1,4 @@
-"""#226: grasplan's per-robot defaults follow the node namespace (mobipick for a single robot, mobipick2 ...)."""
+"""Grasplan's per-robot defaults follow the node namespace (mobipick for a single robot, mobipick2 ...)."""
 import unittest
 from unittest import mock
 

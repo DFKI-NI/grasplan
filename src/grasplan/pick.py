@@ -131,22 +131,22 @@ OCTOMAP_COLLISION_NAME = '<octomap>'
 
 
 def external_grasp_ik_timeout():
-    '''#198 (f) ~external_grasp_ik_timeout (s): the compute_ik timeout per call of the open-set IK pre-filter. TRAC-IK in
+    '''~external_grasp_ik_timeout (s): the compute_ik timeout per call of the open-set IK pre-filter. TRAC-IK in
     Distance mode always spends its whole timeout (then returns the solution closest to the seed), so 0.1 s x up to 2
-    calls x ~46 grasps cost 3.4-5.3 s per pick (claude-7e2a, #198 23:53; 12.3 s for 66 grasps in the sim 2026-09-29).
+    calls x ~46 grasps cost 3.4-5.3 s per pick (12.3 s for 66 grasps in the sim 2026-09-29).
     Default 0.1; the sim launch profile passes 0.01 (Oscar 2026-09-28)'''
     return max(0.001, float(rospy.get_param('~external_grasp_ik_timeout', 0.1)))
 
 
 def pick_from_current_state():
-    '''#198 (d) ~open_set_pick_from_current_state: off by default; the sim launch profile switches it on
+    '''~open_set_pick_from_current_state: off by default; the sim launch profile switches it on
     (Oscar 2026-09-28)'''
     return bool(rospy.get_param('~open_set_pick_from_current_state', False))
 
 
 def anygrasp_default_names(prefix):
     '''Default names of the AnyGrasp pick / generate actions and of the grasp view service of the robot named prefix
-    (a single robot: mobipick, as before; a second robot in the same sim: mobipick2, #226).'''
+    (a single robot: mobipick, as before; a second robot in the same sim: mobipick2).'''
     return {
         'grasp': f'/{prefix}/grasp_object',
         'generate': f'/{prefix}/generate_grasps',
@@ -220,7 +220,7 @@ class PickTools:
         self.planning_scene_boxes = boxes_in_robot_map(rospy.get_param('~planning_scene_boxes', []),
                                                        self.global_reference_frame)
         # raise the bottom of perceived object boxes that reach into a table of the planning scene (noisy depth) to its
-        # top, so the object does not collide with its support, e.g. during the lift (#148)
+        # top, so the object does not collide with its support, e.g. during the lift
         self.clamp_object_boxes_to_support = rospy.get_param('~clamp_object_boxes_to_support', False)
         # MoveIt's pickup plans the grasps it is given in parallel and executes the first one that
         # planned, not the best scored one; external (AnyGrasp) candidates arrive best first, so they
@@ -230,7 +230,7 @@ class PickTools:
         # Pringles can: 50 grasps, 32 infeasible, ~2 min of MTC), then offer at most the best N (0 = all)
         self.external_grasp_ik_prefilter = rospy.get_param('~external_grasp_ik_prefilter', True)
         self.external_grasp_max_attempts = int(rospy.get_param('~external_grasp_max_attempts', 12))
-        self.cable_gate_passing = 0  # leading grasps of the current pick predicted to pass the cable guard (#151)
+        self.cable_gate_passing = 0  # leading grasps of the current pick predicted to pass the cable guard
         self.clear_planning_scene = rospy.get_param('~clear_planning_scene', True)
         self.clear_octomap_flag = rospy.get_param('~clear_octomap', False)
         # MoveIt's pick pipeline lets the gripper touch the target object and the support
@@ -249,7 +249,7 @@ class PickTools:
         # configure the desired grasp planner to use
         import_file = rospy.get_param('~import_file', 'grasp_planner.simple_pregrasp_planner')
         import_class = rospy.get_param('~import_class', 'SimpleGraspPlanner')
-        # the AnyGrasp servers and the view service of THIS robot (#226: /mobipick2/... for a second robot)
+        # the AnyGrasp servers and the view service of THIS robot (/mobipick2/... for a second robot)
         any_names = anygrasp_default_names(robot_prefix())
         self.anygrasp_action_name = rospy.get_param('~anygrasp_action_name', any_names['grasp'])
         self.anygrasp_generate_action_name = rospy.get_param('~anygrasp_generate_action_name', any_names['generate'])
@@ -519,7 +519,7 @@ class PickTools:
             type(self.grasp_planner).__name__,
             action_name,
         )
-        if rospy.get_param('~open_set_topdown_test_only', False):  # testing #148: skip AnyGrasp, read on every pick
+        if rospy.get_param('~open_set_topdown_test_only', False):  # testing the fallback: skip AnyGrasp, read per pick
             return self.pick_topdown_without_anygrasp(goal, 'AnyGrasp skipped (~open_set_topdown_test_only)')
         if not self.anygrasp_generate_action_client.wait_for_server(rospy.Duration(self.anygrasp_server_timeout)):
             message = f'AnyGrasp generate action server {action_name} is unavailable'
@@ -826,7 +826,7 @@ class PickTools:
         '''
         add a perceived object box to the planning scene; with ~clamp_object_boxes_to_support its bottom is raised to
         the top of the support box (supports: support_boxes()) it reaches into; only the scene box changes, the pose
-        used for grasping stays as perceived (#148). A box whose bottom is more than ~max_box_sink_into_support (m,
+        used for grasping stays as perceived. A box whose bottom is more than ~max_box_sink_into_support (m,
         default 0.09, 0 = off) inside its support is implausible (real 2026-09-28: a false DOPE bleach_1 11.2 cm deep,
         raised right onto the tomato soup can; the real klt_1 reached 6.4 cm) and left out, unless keep_implausible
         (the object being picked). Returns whether the box went into the scene.
@@ -866,7 +866,7 @@ class PickTools:
         ~drop_floating_boxes_at_target (m, 0 = off): a box that reaches into the target box at all and whose bottom
         floats more than this above its support (supports: support_boxes()) is left out too: a real object neither
         hovers nor reaches into another one, and any box inside the target's blocks every lift, as the held object
-        starts in collision with it (#192, real 2026-09-28 20:37: a false DOPE screwdriver_1 box ~12 cm above table_2,
+        starts in collision with it (real 2026-09-28 20:37: a false DOPE screwdriver_1 box ~12 cm above table_2,
         1.7 % into the Pringles can box, failed all 12 grasps at the lift). Default 0 (off); the sim launch profile
         passes 0.03 (Oscar 2026-09-28).
         '''
@@ -1032,7 +1032,7 @@ class PickTools:
         defined in srdf
         '''
         rospy.loginfo(f'moving arm to {arm_posture_name}')
-        # with the MTC cable guard on, the named-pose move is planned and cable-checked before it runs (#121)
+        # with the MTC cable guard on, the named-pose move is planned and cable-checked before it runs
         from grasplan.mtc_pick_place import guarded_named_move
         guard = None
         if getattr(self, 'mtc', None) is not None:
@@ -1286,11 +1286,11 @@ class PickTools:
         if id is not None:
             object_to_pick.set_id(id)
         if self.mtc is not None:
-            # a round object may be grasped turned about its approach axis when the cable guard needs it (#121)
+            # a round object may be grasped turned about its approach axis when the cable guard needs it
             round_object = bounding_box is not None and is_compact_round(bounding_box)
             self.mtc.yaw_free_objects = {object_to_pick.get_object_class_and_id_as_string()} if round_object else set()
             # open-set grasps (segmented, padded box) keep the open fingers outside the object box, so the gripper may
-            # touch the object only from the grasp pose on (#151); closed-set grasps put the fingers inside the full
+            # touch the object only from the grasp pose on; closed-set grasps put the fingers inside the full
             # DOPE box (klt rim, handles) and keep the allowance from the start
             self.mtc.strict_contact_order = external_grasp_candidates is not None
             # the IK pin is for this pick's ranked open-set grasps (set by reachable_external_grasps): none left from an
@@ -1311,11 +1311,11 @@ class PickTools:
         # move arm to pregrasp in joint space, not really needed, can be removed
         if self.pregrasp_posture_required:
             self.move_arm_to_posture(self.pregrasp_posture)
-        # open-set picks (#151, Oscar 2026-09-28): leave the grasp view for ~open_set_pick_start_pose (transport; empty
+        # open-set picks (Oscar 2026-09-28): leave the grasp view for ~open_set_pick_start_pose (transport; empty
         # = plan from the view as before) with the guarded named move, so MTC plans the grasp from there instead of
         # swinging the wrist straight from the upside-down view (real T1: wrist_3 272 -> 133 deg at ~85 deg/s into a
         # protective stop). The IK pre-filter, the cable ranking and the IK pin below read the joints after this move.
-        # #198 (d) (~open_set_pick_from_current_state): the move waits until the grasps are ranked from the current
+        # ~open_set_pick_from_current_state: the move waits until the grasps are ranked from the current
         # state (reachable_external_grasps -> settle_pick_start) and happens only when that state does not suit
         self.deferred_start_pose, self.stayed_for_pick, self.pick_start_failed = '', '', ''
         self.pick_start_refused = ''
@@ -1425,7 +1425,7 @@ class PickTools:
         self.finish_start_move()   # nothing planned (or preempted) while the start move ran: let it end first
         if result is False:
             return False   # preempted
-        # #198 (d): planned from the current state and every grasp failed before the arm moved: once more from the
+        # planned from the current state and every grasp failed before the arm moved: once more from the
         # start pose, like without the switch (~open_set_pick_from_current_state_retry)
         if (
             self.stayed_for_pick
@@ -1574,7 +1574,7 @@ class PickTools:
 
     def top_grasps_for_low_objects(self, grasps, widths, object_pose, bounding_box, external_object=None):
         '''
-        Oscar (2026-09-28, real strawberry, #151): a very low object is grasped from the top only. Low: its box
+        Oscar (2026-09-28, real strawberry): a very low object is grasped from the top only. Low: its box
         (object_pose orientation, gravity-aligned frame) lower than ~open_set_low_object_max_height, or both horizontal
         sides below ~open_set_small_object_max_footprint (0 = off; a small object without real depth gets a filled-in,
         too tall box). Open-set grasps more than ~open_set_low_object_max_tilt_deg off vertical are dropped (0 = rule
@@ -1818,7 +1818,7 @@ class PickTools:
     def raise_low_grasps(self, grasps, support_surface_name, widths=None, sink=False):
         '''
         AnyGrasp does not know the Robotiq 140 fingers, so for small objects it proposes grasps whose fingers would
-        go into the table (#124 strawberry, #134 banana). Two limits above the top of the support surface (m, 0 =
+        go into the table (a strawberry, a banana). Two limits above the top of the support surface (m, 0 =
         off, re-read on every goal), the higher requirement wins:
         ~open_set_min_grasp_height: of the TCP.
         ~open_set_min_fingertip_height: of the lowest fingertip point while the gripper closes from open down to the
@@ -1948,7 +1948,7 @@ class PickTools:
 
     def settle_pick_start(self, ranked, reachable, solutions, colliding, start):
         '''
-        #198 (d): the open-set grasps were ranked from the current arm state (IK seeded there, cable prediction from
+        The open-set grasps were ranked from the current arm state (IK seeded there, cable prediction from
         there). Plan from here, without the move to the start pose, when the first grasp to be tried is predicted to
         pass the cable gate and turns wrist_3 by at most ~open_set_pick_from_current_max_wrist_3_deg (default 90; the
         swing from the upside-down grasp view that the start pose avoids was 139 deg, real T1 2026-09-28). Otherwise move
@@ -2057,11 +2057,11 @@ class PickTools:
     def offer_grasp_batches(self, object_to_pick, grasps, support_surface_name, external):
         '''
         plan and execute the ranked grasps: in batches of ~external_grasp_batch_size (external = open-set), the cable
-        gate's predicted-pass grasps first (#151); the MoveIt error code of the last try, False when preempted
+        gate's predicted-pass grasps first; the MoveIt error code of the last try, False when preempted
         '''
         batch = self.external_grasp_batch_size if external else 0
         planning_started = time.time()
-        # cable gate (#151): the grasps predicted to pass the cable guard go first in batches of their own; the rest is
+        # cable gate: the grasps predicted to pass the cable guard go first in batches of their own; the rest is
         # offered only when all of them failed
         gated = external and 0 < self.cable_gate_passing < len(grasps)
         if (batch > 0 and len(grasps) > batch) or gated:
@@ -2109,7 +2109,7 @@ class PickTools:
 
     def topdown_fallback_grasps(self, object_to_pick, object_pose, bounding_box, support_surface_name):
         '''
-        ~open_set_topdown_fallback: when AnyGrasp offers no usable grasp of an open-set object (#148), grasp it straight
+        ~open_set_topdown_fallback: when AnyGrasp offers no usable grasp of an open-set object, grasp it straight
         down from its box instead (grasplan.tools.topdown_grasps): closing across a horizontal box axis at most
         ~open_set_topdown_max_width wide (narrow one first, each also turned 180 degrees), the TCP as low as
         ~open_set_min_fingertip_height (lowest fingertip point) and ~open_set_min_grasp_height (TCP) above the support
@@ -2140,7 +2140,7 @@ class PickTools:
             rospy.get_param('~open_set_topdown_max_width', 0.10),
             rospy.get_param('~open_set_topdown_min_overlap', 0.01),
             # the Robotiq 2F-140 knuckles and base start ~0.14 m above the TCP (URDF): a
-            # taller object puts them inside its box (#192)
+            # taller object puts them inside its box
             rospy.get_param('~open_set_topdown_max_depth', 0.12),
         )
         if skipped:
@@ -2260,7 +2260,7 @@ class PickTools:
         External grasps whose grasp pose has an IK solution (compute_ik, seeded with the current state, no collision
         check: the fingers touch the object box there, which MTC allows), best first, at most
         external_grasp_max_attempts of them. Unfiltered when compute_ik is unavailable. With the MTC cable guard on,
-        the grasps whose IK solution the guard's cable model predicts to pass come first (#151, ranking only). The IK
+        the grasps whose IK solution the guard's cable model predicts to pass come first (ranking only). The IK
         solutions of the offered grasps are handed to MTC (mtc.grasp_ik_states), which plans each grasp to exactly
         that joint state instead of solving IK again, so the ranked branch is the one planned.
         '''
@@ -2277,7 +2277,7 @@ class PickTools:
                 state = self.robot.get_current_state()
                 seed = self.ik_seed_state(state)
                 reachable, solutions, colliding = [], [], []
-                # with the strict contact order (#151) MTC's grasp IK rejects solutions that collide with the object,
+                # with the strict contact order MTC's grasp IK rejects solutions that collide with the object,
                 # so the ranked (and pinned) solution must be collision-free too; grasps whose only solution collides
                 # (e.g. with the octomap, which MTC may touch) stay offered, after the others and not pinned
                 strict = bool(getattr(self.mtc, 'strict_contact_order', False)) if self.mtc is not None else False
@@ -2318,8 +2318,8 @@ class PickTools:
     def rank_prefiltered(self, start, settle=False):
         '''
         the IK pre-filter's grasps ranked by the cable stretch predicted from start (sensor_msgs/JointState), the
-        ranked IK solutions pinned in MTC; settle: decide first whether the pick starts from here (#198 (d),
-        settle_pick_start). Also used by the retry from the start pose, which needs no new IK.
+        ranked IK solutions pinned in MTC; settle: decide first whether the pick starts from here
+        (settle_pick_start). Also used by the retry from the start pose, which needs no new IK.
         '''
         reachable, solutions, colliding = self.ik_prefilter
         grasps = self.rank_by_predicted_cable_stretch(reachable, solutions, start) + colliding
@@ -2345,7 +2345,7 @@ class PickTools:
     def ik_seed_state(self, state):
         '''
         the robot state that seeds the IK pre-filter: the current one, or, while the move to the open-set start pose
-        waits (#198 (d)), the current one with the arm at that pose, so the grasps get the same IK branches as when
+        waits, the current one with the arm at that pose, so the grasps get the same IK branches as when
         the arm had moved there first (sim 2026-09-29: seeded at the upside-down grasp view, the Pringles branches
         failed the cable guard in the shoulder span, seeded at transport they planned at once)
         '''
@@ -2388,7 +2388,7 @@ class PickTools:
     def rank_by_predicted_cable_stretch(self, grasps, joint_states, start=None):
         '''
         grasps (best first) with their IK joint states -> the grasps the MTC cable guard's model predicts to pass
-        (max stretch <= ~mtc_cable_max_stretch) first, each group in its order (#151). The prediction is the worst
+        (max stretch <= ~mtc_cable_max_stretch) first, each group in its order. The prediction is the worst
         stretch along the joint-linear path from start (the current sensor_msgs/JointState) to the IK state, a cheap
         stand-in for MTC's path, which is planned to that same state (grasp_ik_states). Its trajectory check rejected
         the side grasps of a standing Pringles can one by one (night09-13): offer the likely ones first. Unchanged
@@ -2419,8 +2419,8 @@ class PickTools:
                 rospy.logwarn(f'cable ranking: no prediction for a grasp: {e}')
                 stretches.append(None)
         ordered, passing = order_by_predicted_stretch(grasps, stretches, guard.max_stretch)
-        self.cable_gate_passing = passing   # the cable gate offers these first (#151)
-        # per grasp (quality order), so a gate that holds back most grasps can be judged from the log (#192)
+        self.cable_gate_passing = passing   # the cable gate offers these first
+        # per grasp (quality order), so a gate that holds back most grasps can be judged from the log
         # tilt = approach angle off vertical, gap = the planned opening in mm (tilted grasps pinch a standing can)
         rospy.loginfo('cable ranking per grasp: ' + ', '.join(
             f'{g.id} q{g.grasp_quality:.2f} {self.tilt_and_gap(g)} ' + ('?' if s is None else f'{s:+.3f}')

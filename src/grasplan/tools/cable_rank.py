@@ -1,5 +1,5 @@
 '''
-Order grasps by the arm cable stretch the cable guard predicts at their IK solution (#151): the MTC cable guard
+Order grasps by the arm cable stretch the cable guard predicts at their IK solution: the MTC cable guard
 (mtc_pick_place.CableGuard) rejects a plan whose stretch exceeds ~mtc_cable_max_stretch, so grasps predicted to pass
 at their grasp pose are offered first. Ranking only: nothing is dropped. The guard checks the whole path, the grasp
 end state is a proxy for it. Pure python, no ROS.
@@ -33,7 +33,7 @@ def joint_path(start, goal, samples=10):
 
 def gate_chunks(total, passing, batch):
     '''
-    (start, end) index ranges to offer a ranked grasp list in (#151 cable gate): the first passing grasps (predicted to
+    (start, end) index ranges to offer a ranked grasp list in (cable gate): the first passing grasps (predicted to
     pass the cable guard) in batches of batch, then the held-back rest in batches of batch, so no batch mixes the two
     groups and the rest is planned only when every predicted-pass grasp failed. batch <= 0: one range per group.
     '''

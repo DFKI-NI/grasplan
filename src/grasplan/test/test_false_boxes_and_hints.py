@@ -1,4 +1,4 @@
-'''#151 real 2026-09-28 (Oscar via claude-b1ef): a false DOPE bleach_1 box, 11.2 cm deep in table_2 and raised right
+'''real 2026-09-28 (Oscar): a false DOPE bleach_1 box, 11.2 cm deep in table_2 and raised right
 onto the tomato soup can, blocked every grasp. A box more than 9 cm inside its support, or one that shares at least 20 %
 of the smaller volume with the verified open-set target, stays out of the planning scene. And the grasp type follows the
 perceived geometry only, never an object name. Mocks for the scene, the pose selector and rosparam (no ROS master);

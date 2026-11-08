@@ -1,4 +1,4 @@
-'''#121: a grasp rejected by the MTC cable guard is replanned turned about its approach axis (the wrist_3 axis).
+'''a grasp rejected by the MTC cable guard is replanned turned about its approach axis (the wrist_3 axis).
 Needs the Mobipick image (MoveIt Python bindings) and mobipick_cable_entanglement sourced.'''
 import math
 import os

@@ -257,7 +257,7 @@ def well_separated(x_y_list, candidate_x, candidate_y, min_dist=0.2):
 def sample_in_plane(plane, within=None, tries=200):
     '''
     (x, y) uniformly in the axis-aligned plane (4 points as from adjust_plane); with within (cx, cy, r) also inside that
-    disk (#217: the arm's reach, so no draw is wasted on spots the reach ordering drops), falling back to the plane when
+    disk (the arm's reach, so no draw is wasted on spots the reach ordering drops), falling back to the plane when
     tries draws found no such point (the disk misses the plane)
     '''
     for _ in range(tries if within is not None else 1):

@@ -1,4 +1,4 @@
-'''unit tests of grasplan.tools.cable_rank (#151, no ROS): python3 -m pytest <this file>'''
+'''unit tests of grasplan.tools.cable_rank (no ROS): python3 -m pytest <this file>'''
 from grasplan.tools.cable_rank import order_by_predicted_stretch
 
 
