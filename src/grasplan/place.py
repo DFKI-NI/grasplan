@@ -365,7 +365,7 @@ class PlaceTools:
             max_reach = rospy.get_param('~place_max_reach', 0.8)
         if not place_within_reach() or max_reach <= 0.0:
             return None
-        reach_frame = rospy.get_param('~place_reach_frame', f'{robot_prefix()}/ur5_base_link')
+        reach_frame = self.place_reach_frame()
         try:
             base = self.tf_buffer.lookup_transform(support_object, reach_frame, rospy.Time(0),
                                                    rospy.Duration(1.0)).transform.translation
@@ -650,6 +650,11 @@ class PlaceTools:
                 PlaceObjectResult(success=False), f'place failed: {reason}' if reason else 'place failed'
             )
 
+    def place_reach_frame(self):
+        '''the frame whose origin the place poses are ordered and drawn around: ~place_reach_frame, by default the
+        base link of the arm ~arm_name (ur5 on Mobipick) of this robot'''
+        return rospy.get_param('~place_reach_frame', f"{robot_prefix()}/{rospy.get_param('~arm_name', 'ur5')}_base_link")
+
     @timed('order_poses')
     def order_place_poses_by_reach(self, place_poses: ObjectList, max_reach=None):
         """
@@ -658,7 +663,7 @@ class PlaceTools:
         """
         if not rospy.get_param('~place_prefer_near_arm', True) or not place_poses.objects:
             return
-        reach_frame = rospy.get_param('~place_reach_frame', f'{robot_prefix()}/ur5_base_link')
+        reach_frame = self.place_reach_frame()
         try:
             base = self.tf_buffer.lookup_transform(
                 place_poses.header.frame_id, reach_frame, rospy.Time(0), rospy.Duration(1.0)
