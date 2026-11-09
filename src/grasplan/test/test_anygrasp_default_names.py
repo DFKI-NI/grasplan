@@ -15,6 +15,10 @@ class TestAnygraspDefaultNames(unittest.TestCase):
             'grasp': '/mobipick2/grasp_object', 'generate': '/mobipick2/generate_grasps',
             'view': '/mobipick2/grasp_view'})
 
+    def test_a_robot_without_a_prefix_gets_root_names(self):
+        self.assertEqual(anygrasp_default_names(''), {
+            'grasp': '/grasp_object', 'generate': '/generate_grasps', 'view': '/grasp_view'})
+
 
 if __name__ == '__main__':
     unittest.main()

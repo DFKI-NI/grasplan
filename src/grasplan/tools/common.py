@@ -44,11 +44,28 @@ def object_list_frame(object_list, default):
 def robot_prefix(fallback='mobipick'):
     """The robot's name for per-robot defaults (several Mobipicks in one sim): ~robot_prefix if set, else the
     node's namespace (the grasplan nodes run in the robot namespace, ns="mobipick"), else ``fallback``. Frames are
-    '<prefix>/gripper_tcp', robot names '/<prefix>/gripper_hw'; a single robot keeps 'mobipick'."""
+    '<prefix>/gripper_tcp', robot names '/<prefix>/gripper_hw'; a single robot keeps 'mobipick'. A robot whose nodes,
+    frames and joints carry no prefix at all sets ~robot_prefix to '/': the result is then empty, so build the names
+    with robot_frame() and robot_topic()."""
     import rospy
 
-    name = str(rospy.get_param('~robot_prefix', '') or rospy.get_namespace()).strip('/')
+    param = str(rospy.get_param('~robot_prefix', '') or '')
+    if param and not param.strip('/'):
+        return ''
+    name = (param or str(rospy.get_namespace())).strip('/')
     return name.split('/')[0] if name else fallback
+
+
+def robot_frame(name):
+    """A frame or joint name of this robot: '<prefix>/<name>', or name alone for a robot without a prefix."""
+    prefix = robot_prefix()
+    return f'{prefix}/{name}' if prefix else name
+
+
+def robot_topic(name):
+    """An absolute topic, action or parameter name of this robot: '/<prefix>/<name>', or '/<name>' without a prefix."""
+    prefix = robot_prefix()
+    return f'/{prefix}/{name}' if prefix else f'/{name}'
 
 def connect_move_groups(robot, group_names, wait_for_servers):
     '''

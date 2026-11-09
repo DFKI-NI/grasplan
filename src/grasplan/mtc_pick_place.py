@@ -81,7 +81,7 @@ from shape_msgs.msg import SolidPrimitive
 from moveit.task_constructor import core, stages
 
 from grasplan.tools.octomap_probe import count_in_box, occupied_leaves
-from grasplan.tools.common import robot_prefix
+from grasplan.tools.common import robot_prefix, robot_frame, robot_topic
 from grasplan.tools.finger_series import analyse_close
 from grasplan.tools.pad_gap import PINCH_GAP_RATIO, PINCH_MAX_TILT_DEG, is_pinch, overclose, pad_gap, pinch_checkable
 from grasplan import cable_shaping
@@ -249,7 +249,7 @@ class CableGuard:
         )
         with open(config) as f:
             self.cfg = config_from_dict(yaml.safe_load(f))
-        self.cfg.tf_prefix = robot_prefix() + '/'   # this robot's links (mobipick/, mobipick2/, ...)
+        self.cfg.tf_prefix = robot_frame('')   # this robot's links (mobipick/, mobipick2/, ...)
         self.model = CableModel(rospy.get_param('robot_description'), self.cfg)
         wrist_3 = [wj for span in self.cfg.spans for wj in span.joints if wj.joint == 'ur5_wrist_3_joint']
         self.wrist_3_neutral = wrist_3[0].neutral if wrist_3 else math.pi - 0.25
@@ -390,7 +390,7 @@ class CableGuard:
         from std_srvs.srv import Trigger
         from mobipick_cable_entanglement.path_check import live_state_problem
         name = rospy.get_param('~mtc_cable_chain_state_service',
-                               f'/{robot_prefix()}/cable_entanglement_monitor/chain_state')
+                               robot_topic('cable_entanglement_monitor/chain_state'))
         state = None
         try:
             rospy.wait_for_service(name, timeout=0.2)
@@ -443,7 +443,7 @@ def monitor_resets_at_trajectory_start():
     passed from a fresh chain also pass the monitor; without it the monitor carries its chain from one trajectory to the
     next (sim 2026-10-27: after the detour leg left the chain nearly taut, the fresh-chain check passed the pick and the
     monitor stopped it)'''
-    value = rospy.get_param(f'/{robot_prefix()}/cable_model/reset_at_trajectory_start', False)
+    value = rospy.get_param(robot_topic('cable_model/reset_at_trajectory_start'), False)
     if isinstance(value, str):
         return value.strip().lower() in ('1', 'true', 'yes', 'on')
     return bool(value)
@@ -465,7 +465,7 @@ def announce_trajectory_start(source):
 
         if _trajectory_start_pub is None:
             _trajectory_start_pub = rospy.Publisher(
-                f'/{robot_prefix()}/cable_model/trajectory_start', String, queue_size=10
+                robot_topic('cable_model/trajectory_start'), String, queue_size=10
             )
             rospy.sleep(0.5)  # the monitor connects to a new publisher asynchronously: do not lose the first one
         _trajectory_start_pub.publish(String(data=source))
@@ -651,7 +651,7 @@ def monitor_stretch():
     '''the MonitorStretch of this robot's cable monitor (one subscription per process)'''
     global _monitor_stretch
     if _monitor_stretch is None:
-        _monitor_stretch = MonitorStretch(f'/{robot_prefix()}/cable_entanglement_monitor/max_stretch')
+        _monitor_stretch = MonitorStretch(robot_topic('cable_entanglement_monitor/max_stretch'))
     return _monitor_stretch
 
 
@@ -908,7 +908,7 @@ class MtcPickPlace:
         # the open-set octomap has voxels on the target itself; like the pick pipeline workaround in pick.py the
         # gripper and the held object may touch it, the rest of the robot may not
         self.allow_octomap_contact = rospy.get_param('~allow_octomap_contact_during_pick', True)
-        self.gripper_action_name = rospy.get_param('~gripper_action_name', f'/{robot_prefix()}/gripper_hw')
+        self.gripper_action_name = rospy.get_param('~gripper_action_name', robot_topic('gripper_hw'))
         self.gripper_action_timeout = rospy.get_param('~mtc_gripper_action_timeout', 10.0)
         self.relaxed_retreat_min_distance = rospy.get_param('~mtc_relaxed_retreat_min_distance', 0.05)
         self.retreat_failed = False
@@ -2122,7 +2122,7 @@ class MtcPickPlace:
             return None
         try:
             return FingerRecorder(rospy.get_param('~grasp_regrasp_finger_joint',
-                                                  f'{robot_prefix()}/gripper_finger_joint'))
+                                                  robot_frame('gripper_finger_joint')))
         except Exception as error:   # a diagnostic never breaks the pick
             rospy.logwarn(f'mtc: stall: no finger recording ({error})')
             return None
@@ -2154,7 +2154,7 @@ class MtcPickPlace:
 
     def finger_angle(self):
         '''finger joint angle (rad) now, None when no joint state comes'''
-        return _current_joint(rospy.get_param('~grasp_regrasp_finger_joint', f'{robot_prefix()}/gripper_finger_joint'))
+        return _current_joint(rospy.get_param('~grasp_regrasp_finger_joint', robot_frame('gripper_finger_joint')))
 
     def pinched(self, request):
         '''

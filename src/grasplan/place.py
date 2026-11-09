@@ -42,7 +42,7 @@ from grasplan.tools.support_plane_tools import (
     make_plane_marker_msg,
     OBJECT_HEIGHTS,
 )
-from grasplan.tools.common import separate_object_class_from_id, connect_move_groups, roscpp_initialize_named, robot_prefix, object_list_frame, as_position_list, padded_box_size
+from grasplan.tools.common import separate_object_class_from_id, connect_move_groups, roscpp_initialize_named, robot_frame, robot_topic, object_list_frame, as_position_list, padded_box_size
 from grasplan.tools.scene_frames import objects_in_frame, tf_matrix
 from grasplan import cable_detour
 from grasplan.tools.moveit_errors import arm_stop_text, motion_failure_text, print_moveit_error, tried_text
@@ -460,7 +460,7 @@ class PlaceTools:
         handcoded grasp catalog (rosparam ~pick_grasp_catalog_param, default
         /mobipick/pick_object_node/handcoded_grasp_planner_transforms); False when that catalog cannot be read
         '''
-        name = rospy.get_param('~pick_grasp_catalog_param', f'/{robot_prefix()}/pick_object_node/handcoded_grasp_planner_transforms')
+        name = rospy.get_param('~pick_grasp_catalog_param', robot_topic('pick_object_node/handcoded_grasp_planner_transforms'))
         catalog = rospy.get_param(name, None) if name else None
         if not isinstance(catalog, (dict, list)):
             return False
@@ -677,7 +677,7 @@ class PlaceTools:
     def place_reach_frame(self):
         '''the frame whose origin the place poses are ordered and drawn around: ~place_reach_frame, by default the
         base link of the arm ~arm_name (ur5 on Mobipick) of this robot'''
-        return rospy.get_param('~place_reach_frame', f"{robot_prefix()}/{rospy.get_param('~arm_name', 'ur5')}_base_link")
+        return rospy.get_param('~place_reach_frame', robot_frame(f"{rospy.get_param('~arm_name', 'ur5')}_base_link"))
 
     @timed('order_poses')
     def order_place_poses_by_reach(self, place_poses: ObjectList, max_reach=None):
@@ -1160,7 +1160,7 @@ class PlaceTools:
         # base_link, 20 cm
         place_msg.pre_place_approach = self.make_gripper_translation_from_param(
             '~pre_place_approach',
-            {'frame_id': f'{robot_prefix()}/base_link', 'axis': [0.0, 0.0, -1.0], 'desired': 0.2, 'min_dist': 0.1},
+            {'frame_id': robot_frame('base_link'), 'axis': [0.0, 0.0, -1.0], 'desired': 0.2, 'min_dist': 0.1},
         )
 
         # The retreat motion
@@ -1168,7 +1168,7 @@ class PlaceTools:
         # ~post_place_retreat: the same keys; the default is 25 cm back along -x of the gripper_tcp
         place_msg.post_place_retreat = self.make_gripper_translation_from_param(
             '~post_place_retreat',
-            {'frame_id': f'{robot_prefix()}/gripper_tcp', 'axis': [-1.0, 0.0, 0.0], 'desired': 0.25, 'min_dist': 0.1},
+            {'frame_id': robot_frame('gripper_tcp'), 'axis': [-1.0, 0.0, 0.0], 'desired': 0.25, 'min_dist': 0.1},
         )
 
         # an optional list of obstacles that we have semantic information about

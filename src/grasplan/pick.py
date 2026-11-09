@@ -66,7 +66,7 @@ from grasplan.msg import (
     PickObjectResult,
 )
 from grasplan.srv import ViewObject
-from grasplan.tools.common import objectToPick, connect_move_groups, roscpp_initialize_named, robot_prefix, object_list_frame, padded_box_size
+from grasplan.tools.common import objectToPick, connect_move_groups, roscpp_initialize_named, robot_prefix, robot_frame, robot_topic, object_list_frame, padded_box_size
 from grasplan.tools.scene_frames import boxes_in_robot_map, objects_in_frame, tf_matrix
 from grasplan.tools.action_client_helper import ActionClientHelper
 from grasplan.tools.stage_timing import TIMER, action, timed, watch_server
@@ -147,10 +147,11 @@ def pick_from_current_state():
 def anygrasp_default_names(prefix):
     '''Default names of the AnyGrasp pick / generate actions and of the grasp view service of the robot named prefix
     (a single robot: mobipick, as before; a second robot in the same sim: mobipick2).'''
+    root = f'/{prefix}' if prefix else ''
     return {
-        'grasp': f'/{prefix}/grasp_object',
-        'generate': f'/{prefix}/generate_grasps',
-        'view': f'/{prefix}/grasp_view',
+        'grasp': f'{root}/grasp_object',
+        'generate': f'{root}/generate_grasps',
+        'view': f'{root}/grasp_view',
     }
 
 
@@ -261,7 +262,7 @@ class PickTools:
         # whole object within the depth range); when it is missing or fails the pick fails, unless
         # ~anygrasp_named_view_fallback sends the arm to anygrasp_arm_pose instead (the old behaviour)
         self.anygrasp_view_service = rospy.get_param('~anygrasp_view_service', any_names['view'])
-        self.gripper_action_name = rospy.get_param('~gripper_action_name', f'/{robot_prefix()}/gripper_hw')
+        self.gripper_action_name = rospy.get_param('~gripper_action_name', robot_topic('gripper_hw'))
         self.gripper_action_timeout = rospy.get_param('~gripper_action_timeout', 2.0)
         # MoveIt's pickup/place action servers live in move_group, which on the real robot runs on the
         # robot PC; connecting to it from another machine can take seconds, so the client is created
@@ -802,7 +803,7 @@ class PickTools:
         '''
         if not rospy.get_param('~open_set_complete_one_sided_boxes', True):
             return
-        camera = rospy.get_param('~open_set_camera_frame', f'{robot_prefix()}/eef_main_cam_depth_optical_frame')
+        camera = rospy.get_param('~open_set_camera_frame', robot_frame('eef_main_cam_depth_optical_frame'))
         frame = pose_stamped.header.frame_id
         try:
             self.tf_listener.waitForTransform(frame, camera, rospy.Time(0), rospy.Duration(1.0))
@@ -1120,7 +1121,7 @@ class PickTools:
         '''
         if rospy.get_param('~skip_pre_open_when_open', False):
             from grasplan.mtc_pick_place import _current_joint
-            joint = rospy.get_param('~skip_pre_open_finger_joint', f'{robot_prefix()}/gripper_finger_joint')
+            joint = rospy.get_param('~skip_pre_open_finger_joint', robot_frame('gripper_finger_joint'))
             theta = _current_joint(joint, timeout=1.0)
             open_positions = self.grasp_planner.gripper_open_distance
             open_width = float(open_positions[0] if isinstance(open_positions, (list, tuple)) else open_positions)

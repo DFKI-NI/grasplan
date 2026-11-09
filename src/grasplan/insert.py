@@ -35,7 +35,7 @@ import tf2_ros
 import tf.transformations as tft
 from grasplan import cable_detour
 from grasplan.place import PlaceTools
-from grasplan.tools.common import separate_object_class_from_id, robot_prefix
+from grasplan.tools.common import separate_object_class_from_id, robot_frame
 from grasplan.tools.cable_rank import gate_chunks, joint_path, order_by_predicted_stretch
 from grasplan.tools.support_plane_tools import (
     gen_insert_poses_from_obj,
@@ -83,7 +83,7 @@ class InsertTools:
         self.use_mesh_object_heights = rospy.get_param('~use_mesh_object_heights', False)
         self.place_same_orientation_as_picked = rospy.get_param('~place_same_orientation_as_picked', True)
         self.comfortable_orientation_max_size = rospy.get_param('~comfortable_orientation_max_size', 0.15)
-        self.tcp_frame = rospy.get_param('~tcp_frame', f'{robot_prefix()}/gripper_tcp')
+        self.tcp_frame = rospy.get_param('~tcp_frame', robot_frame('gripper_tcp'))
         # free_yaw: order the yaws by the wrist_3 change an IK solution (seeded with the current arm state) needs,
         # instead of by the TCP rotation, which does not predict wrist_3 when the arm has to reconfigure
         self.insert_sort_by_ik = rospy.get_param('~insert_sort_by_ik', True)
