@@ -96,7 +96,9 @@ class GripperFindTransforms:
                     f.write(f'{tab}{tab}mesh_translation: {visual.origin.position}\n')
                     f.write(f'{tab}{tab}mesh_rotation: {visual.origin.rotation}\n')
                     f.write(f"{tab}{tab}mesh_path: '{visual.geometry.filename}'\n")
-                    f.write(f'{tab}{tab}mesh_scale: {visual.geometry.scale}\n')
+                    # a mesh without a scale attribute has the scale None: write the identity scale
+                    scale = visual.geometry.scale if visual.geometry.scale is not None else [1.0, 1.0, 1.0]
+                    f.write(f'{tab}{tab}mesh_scale: {scale}\n')
                     f.write('\n\n')
         f.close()
 
