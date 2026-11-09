@@ -42,7 +42,7 @@ from grasplan.tools.support_plane_tools import (
     make_plane_marker_msg,
     OBJECT_HEIGHTS,
 )
-from grasplan.tools.common import separate_object_class_from_id, connect_move_groups, roscpp_initialize_named, robot_frame, robot_topic, object_list_frame, as_position_list, padded_box_size
+from grasplan.tools.common import separate_object_class_from_id, connect_move_groups, roscpp_initialize_named, robot_frame, robot_topic, supports_in_frame, object_list_frame, as_position_list, padded_box_size
 from grasplan.tools.scene_frames import objects_in_frame, tf_matrix
 from grasplan import cable_detour
 from grasplan.tools.moveit_errors import arm_stop_text, motion_failure_text, print_moveit_error, tried_text
@@ -308,7 +308,9 @@ class PlaceTools:
                 object_bounding_box.append(pose_selector_object.size.x)
                 object_bounding_box.append(pose_selector_object.size.y)
                 object_bounding_box.append(pose_selector_object.size.z)
-                if drop and not self.plausible_box(object_name, pose_selector_object, supports, boxes):
+                if drop and not self.plausible_box(
+                    object_name, pose_selector_object, supports, boxes, pose_stamped_msg.header.frame_id
+                ):
                     if object_name in self.scene.get_known_object_names():
                         self.scene.remove_world_object(object_name)
                     continue
@@ -317,9 +319,9 @@ class PlaceTools:
                 object_bounding_box = padded_box_size(object_bounding_box, rospy.get_param('~planning_scene_box_padding', 0.0))
                 self.scene.add_box(object_name, pose_stamped_msg, object_bounding_box)
 
-    def plausible_box(self, name, obj, supports, boxes):
+    def plausible_box(self, name, obj, supports, boxes, frame=None):
         '''
-        whether a perceived box (pose selector object, map frame) may go into the place scene: not more than
+        whether a perceived box (pose selector object, in ``frame``, default ~global_reference_frame) may go into the place scene: not more than
         ~max_box_sink_into_support (default 0.09) inside its support, and not floating more than
         ~max_box_float_above_support (default 0.03) above it unless it rests on or in another perceived box (an object in
         a klt). The pick node leaves such boxes out of its scene already; in the place scene the false
@@ -328,7 +330,7 @@ class PlaceTools:
         '''
         p, o = obj.pose.position, obj.pose.orientation
         center, orientation, size = (p.x, p.y, p.z), (o.x, o.y, o.z, o.w), (obj.size.x, obj.size.y, obj.size.z)
-        frame_supports = supports.get(self.global_reference_frame, [])
+        frame_supports = supports_in_frame(supports, frame or self.global_reference_frame)
         if not frame_supports:
             return True
         max_sink = rospy.get_param('~max_box_sink_into_support', 0.09)

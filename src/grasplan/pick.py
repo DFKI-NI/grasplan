@@ -66,7 +66,7 @@ from grasplan.msg import (
     PickObjectResult,
 )
 from grasplan.srv import ViewObject
-from grasplan.tools.common import objectToPick, connect_move_groups, roscpp_initialize_named, robot_prefix, robot_frame, robot_topic, object_list_frame, padded_box_size
+from grasplan.tools.common import objectToPick, connect_move_groups, roscpp_initialize_named, robot_prefix, robot_frame, robot_topic, supports_in_frame, object_list_frame, padded_box_size
 from grasplan.tools.scene_frames import boxes_in_robot_map, objects_in_frame, tf_matrix
 from grasplan.tools.action_client_helper import ActionClientHelper
 from grasplan.tools.stage_timing import TIMER, action, timed, watch_server
@@ -836,7 +836,7 @@ class PickTools:
         raised right onto the tomato soup can; the real klt_1 reached 6.4 cm) and left out, unless keep_implausible
         (the object being picked). Returns whether the box went into the scene.
         '''
-        frame_supports = (supports or {}).get(pose_stamped.header.frame_id, [])
+        frame_supports = supports_in_frame(supports, pose_stamped.header.frame_id)
         if frame_supports:
             p, o = pose_stamped.pose.position, pose_stamped.pose.orientation
             max_sink = rospy.get_param('~max_box_sink_into_support', 0.09)
@@ -898,7 +898,7 @@ class PickTools:
         if float_limit <= 0.0 or fraction <= 0.0:
             return False
         height = height_above_support_top((p.x, p.y, p.z), (o.x, o.y, o.z, o.w), size,
-                                          (supports or {}).get(pose_stamped.header.frame_id, []))
+                                          supports_in_frame(supports, pose_stamped.header.frame_id))
         if height is None or height <= float_limit:
             return False
         rospy.logwarn(f'{name}: its box reaches into the target {target_name} ({fraction * 100:.1f} % of the smaller '

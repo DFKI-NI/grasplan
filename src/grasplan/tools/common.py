@@ -41,6 +41,18 @@ def object_list_frame(object_list, default):
     return getattr(header, 'frame_id', '') or default
 
 
+def supports_in_frame(supports, frame):
+    """The support boxes (a dict frame -> boxes) given in ``frame``, the frame the perceived boxes are in. Supports only
+    in other frames cannot be compared with them, so that is said once instead of passing every box unchecked."""
+    found = (supports or {}).get(frame, [])
+    if not found and supports:
+        import rospy
+
+        rospy.logwarn_once(f'no support boxes in frame {frame}, only in {sorted(supports)}: the perceived boxes are '
+                           f'not checked against their supports')
+    return found
+
+
 def robot_prefix(fallback='mobipick'):
     """The robot's name for per-robot defaults (several Mobipicks in one sim): ~robot_prefix if set, else the
     node's namespace (the grasplan nodes run in the robot namespace, ns="mobipick"), else ``fallback``. Frames are
