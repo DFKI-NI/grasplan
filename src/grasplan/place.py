@@ -42,7 +42,7 @@ from grasplan.tools.support_plane_tools import (
     make_plane_marker_msg,
     OBJECT_HEIGHTS,
 )
-from grasplan.tools.common import separate_object_class_from_id, connect_move_groups, roscpp_initialize_named, robot_prefix
+from grasplan.tools.common import separate_object_class_from_id, connect_move_groups, roscpp_initialize_named, robot_prefix, object_list_frame
 from grasplan.tools.scene_frames import objects_in_frame, tf_matrix
 from grasplan import cable_detour
 from grasplan.tools.moveit_errors import arm_stop_text, motion_failure_text, print_moveit_error, tried_text
@@ -298,7 +298,7 @@ class PlaceTools:
                 pose_selector_object.instance_id
                 # object pose
                 pose_stamped_msg = PoseStamped()
-                pose_stamped_msg.header.frame_id = self.global_reference_frame
+                pose_stamped_msg.header.frame_id = object_list_frame(resp.poses, self.global_reference_frame)
                 pose_stamped_msg.pose.position = pose_selector_object.pose.position
                 pose_stamped_msg.pose.orientation = pose_selector_object.pose.orientation
                 # bounding box

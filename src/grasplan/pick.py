@@ -66,7 +66,7 @@ from grasplan.msg import (
     PickObjectResult,
 )
 from grasplan.srv import ViewObject
-from grasplan.tools.common import objectToPick, connect_move_groups, roscpp_initialize_named, robot_prefix
+from grasplan.tools.common import objectToPick, connect_move_groups, roscpp_initialize_named, robot_prefix, object_list_frame
 from grasplan.tools.scene_frames import boxes_in_robot_map, objects_in_frame, tf_matrix
 from grasplan.tools.action_client_helper import ActionClientHelper
 from grasplan.tools.stage_timing import TIMER, action, timed, watch_server
@@ -697,7 +697,7 @@ class PickTools:
                 pose_selector_object.instance_id
                 # object pose
                 pose_stamped_msg = PoseStamped()
-                pose_stamped_msg.header.frame_id = self.global_reference_frame
+                pose_stamped_msg.header.frame_id = object_list_frame(resp.poses, self.global_reference_frame)
                 pose_stamped_msg.pose.position = pose_selector_object.pose.position
                 pose_stamped_msg.pose.orientation = pose_selector_object.pose.orientation
                 # bounding box

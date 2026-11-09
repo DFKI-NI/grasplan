@@ -19,6 +19,13 @@
 # SOFTWARE.
 
 
+def object_list_frame(object_list, default):
+    """The frame the poses of a pose selector answer (an ObjectList) are given in: its header frame when it carries one,
+    else ``default`` (the node's ~global_reference_frame)."""
+    header = getattr(object_list, 'header', None)
+    return getattr(header, 'frame_id', '') or default
+
+
 def robot_prefix(fallback='mobipick'):
     """The robot's name for per-robot defaults (several Mobipicks in one sim): ~robot_prefix if set, else the
     node's namespace (the grasplan nodes run in the robot namespace, ns="mobipick"), else ``fallback``. Frames are
