@@ -652,6 +652,28 @@ class PlaceTools:
                 PlaceObjectResult(success=False), f'place failed: {reason}' if reason else 'place failed'
             )
 
+    def place_sampling_options(self, object_class, support_object):
+        '''
+        the options of the place pose sampling that depend on the object class: an open-set object (no known height)
+        is tried with yaws around the full circle and released ~open_set_place_clearance above the support; a known
+        object keeps the sampler's default clearance (1 mm) unless ~place_height_offset (m) sets another, e.g. for a
+        gripper that opens slowly above the surface
+        '''
+        if object_class in OBJECT_HEIGHTS:
+            height_offset = rospy.get_param('~place_height_offset', None)
+            return {} if height_offset is None else {'height_offset': float(height_offset)}
+        steps = max(1, self.open_set_place_yaw_steps)
+        clearance = self.open_set_place_clearance
+        rospy.loginfo(
+            f'{object_class} is an open-set object: {steps} yaws around the full circle, '
+            f'released {clearance * 100:.1f} cm above {support_object}'
+        )
+        return {
+            'yaw_range': 2.0 * math.pi,
+            'yaws': [2.0 * math.pi * step / steps for step in range(steps)],
+            'height_offset': clearance,
+        }
+
     def place_reach_frame(self):
         '''the frame whose origin the place poses are ordered and drawn around: ~place_reach_frame, by default the
         base link of the arm ~arm_name (ur5 on Mobipick) of this robot'''
@@ -800,19 +822,7 @@ class PlaceTools:
 
         # generate random place poses within the plane
         object_class_tbp = separate_object_class_from_id(object_to_be_placed)[0]
-        open_set_options = {}
-        if object_class_tbp not in OBJECT_HEIGHTS:
-            steps = max(1, self.open_set_place_yaw_steps)
-            clearance = self.open_set_place_clearance
-            open_set_options = {
-                'yaw_range': 2.0 * math.pi,
-                'yaws': [2.0 * math.pi * step / steps for step in range(steps)],
-                'height_offset': clearance,
-            }
-            rospy.loginfo(
-                f'{object_class_tbp} is an open-set object: {steps} yaws around the full circle, '
-                f'released {clearance * 100:.1f} cm above {support_object}'
-            )
+        sampling_options = self.place_sampling_options(object_class_tbp, support_object)
         # drawn within ~place_max_reach; when none of them has a free footprint, drawn again within
         # ~place_max_reach_fallback (the comfortable re-pick distance is no hard limit, MTC decides the reach)
         radii = self.place_reach_radii()
@@ -828,7 +838,7 @@ class PlaceTools:
                 min_dist=self.min_dist,
                 ignore_min_dist_list=self.ignore_min_dist_list,
                 within=self.reach_disk(support_object, radius),
-                **open_set_options,
+                **sampling_options,
             )
 
             if self.place_action_server.is_preempt_requested():
