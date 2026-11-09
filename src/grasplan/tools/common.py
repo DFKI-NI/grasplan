@@ -19,6 +19,13 @@
 # SOFTWARE.
 
 
+def padded_box_size(size, padding):
+    """The side lengths of a planning-scene box grown by ``padding`` metres on every side (0 = the box as given)."""
+    if not padding:
+        return size
+    return [float(side) + 2.0 * padding for side in size]
+
+
 def as_position_list(value):
     """The joint positions of a gripper posture from a parameter value: a number is the one position of a gripper with
     one joint, a list or tuple is one position per joint (a gripper with two joints names two positions)."""

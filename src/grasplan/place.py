@@ -42,7 +42,7 @@ from grasplan.tools.support_plane_tools import (
     make_plane_marker_msg,
     OBJECT_HEIGHTS,
 )
-from grasplan.tools.common import separate_object_class_from_id, connect_move_groups, roscpp_initialize_named, robot_prefix, object_list_frame, as_position_list
+from grasplan.tools.common import separate_object_class_from_id, connect_move_groups, roscpp_initialize_named, robot_prefix, object_list_frame, as_position_list, padded_box_size
 from grasplan.tools.scene_frames import objects_in_frame, tf_matrix
 from grasplan import cable_detour
 from grasplan.tools.moveit_errors import arm_stop_text, motion_failure_text, print_moveit_error, tried_text
@@ -311,6 +311,8 @@ class PlaceTools:
                         self.scene.remove_world_object(object_name)
                     continue
                 # add all perceived objects to planning scene (one at at time)
+                # ~planning_scene_box_padding: a margin on every side of the perceived boxes (see the pick node)
+                object_bounding_box = padded_box_size(object_bounding_box, rospy.get_param('~planning_scene_box_padding', 0.0))
                 self.scene.add_box(object_name, pose_stamped_msg, object_bounding_box)
 
     def plausible_box(self, name, obj, supports, boxes):

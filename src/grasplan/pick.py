@@ -66,7 +66,7 @@ from grasplan.msg import (
     PickObjectResult,
 )
 from grasplan.srv import ViewObject
-from grasplan.tools.common import objectToPick, connect_move_groups, roscpp_initialize_named, robot_prefix, object_list_frame
+from grasplan.tools.common import objectToPick, connect_move_groups, roscpp_initialize_named, robot_prefix, object_list_frame, padded_box_size
 from grasplan.tools.scene_frames import boxes_in_robot_map, objects_in_frame, tf_matrix
 from grasplan.tools.action_client_helper import ActionClientHelper
 from grasplan.tools.stage_timing import TIMER, action, timed, watch_server
@@ -849,6 +849,12 @@ class PickTools:
                 pose_stamped = copy.deepcopy(pose_stamped)
                 pose_stamped.pose.position.z = float(center[2])
                 size = [float(v) for v in clamped]
+        # ~planning_scene_box_padding: a margin on every side of the perceived boxes of the other objects, so that
+        # MoveIt's joint-space moves keep clear of them (the executed arm may brush a box that is just not in the way
+        # of the plan). Independent of ~open_set_box_padding, which takes the detector's padding off the box. The
+        # target of the pick (keep_implausible) stays as perceived: its fingers have to reach it
+        if not keep_implausible:
+            size = padded_box_size(size, rospy.get_param('~planning_scene_box_padding', 0.0))
         self.scene.add_box(name, pose_stamped, size)
         return True
 
