@@ -59,10 +59,14 @@ def object_list_frame(object_list, default):
 @functools.lru_cache(maxsize=1)
 def arm_joint_tag():
     """What the names of the arm's joints contain, among all joints of a joint state: ~arm_joint_tag, default 'ur5_'.
-    Read once per node, as joint state callers ask often."""
+    Read once per node, as joint state callers ask often. An empty tag would count every joint as an arm joint, so it
+    raises a ValueError that says so."""
     import rospy
 
-    return rospy.get_param('~arm_joint_tag', 'ur5_')
+    tag = rospy.get_param('~arm_joint_tag', 'ur5_')
+    if not tag:
+        raise ValueError(f'~arm_joint_tag must name what the arm joints contain, got {tag!r}: it would match every joint')
+    return tag
 
 
 def supports_in_frame(supports, frame):

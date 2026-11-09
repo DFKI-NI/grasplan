@@ -56,6 +56,30 @@ class InsertCableGate(unittest.TestCase):
         self.assertEqual(self.tool.insert_gate_passing, 0)
         mtc.update_cable_guard.assert_not_called()
 
+    def prepare_other_arm(self):
+        bodies, _mtc = self.prepare_ik()
+        joint = 'arm_7_joint'
+        self.tool.place.mtc = None
+        self.tool.place.robot = NS(get_current_state=lambda: NS(joint_state=NS(name=[joint], position=[2.0])))
+        ik = mock.Mock()
+        ik.wait_for_service = mock.Mock()
+        ik.side_effect = [
+            NS(error_code=NS(val=MoveItErrorCodes.SUCCESS), solution=NS(joint_state=NS(name=[joint], position=[w3])))
+            for w3 in (1.5, 1.9)
+        ]
+        self.tool.compute_ik_srv = ik
+        return bodies
+
+    def test_insert_sort_joint_names_the_joint_of_another_arm(self):
+        self.params['~insert_sort_joint'] = 'arm_7_joint'
+        ranked = self.tool.sort_by_wrist_3_change(self.prepare_other_arm(), np.eye(4))
+        self.assertEqual([int(body[0, 3]) for body in ranked], [2, 1])
+
+    def test_without_it_another_arm_keeps_the_order(self):
+        ranked = self.tool.sort_by_wrist_3_change(self.prepare_other_arm(), np.eye(4))
+        self.assertEqual([int(body[0, 3]) for body in ranked], [1, 2])
+        self.tool.compute_ik_srv.assert_not_called()
+
     def test_held_back_group_runs_only_after_predicted_passes_fail(self):
         calls = []
         codes = [MoveItErrorCodes.PLANNING_FAILED, MoveItErrorCodes.SUCCESS]
