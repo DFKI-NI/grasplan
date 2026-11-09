@@ -20,8 +20,9 @@ class TestAsPositionList(unittest.TestCase):
 class TestGraspPostures(unittest.TestCase):
     def posture(self, value, per_object=None, object_class=None):
         c = core.GraspPlanningCore.__new__(core.GraspPlanningCore)
-        c.gripper_joint_names = ['gripper_joint']
-        c.gripper_joint_efforts = [10.0]
+        positions = as_position_list((per_object or {}).get(object_class, value))
+        c.gripper_joint_names = ['gripper_joint_%d' % i for i in range(len(positions))]
+        c.gripper_joint_efforts = [10.0] * len(positions)
         with mock.patch.object(core.rospy, 'Duration', lambda secs: secs):
             return c.make_gripper_trajectory(value, per_object, object_class=object_class).points[0].positions
 
@@ -39,8 +40,9 @@ class TestGraspPostures(unittest.TestCase):
 class TestPlacePostures(unittest.TestCase):
     def posture(self, value):
         p = place.PlaceTools.__new__(place.PlaceTools)
-        p.gripper_joint_names = ['gripper_joint']
-        p.gripper_joint_efforts = [10.0]
+        positions = as_position_list(value)
+        p.gripper_joint_names = ['gripper_joint_%d' % i for i in range(len(positions))]
+        p.gripper_joint_efforts = [10.0] * len(positions)
         with mock.patch.object(place.rospy, 'Duration', lambda secs: secs):
             return p.make_gripper_trajectory_msg(value).points[0].positions
 

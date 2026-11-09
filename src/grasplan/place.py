@@ -42,7 +42,7 @@ from grasplan.tools.support_plane_tools import (
     make_plane_marker_msg,
     OBJECT_HEIGHTS,
 )
-from grasplan.tools.common import separate_object_class_from_id, connect_move_groups, roscpp_initialize_named, robot_frame, robot_topic, supports_in_frame, object_list_frame, as_position_list, padded_box_size
+from grasplan.tools.common import separate_object_class_from_id, connect_move_groups, roscpp_initialize_named, robot_frame, robot_topic, supports_in_frame, object_list_frame, gripper_positions, padded_box_size
 from grasplan.tools.scene_frames import objects_in_frame, tf_matrix
 from grasplan import cable_detour
 from grasplan.tools.moveit_errors import arm_stop_text, motion_failure_text, print_moveit_error, tried_text
@@ -665,7 +665,12 @@ class PlaceTools:
         '''
         if object_class in OBJECT_HEIGHTS:
             height_offset = rospy.get_param('~place_height_offset', None)
-            return {} if height_offset is None else {'height_offset': float(height_offset)}
+            if height_offset is None:
+                return {}
+            try:
+                return {'height_offset': float(height_offset)}
+            except (TypeError, ValueError):
+                raise ValueError(f'~place_height_offset must be a number (m), got {height_offset!r}') from None
         steps = max(1, self.open_set_place_yaw_steps)
         clearance = self.open_set_place_clearance
         rospy.loginfo(
@@ -1198,7 +1203,9 @@ class PlaceTools:
         trajectory = JointTrajectory()
         trajectory.joint_names = self.gripper_joint_names
         trajectory_point = JointTrajectoryPoint()
-        trajectory_point.positions = as_position_list(gripper_actuation_distance)
+        trajectory_point.positions = gripper_positions(
+            gripper_actuation_distance, self.gripper_joint_names, 'the gripper release posture (~gripper_release_distance)'
+        )
         trajectory_point.effort = self.gripper_joint_efforts
         trajectory_point.time_from_start = rospy.Duration(1.0)  # NOTE in simple pick n place demo this value is 5 s
         trajectory.points.append(trajectory_point)
@@ -1209,11 +1216,18 @@ class PlaceTools:
         a GripperTranslation from the dictionary parameter ``param_name`` (frame_id, axis [x, y, z], desired, min_dist);
         every key missing there is taken from ``defaults``, an empty frame_id counts as missing
         '''
+        given = rospy.get_param(param_name, {})
+        if not isinstance(given, dict):
+            raise ValueError(f'{param_name} must be a dictionary with frame_id, axis, desired and min_dist, got {given!r}')
         values = dict(defaults)
-        values.update({key: value for key, value in rospy.get_param(param_name, {}).items() if value not in ('', None)})
-        x, y, z = values['axis']
+        values.update({key: value for key, value in given.items() if value not in ('', None)})
+        try:
+            x, y, z = (float(v) for v in values['axis'])
+            desired, min_dist = float(values['desired']), float(values['min_dist'])
+        except (TypeError, ValueError):
+            raise ValueError(f'{param_name}: axis must be three numbers, desired and min_dist numbers (m), got {given!r}') from None
         return self.make_gripper_translation_msg(
-            values['frame_id'], values['desired'], vector_x=x, vector_y=y, vector_z=z, min_distance=values['min_dist']
+            values['frame_id'], desired, vector_x=x, vector_y=y, vector_z=z, min_distance=min_dist
         )
 
     def make_gripper_translation_msg(

@@ -31,7 +31,7 @@ from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from visualization_msgs.msg import MarkerArray
 
 from grasplan.grasp_markers import scored_grasp_markers
-from grasplan.tools.common import as_position_list, robot_prefix, separate_object_class_from_id
+from grasplan.tools.common import as_position_list, gripper_positions, robot_prefix, separate_object_class_from_id
 
 
 class GraspPlanningCore:
@@ -113,7 +113,11 @@ class GraspPlanningCore:
         trajectory = JointTrajectory()
         trajectory.joint_names = self.gripper_joint_names
         trajectory_point = JointTrajectoryPoint()
-        trajectory_point.positions = self.get_joint_value_from_dic(joint_angles, dictionary, object_class=object_class)
+        trajectory_point.positions = gripper_positions(
+            self.get_joint_value_from_dic(joint_angles, dictionary, object_class=object_class),
+            self.gripper_joint_names,
+            f'the gripper posture of {object_class}' if object_class else 'the gripper posture',
+        )
         trajectory_point.effort = self.gripper_joint_efforts
         trajectory_point.time_from_start = rospy.Duration(1.0)
         trajectory.points.append(trajectory_point)

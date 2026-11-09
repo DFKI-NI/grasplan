@@ -26,12 +26,24 @@ def padded_box_size(size, padding):
     return [float(side) + 2.0 * padding for side in size]
 
 
-def as_position_list(value):
+def as_position_list(value, name='gripper position'):
     """The joint positions of a gripper posture from a parameter value: a number is the one position of a gripper with
-    one joint, a list or tuple is one position per joint (a gripper with two joints names two positions)."""
-    if isinstance(value, (list, tuple)):
-        return [float(v) for v in value]
-    return [float(value)]
+    one joint, a list or tuple is one position per joint (a gripper with two joints names two positions). Anything else
+    raises a ValueError that names the parameter."""
+    values = value if isinstance(value, (list, tuple)) else [value]
+    try:
+        return [float(v) for v in values]
+    except (TypeError, ValueError):
+        raise ValueError(f'{name}: expected a number or a list of numbers, got {value!r}') from None
+
+
+def gripper_positions(value, joint_names, name='gripper position'):
+    """as_position_list() for a posture of these gripper joints: one position per joint, else a readable ValueError."""
+    positions = as_position_list(value, name)
+    if len(positions) != len(joint_names):
+        raise ValueError(f'{name}: {len(positions)} position(s) {positions} for the {len(joint_names)} gripper '
+                         f'joint(s) {list(joint_names)}')
+    return positions
 
 
 def object_list_frame(object_list, default):
