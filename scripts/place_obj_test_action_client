@@ -11,8 +11,8 @@ if __name__ == '__main__':
 
     # Check for namespace and arguments
     if len(sys.argv) > 1:
-        if sys.argv[1] != '__ns:=mobipick':
-            rospy.logwarn('Have you run this node without the "mobipick" namespace? It might not work!')
+        if not rospy.get_namespace().strip('/'):
+            rospy.logwarn('Running without a robot namespace; a robot in a namespace needs __ns:=<robot>.')
 
         myargv = rospy.myargv()
         if len(myargv) != 3:
@@ -23,7 +23,7 @@ if __name__ == '__main__':
         support_surface_name = myargv[1]
         observe_before_place = myargv[2].lower() == 'true'
     else:
-        rospy.logwarn('Node launched without arguments; expected at least the "mobipick" namespace ( __ns:=mobipick ).')
+        rospy.logwarn('Node launched without arguments; expected the arguments, and __ns:=<robot> for a robot in a namespace.')
         sys.exit(1)
 
     # Action client setup

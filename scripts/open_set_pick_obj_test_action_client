@@ -27,8 +27,8 @@ def parse_args():
     parser.add_argument('object_description', help='text description forwarded to the open-set grasp pipeline')
     parser.add_argument(
         '--action-name',
-        default='/mobipick/pick_object',
-        help='Grasplan PickObject action name (default: %(default)s)',
+        default=f"/{rospy.get_namespace().strip('/') or 'mobipick'}/pick_object",
+        help='Grasplan PickObject action name (default: %(default)s, the node namespace, else mobipick)',
     )
     parser.add_argument(
         '--support-surface-name',

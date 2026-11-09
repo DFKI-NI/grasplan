@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 
 '''
-this node broadcasts the tf from world to robot (mobipick/base_link)
+this node broadcasts the tf from world to the robot's base link (~robot_base_frame)
 this is useful for when you want to have the world frame (from gazebo) as part of the tf tree together with
 e.g. map frame in simulation.
 '''
@@ -12,6 +12,7 @@ import copy
 import numpy as np
 
 from gazebo_msgs.msg import ModelStates
+from grasplan.tools.common import robot_frame, robot_prefix
 from tf.transformations import quaternion_matrix, quaternion_from_matrix
 
 
@@ -21,6 +22,8 @@ class PublishTfWorldToRobot:
         rospy.Subscriber('/gazebo/model_states', ModelStates, self.modelStatesCB)
         self.tf_broadcaster = tf.TransformBroadcaster()
         self.loop_rate = rospy.Rate(rospy.get_param('~loop_rate', 20.0))
+        self.robot_model_name = rospy.get_param('~robot_model_name', robot_prefix() or 'mobipick')
+        self.robot_base_frame = rospy.get_param('~robot_base_frame', robot_frame('base_link'))
         self.model_states_msg_received = False
         rospy.loginfo('publish_tf_world_to_robot started')
 
@@ -35,7 +38,7 @@ class PublishTfWorldToRobot:
                 model_states_msg = copy.deepcopy(self.model_states_msg)
                 # iterate over all gazebo models
                 for i, obj_pose in enumerate(model_states_msg.pose):
-                    if model_states_msg.name[i] == 'mobipick':
+                    if model_states_msg.name[i] == self.robot_model_name:
                         # Return homogeneous rotation matrix from quaternion
                         world_2_robot = quaternion_matrix(
                             (
@@ -57,8 +60,8 @@ class PublishTfWorldToRobot:
                             q,
                             rospy.Time.now(),
                             'world',
-                            'mobipick/base_link',
-                        )  # publish tf with mobipick/base_link as parent not to disturb existing tf tree
+                            self.robot_base_frame,
+                        )  # publish tf with the robot's base link as parent not to disturb existing tf tree
                         self.loop_rate.sleep()
 
 
