@@ -52,7 +52,7 @@ class TestLaunchFilesLoad(unittest.TestCase):
         for name in PICK_LAUNCHES:
             with self.assertRaises(Exception) as caught:
                 load(name, 'config_package:=grasplan')
-            self.assertIn('grasplan/config/grasplan/pick_params.yaml', str(caught.exception))
+            self.assertIn('config/grasplan/pick_params.yaml', str(caught.exception))
 
     def test_box_helper_description(self):
         self.assertIn('mobipick/', str(param(load(BOX_HELPER), '/robot_description')))
