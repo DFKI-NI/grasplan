@@ -968,21 +968,24 @@ class PlaceTools:
         rospy.logerr('All batches processed, but no successful placement')
         return False
 
-    def make_constraints_msg(self):  # TODO: not yet tested on mobipick
+    def make_constraints_msg(self):
+        '''keep the end-effector link of the place group as it is now, seen from ~place_reach_frame'''
         constraints_msg = Constraints()
         constraints_msg.name = 'keep_object_upright'
 
+        frame = self.place_reach_frame()
+        link = self.robot.get_group(self.group_name).get_end_effector_link()
         now = rospy.Time.now()
-        self.tf_listener.waitForTransform(self.arm_name + '_base_link', 'hand_ee_link', now, rospy.Duration(2.0))
-        _, rot = self.tf_listener.lookupTransform(self.arm_name + '_base_link', 'hand_ee_link', now)
+        self.tf_listener.waitForTransform(frame, link, now, rospy.Duration(2.0))
+        _, rot = self.tf_listener.lookupTransform(frame, link, now)
 
         orientation_constraint_msg = OrientationConstraint()
-        orientation_constraint_msg.header.frame_id = self.arm_name + '_base_link'
+        orientation_constraint_msg.header.frame_id = frame
         orientation_constraint_msg.orientation.x = rot[0]
         orientation_constraint_msg.orientation.y = rot[1]
         orientation_constraint_msg.orientation.z = rot[2]
         orientation_constraint_msg.orientation.w = rot[3]
-        orientation_constraint_msg.link_name = 'hand_ee_link'
+        orientation_constraint_msg.link_name = link
         orientation_constraint_msg.absolute_x_axis_tolerance = 6.28
         orientation_constraint_msg.absolute_y_axis_tolerance = 0.2
         orientation_constraint_msg.absolute_z_axis_tolerance = 6.28
