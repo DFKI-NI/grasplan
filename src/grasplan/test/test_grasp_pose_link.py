@@ -64,6 +64,22 @@ class TestGraspPoseLink(unittest.TestCase):
         c.grasp_link_to_end_effector(POSE, 'tool')
         self.assertEqual(c._tf_listener.lookups, 1)
 
+    def test_a_missing_transform_is_a_readable_error(self):
+        class NoTransform(FakeListener):
+            def waitForTransform(self, *args):
+                raise core.tf.Exception('frame does not exist')
+        planner = core.GraspPlanningCore.__new__(core.GraspPlanningCore)
+        planner.grasp_pose_link = 'grasp_link'
+        planner._grasp_link_offset = {}
+        planner._tf_listener = NoTransform.__new__(NoTransform)
+        with mock.patch.object(core.rospy, 'Time', lambda secs: secs), \
+                mock.patch.object(core.rospy, 'Duration', lambda secs: secs):
+            with self.assertRaises(RuntimeError) as caught:
+                planner.grasp_link_to_end_effector(None, 'ee_link')
+        self.assertIn('~grasp_pose_link grasp_link', str(caught.exception))
+        self.assertIn('ee_link', str(caught.exception))
+        self.assertIn('frame does not exist', str(caught.exception))
+
 
 class TestApproachFrame(unittest.TestCase):
     def frame(self, approach_frame):

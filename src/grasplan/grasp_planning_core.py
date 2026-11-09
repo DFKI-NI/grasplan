@@ -262,8 +262,14 @@ class GraspPlanningCore:
         if end_effector_frame not in self._grasp_link_offset:
             if self._tf_listener is None:
                 self._tf_listener = tf.TransformListener()
-            self._tf_listener.waitForTransform(end_effector_frame, self.grasp_pose_link, rospy.Time(0), rospy.Duration(5.0))
-            trans, rot = self._tf_listener.lookupTransform(end_effector_frame, self.grasp_pose_link, rospy.Time(0))
+            try:
+                self._tf_listener.waitForTransform(end_effector_frame, self.grasp_pose_link, rospy.Time(0), rospy.Duration(5.0))
+                trans, rot = self._tf_listener.lookupTransform(end_effector_frame, self.grasp_pose_link, rospy.Time(0))
+            except (tf.Exception, tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException) as e:
+                raise RuntimeError(
+                    f'the grasps taught for ~grasp_pose_link {self.grasp_pose_link} cannot be used: no transform from '
+                    f'the end-effector link {end_effector_frame} to it ({e})'
+                ) from e
             t_ee_link = tr.concatenate_matrices(tr.translation_matrix(trans), tr.quaternion_matrix(rot))
             self._grasp_link_offset[end_effector_frame] = tr.inverse_matrix(t_ee_link)
             rospy.loginfo(f'grasp poses are taught for {self.grasp_pose_link}, converting them to {end_effector_frame}')
@@ -276,7 +282,8 @@ class GraspPlanningCore:
         return out
 
     def make_grasps_msgs_from_candidates(self, object_name, candidates, reference_frame, end_effector_frame):
-        '''Convert externally generated candidates into MoveIt grasp messages.'''
+        '''Convert externally generated candidates into MoveIt grasp messages. Their poses are of the end-effector link
+        already, so ~grasp_pose_link, which is about taught grasps only, does not apply here.'''
         g = self.make_grasp_template(object_name, end_effector_frame)
         pose_array_msg = PoseArray()
         pose_array_msg.header.frame_id = reference_frame
