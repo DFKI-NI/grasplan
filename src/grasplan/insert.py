@@ -615,7 +615,8 @@ class InsertTools:
             self.place.mtc.update_cable_guard()
             guard = self.place.mtc.cable_guard
         start_q = dict(zip(current_state.joint_state.name, current_state.joint_state.position))
-        wrist_3_names = [n for n in current_state.joint_state.name if n.endswith('ur5_wrist_3_joint')]
+        sort_joint = rospy.get_param('~insert_sort_joint', 'ur5_wrist_3_joint')   # the joint whose turn the poses are sorted by
+        wrist_3_names = [n for n in current_state.joint_state.name if n.endswith(sort_joint)]
         if not wrist_3_names:
             return bodies
         wrist_3_name = wrist_3_names[0]

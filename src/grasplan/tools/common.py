@@ -19,6 +19,9 @@
 # SOFTWARE.
 
 
+import functools
+
+
 def padded_box_size(size, padding):
     """The side lengths of a planning-scene box grown by ``padding`` metres on every side (0 = the box as given)."""
     if not padding:
@@ -51,6 +54,15 @@ def object_list_frame(object_list, default):
     else ``default`` (the node's ~global_reference_frame)."""
     header = getattr(object_list, 'header', None)
     return getattr(header, 'frame_id', '') or default
+
+
+@functools.lru_cache(maxsize=1)
+def arm_joint_tag():
+    """What the names of the arm's joints contain, among all joints of a joint state: ~arm_joint_tag, default 'ur5_'.
+    Read once per node, as joint state callers ask often."""
+    import rospy
+
+    return rospy.get_param('~arm_joint_tag', 'ur5_')
 
 
 def supports_in_frame(supports, frame):

@@ -81,7 +81,7 @@ from shape_msgs.msg import SolidPrimitive
 from moveit.task_constructor import core, stages
 
 from grasplan.tools.octomap_probe import count_in_box, occupied_leaves
-from grasplan.tools.common import robot_prefix, robot_frame, robot_topic
+from grasplan.tools.common import arm_joint_tag, robot_prefix, robot_frame, robot_topic
 from grasplan.tools.finger_series import analyse_close
 from grasplan.tools.pad_gap import PINCH_GAP_RATIO, PINCH_MAX_TILT_DEG, is_pinch, overclose, pad_gap, pinch_checkable
 from grasplan import cable_shaping
@@ -864,7 +864,7 @@ def _current_arm_q(timeout=2.0, not_before=None):
             msg = rospy.wait_for_message('joint_states', JointState, timeout=max(deadline - time.monotonic(), 0.05))
         except rospy.ROSException:
             return None
-        arm = {n: p for n, p in zip(msg.name, msg.position) if 'ur5_' in n}
+        arm = {n: p for n, p in zip(msg.name, msg.position) if arm_joint_tag() in n}
         if not_before is None or (not msg.header.stamp.is_zero() and msg.header.stamp >= not_before):
             return arm
         if time.monotonic() >= deadline:
@@ -1211,7 +1211,7 @@ class MtcPickPlace:
         ik = self.compute_ik('grasp pose', self.to_planning_frame(grasp.grasp_pose), task['allow octomap contact'])
         if ik_state is not None and speed_changes_on() and rospy.get_param('~mtc_pin_grasp_ik', True):
             # the IK solution pick.py's cable ranking judged: MTC's own IK branch differed and failed the guard
-            reference = {n: p for n, p in zip(ik_state.name, ik_state.position) if 'ur5_' in n}
+            reference = {n: p for n, p in zip(ik_state.name, ik_state.position) if arm_joint_tag() in n}
             tolerance = math.radians(rospy.get_param('~mtc_pin_grasp_ik_tolerance_deg', 20.0))
             ik.setCostTerm(pinned_ik_cost(reference, tolerance))
             rospy.loginfo(f'mtc: grasp IK pin attached to grasp {grasp.id} (tolerance {math.degrees(tolerance):.0f} deg)')
@@ -1455,7 +1455,7 @@ class MtcPickPlace:
                 or getattr(self, 'cable_shaper', None) is None or not cable_shaping.shaping_on()):
             return None
         start = self.planned_start_q()
-        goal = {n: p for n, p in zip(goal_state.name, goal_state.position) if 'ur5_' in n}
+        goal = {n: p for n, p in zip(goal_state.name, goal_state.position) if arm_joint_tag() in n}
         margin = self.cable_guard.max_stretch
         try:
             shaped = self.cable_shaper.plan(start or {}, goal, margin)
@@ -1690,7 +1690,7 @@ class MtcPickPlace:
             return solution
         try:
             started = time.time()
-            arm = [n for n in solution.name if 'ur5_' in n]
+            arm = [n for n in solution.name if arm_joint_tag() in n]
             short = {cp.short_name(n): n for n in arm}
             first = {cp.short_name(n): p for n, p in zip(solution.name, solution.position) if n in arm}
             branches = [first]
@@ -1797,7 +1797,7 @@ class MtcPickPlace:
         from cable trouble (the failing stages and guard verdicts are logged by plan())'''
         ik_state = getattr(self, 'grasp_ik_states', {}).get(grasp.id)
         start = self.planned_start_q(timeout=0.5)
-        target = {n: p for n, p in zip(ik_state.name, ik_state.position) if 'ur5_' in n} if ik_state else None
+        target = {n: p for n, p in zip(ik_state.name, ik_state.position) if arm_joint_tag() in n} if ik_state else None
         rospy.loginfo(f'mtc: grasp {grasp.id} not planned: start {cable_shaping.degrees(start or {})}, '
                       f'pinned target {cable_shaping.degrees(target) if target else "none (MTC IK)"}')
 

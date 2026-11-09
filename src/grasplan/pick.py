@@ -66,7 +66,7 @@ from grasplan.msg import (
     PickObjectResult,
 )
 from grasplan.srv import ViewObject
-from grasplan.tools.common import objectToPick, connect_move_groups, roscpp_initialize_named, robot_prefix, robot_frame, robot_topic, supports_in_frame, object_list_frame, padded_box_size
+from grasplan.tools.common import objectToPick, connect_move_groups, roscpp_initialize_named, arm_joint_tag, robot_prefix, robot_frame, robot_topic, supports_in_frame, object_list_frame, padded_box_size
 from grasplan.tools.scene_frames import boxes_in_robot_map, objects_in_frame, tf_matrix
 from grasplan.tools.action_client_helper import ActionClientHelper
 from grasplan.tools.stage_timing import TIMER, action, timed, watch_server
@@ -2420,8 +2420,8 @@ class PickTools:
             try:
                 if grid is not None and start_q:
                     # the stretch of the path MTC will be shaped along (grid, not the plain joint line)
-                    a = {cable_path.short_name(n): v for n, v in start_q.items() if 'ur5_' in n}
-                    b = {cable_path.short_name(n): v for n, v in goal_q.items() if 'ur5_' in n}
+                    a = {cable_path.short_name(n): v for n, v in start_q.items() if arm_joint_tag() in n}
+                    b = {cable_path.short_name(n): v for n, v in goal_q.items() if arm_joint_tag() in n}
                     found = cable_path.slack_path(grid, a, b, guard.max_stretch)
                     stretches.append(found[1] if found is not None else grid.worst_along(a, b))
                     continue
