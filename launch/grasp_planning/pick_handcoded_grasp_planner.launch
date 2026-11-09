@@ -1,6 +1,8 @@
 <?xml version="1.0"?>
 <launch>
 
+  <!-- a robot without a namespace cannot use the namespace arg (it would give //grasp_object): it overrides the two
+       action name args instead -->
   <arg name="namespace" default="mobipick" doc="the robot namespace of the AnyGrasp actions" />
   <arg name="config_package" default="mobipick_pick_n_place" doc="the package whose config/grasplan holds the robot's pick parameters" />
   <arg name="anygrasp_action_name" default="/$(arg namespace)/grasp_object" />
