@@ -19,6 +19,14 @@
 # SOFTWARE.
 
 
+def as_position_list(value):
+    """The joint positions of a gripper posture from a parameter value: a number is the one position of a gripper with
+    one joint, a list or tuple is one position per joint (a gripper with two joints names two positions)."""
+    if isinstance(value, (list, tuple)):
+        return [float(v) for v in value]
+    return [float(value)]
+
+
 def object_list_frame(object_list, default):
     """The frame the poses of a pose selector answer (an ObjectList) are given in: its header frame when it carries one,
     else ``default`` (the node's ~global_reference_frame)."""

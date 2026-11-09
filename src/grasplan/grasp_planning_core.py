@@ -28,7 +28,7 @@ from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from visualization_msgs.msg import MarkerArray
 
 from grasplan.grasp_markers import scored_grasp_markers
-from grasplan.tools.common import robot_prefix, separate_object_class_from_id
+from grasplan.tools.common import as_position_list, robot_prefix, separate_object_class_from_id
 
 
 class GraspPlanningCore:
@@ -80,8 +80,8 @@ class GraspPlanningCore:
         if object_class is not found in dictionary then the default value is used
         '''
         if object_class is None or dictionary is None or object_class not in dictionary:
-            return joint_angles
-        return [dictionary[object_class]]
+            return as_position_list(joint_angles)
+        return as_position_list(dictionary[object_class])
 
     def supports_object(self, object_name):
         '''

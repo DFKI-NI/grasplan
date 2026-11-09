@@ -42,7 +42,7 @@ from grasplan.tools.support_plane_tools import (
     make_plane_marker_msg,
     OBJECT_HEIGHTS,
 )
-from grasplan.tools.common import separate_object_class_from_id, connect_move_groups, roscpp_initialize_named, robot_prefix, object_list_frame
+from grasplan.tools.common import separate_object_class_from_id, connect_move_groups, roscpp_initialize_named, robot_prefix, object_list_frame, as_position_list
 from grasplan.tools.scene_frames import objects_in_frame, tf_matrix
 from grasplan import cable_detour
 from grasplan.tools.moveit_errors import arm_stop_text, motion_failure_text, print_moveit_error, tried_text
@@ -1179,7 +1179,7 @@ class PlaceTools:
         trajectory = JointTrajectory()
         trajectory.joint_names = self.gripper_joint_names
         trajectory_point = JointTrajectoryPoint()
-        trajectory_point.positions = [gripper_actuation_distance]
+        trajectory_point.positions = as_position_list(gripper_actuation_distance)
         trajectory_point.effort = self.gripper_joint_efforts
         trajectory_point.time_from_start = rospy.Duration(1.0)  # NOTE in simple pick n place demo this value is 5 s
         trajectory.points.append(trajectory_point)
