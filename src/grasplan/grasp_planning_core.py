@@ -20,9 +20,12 @@
 
 import copy
 import math
+import numpy as np
 import rospy
+import tf
+from tf import transformations as tr
 
-from geometry_msgs.msg import PoseArray, PoseStamped
+from geometry_msgs.msg import Pose, PoseArray, PoseStamped
 from moveit_msgs.msg import Grasp, GripperTranslation
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from visualization_msgs.msg import MarkerArray
@@ -49,6 +52,13 @@ class GraspPlanningCore:
         self.max_contact_force = rospy.get_param('~max_contact_force', 1.0)
         self.distance_gripper_close_per_obj = rospy.get_param('~distance_gripper_close_per_obj', None)
         self.distance_gripper_open_per_obj = rospy.get_param('~distance_gripper_open_per_obj', None)
+        # the link the taught grasp poses refer to ('' = the arm's end-effector link itself). A gripper whose approach
+        # axis is not an axis of the end-effector link teaches its grasps for another link (e.g. the one between its
+        # fingers); MoveIt's pickup wants the pose of the end-effector link, so every taught grasp is converted by the
+        # fixed transform between the two
+        self.grasp_pose_link = rospy.get_param('~grasp_pose_link', '')
+        self._tf_listener = None
+        self._grasp_link_offset = {}  # end-effector link -> 4x4 matrix of the grasp pose link in that link, inverted
         # Candidate-specific gripper settings for external AnyGrasp grasps.
         # Width control is opt-in because the predicted opening is not robust
         # enough for every object; the default retains the fully closed grasp
@@ -60,6 +70,8 @@ class GraspPlanningCore:
         self.pre_grasp_approach_min_dist = rospy.get_param('~pre_grasp_approach/min_dist')
         self.pre_grasp_approach_desired = rospy.get_param('~pre_grasp_approach/desired')
         self.pre_grasp_approach_axis = rospy.get_param('~pre_grasp_approach/axis')
+        # the frame the approach axis is expressed in ('' = the end-effector link)
+        self.pre_grasp_approach_frame_id = rospy.get_param('~pre_grasp_approach/frame_id', '')
         # post grasp retreat parameters
         # the lift goes up in this robot's own odom frame unless the config names a frame
         self.post_grasp_retreat_frame_id = rospy.get_param('~post_grasp_retreat/frame_id', f'{robot_prefix()}/odom')
@@ -175,7 +187,7 @@ class GraspPlanningCore:
 
         # The approach direction to take before picking an object
         g.pre_grasp_approach = self.make_gripper_translation_msg(
-            end_effector_frame,
+            self.pre_grasp_approach_frame_id or end_effector_frame,
             min_dist=self.pre_grasp_approach_min_dist,
             desired=self.pre_grasp_approach_desired,
             axis=self.pre_grasp_approach_axis,
@@ -233,12 +245,35 @@ class GraspPlanningCore:
         grasps = []
         for i, pose in enumerate(pose_array_msg.poses):
             # convert to pose stamped
-            pose_stamped.pose = pose
+            pose_stamped.pose = self.grasp_link_to_end_effector(pose, end_effector_frame)
             g.grasp_pose = pose_stamped
             g.id = 'grasp_' + str(i)
             grasps.append(copy.deepcopy(g))
 
         return grasps
+
+    def grasp_link_to_end_effector(self, pose, end_effector_frame):
+        '''
+        the pose of the end-effector link that puts ~grasp_pose_link at ``pose``: T_world_ee = T_world_link * inverse
+        of T_ee_link; ``pose`` itself when no grasp pose link is configured or it is the end-effector link
+        '''
+        if not self.grasp_pose_link or self.grasp_pose_link == end_effector_frame:
+            return pose
+        if end_effector_frame not in self._grasp_link_offset:
+            if self._tf_listener is None:
+                self._tf_listener = tf.TransformListener()
+            self._tf_listener.waitForTransform(end_effector_frame, self.grasp_pose_link, rospy.Time(0), rospy.Duration(5.0))
+            trans, rot = self._tf_listener.lookupTransform(end_effector_frame, self.grasp_pose_link, rospy.Time(0))
+            t_ee_link = tr.concatenate_matrices(tr.translation_matrix(trans), tr.quaternion_matrix(rot))
+            self._grasp_link_offset[end_effector_frame] = tr.inverse_matrix(t_ee_link)
+            rospy.loginfo(f'grasp poses are taught for {self.grasp_pose_link}, converting them to {end_effector_frame}')
+        p, q = pose.position, pose.orientation
+        t_world_link = tr.concatenate_matrices(tr.translation_matrix([p.x, p.y, p.z]), tr.quaternion_matrix([q.x, q.y, q.z, q.w]))
+        t_world_ee = np.dot(t_world_link, self._grasp_link_offset[end_effector_frame])
+        out = Pose()
+        out.position.x, out.position.y, out.position.z = tr.translation_from_matrix(t_world_ee)
+        out.orientation.x, out.orientation.y, out.orientation.z, out.orientation.w = tr.quaternion_from_matrix(t_world_ee)
+        return out
 
     def make_grasps_msgs_from_candidates(self, object_name, candidates, reference_frame, end_effector_frame):
         '''Convert externally generated candidates into MoveIt grasp messages.'''
