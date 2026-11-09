@@ -1139,12 +1139,20 @@ class PlaceTools:
 
         # The approach motion
         # GripperTranslation pre_place_approach
-        # TODO after tables demo: make robot place from the left as well by parameterizing this value
-        place_msg.pre_place_approach = self.make_gripper_translation_msg(f'{robot_prefix()}/base_link', 0.2, vector_z=-1.0)
+        # ~pre_place_approach: frame_id, axis, desired and min_dist; the default is straight down in the robot's
+        # base_link, 20 cm
+        place_msg.pre_place_approach = self.make_gripper_translation_from_param(
+            '~pre_place_approach',
+            {'frame_id': f'{robot_prefix()}/base_link', 'axis': [0.0, 0.0, -1.0], 'desired': 0.2, 'min_dist': 0.1},
+        )
 
         # The retreat motion
         # GripperTranslation post_place_retreat
-        place_msg.post_place_retreat = self.make_gripper_translation_msg(f'{robot_prefix()}/gripper_tcp', 0.25, vector_x=-1.0)
+        # ~post_place_retreat: the same keys; the default is 25 cm back along -x of the gripper_tcp
+        place_msg.post_place_retreat = self.make_gripper_translation_from_param(
+            '~post_place_retreat',
+            {'frame_id': f'{robot_prefix()}/gripper_tcp', 'axis': [-1.0, 0.0, 0.0], 'desired': 0.25, 'min_dist': 0.1},
+        )
 
         # an optional list of obstacles that we have semantic information about
         # and that can be touched/pushed/moved in the course of grasping
@@ -1171,6 +1179,18 @@ class PlaceTools:
         trajectory_point.time_from_start = rospy.Duration(1.0)  # NOTE in simple pick n place demo this value is 5 s
         trajectory.points.append(trajectory_point)
         return trajectory
+
+    def make_gripper_translation_from_param(self, param_name, defaults):
+        '''
+        a GripperTranslation from the dictionary parameter ``param_name`` (frame_id, axis [x, y, z], desired, min_dist);
+        every key missing there is taken from ``defaults``, an empty frame_id counts as missing
+        '''
+        values = dict(defaults)
+        values.update({key: value for key, value in rospy.get_param(param_name, {}).items() if value not in ('', None)})
+        x, y, z = values['axis']
+        return self.make_gripper_translation_msg(
+            values['frame_id'], values['desired'], vector_x=x, vector_y=y, vector_z=z, min_distance=values['min_dist']
+        )
 
     def make_gripper_translation_msg(
         self, frame_id, distance, vector_x=0.0, vector_y=0.0, vector_z=0.0, min_distance=0.1
