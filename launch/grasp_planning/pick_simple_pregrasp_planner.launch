@@ -2,6 +2,7 @@
 <launch>
 
   <arg name="namespace" default="mobipick" doc="the robot namespace of the AnyGrasp actions" />
+  <arg name="config_package" default="mobipick_pick_n_place" doc="the package whose config/grasplan holds the robot's pick parameters" />
   <arg name="anygrasp_action_name" default="/$(arg namespace)/grasp_object" />
   <arg name="anygrasp_generate_action_name" default="/$(arg namespace)/generate_grasps" />
   <arg name="anygrasp_handles_execution" default="false" />
@@ -23,8 +24,8 @@
     <param name="anygrasp_use_gripper_width" type="bool" value="$(arg anygrasp_use_gripper_width)" />
     <param name="anygrasp_gripper_width_offset" type="double" value="$(arg anygrasp_gripper_width_offset)" />
     <param name="anygrasp_gripper_max_effort" type="double" value="$(arg anygrasp_gripper_max_effort)" />
-    <rosparam file="$(find mobipick_pick_n_place)/config/grasplan/pick_params.yaml" command="load" />
-    <rosparam file="$(find mobipick_pick_n_place)/config/grasplan/grasp_planning_core_params.yaml" command="load" />
+    <rosparam file="$(eval find(arg('config_package')) + '/config/grasplan/pick_params.yaml')" command="load" />
+    <rosparam file="$(eval find(arg('config_package')) + '/config/grasplan/grasp_planning_core_params.yaml')" command="load" />
     <!-- pregrasp planner parameters -->
     <rosparam file="$(find grasplan)/config/grasp_planner/simple_pregrasp_planner_params.yaml" command="load" />
   </node>
