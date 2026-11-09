@@ -1,9 +1,19 @@
 <?xml version="1.0"?>
 <launch>
 
+  <!-- the gripper transformations to draw, the pose array topic to draw the grippers at and the frame it is in;
+       empty topic and frame keep the node's own defaults -->
+  <arg name="gripper_transforms_config_file"
+       default="$(find mobipick_pick_n_place)/config/grasplan/gripper_open_transformations.yaml" />
+  <arg name="pose_array_topic" default="" />
+  <arg name="global_reference_frame" default="" />
+
   <!-- visualize a gripper in rviz -->
   <node pkg="grasplan" type="rviz_gripper_visualizer.py" name="rviz_gripper_visualizer" output="screen" >
-    <rosparam file="$(find mobipick_pick_n_place)/config/grasplan/gripper_open_transformations.yaml" command="load" ns="gripper_transformations"/>
+    <param if="$(eval arg('global_reference_frame') != '')" name="global_reference_frame" type="string"
+           value="$(arg global_reference_frame)" />
+    <rosparam file="$(arg gripper_transforms_config_file)" command="load" ns="gripper_transformations"/>
+    <remap if="$(eval arg('pose_array_topic') != '')" from="pose_array" to="$(arg pose_array_topic)"/>
   </node>
 
 </launch>

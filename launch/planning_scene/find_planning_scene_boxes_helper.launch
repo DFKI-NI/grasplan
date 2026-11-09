@@ -6,8 +6,9 @@
   <arg name="yaml_path_to_read" default="$(find grasplan)/config/examples/planning_scene.yaml" />
   <arg name="yaml_path_to_write" default="$(arg yaml_path_to_read)"/>
 
-  <!-- upload mobipick urdf model to param server -->
-  <include file="$(find mobipick_description)/launch/mobipick/upload_mobipick_description.launch">
+  <!-- upload the robot description to the param server (false: it is already there, or another robot's) -->
+  <arg name="upload_description" default="true" />
+  <include if="$(arg upload_description)" file="$(find mobipick_description)/launch/mobipick/upload_mobipick_description.launch">
     <arg name="robot" value="mobipick-os" />
     <arg name="main_camera" value="astra" />
     <arg name="tf_prefix" value="mobipick" />
