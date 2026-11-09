@@ -132,7 +132,9 @@ class PlaceTools:
 
         self.plane_vis_pub = rospy.Publisher('~support_plane_as_marker', Marker, queue_size=1, latch=True)
         self.place_poses_pub = rospy.Publisher('~place_poses', ObjectList, queue_size=50)
-        self.marker_array_pub = rospy.Publisher('/place_pose_selector_objects', MarkerArray, queue_size=1)
+        self.marker_array_pub = rospy.Publisher(
+            rospy.get_param('~place_poses_marker_topic', '/place_pose_selector_objects'), MarkerArray, queue_size=1
+        )
 
         # service clients
         place_pose_selector_activate_srv_name = rospy.get_param(

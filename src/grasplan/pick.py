@@ -369,10 +369,14 @@ class PickTools:
         # publishers
         self.event_out_pub = rospy.Publisher('~event_out', String, queue_size=1)
         self.planning_scene_pub = rospy.Publisher('planning_scene', PlanningScene, queue_size=1)
-        self.trigger_perception_pub = rospy.Publisher('/object_recognition/event_in', String, queue_size=1)
-        self.pick_grasps_marker_array_pub = rospy.Publisher('/gripper', MarkerArray, queue_size=1)
+        self.trigger_perception_pub = rospy.Publisher(
+            rospy.get_param('~perception_trigger_topic', '/object_recognition/event_in'), String, queue_size=1
+        )
+        self.pick_grasps_marker_array_pub = rospy.Publisher(
+            rospy.get_param('~grasps_marker_topic', '/gripper'), MarkerArray, queue_size=1
+        )
         self.pose_selector_objects_marker_array_pub = rospy.Publisher(
-            '/pose_selector_objects', MarkerArray, queue_size=1
+            rospy.get_param('~pose_selector_marker_topic', '/pose_selector_objects'), MarkerArray, queue_size=1
         )
 
         # subscribers
