@@ -8,10 +8,11 @@
 
   <!-- upload the robot description to the param server (false: it is already there, or another robot's) -->
   <arg name="upload_description" default="true" />
+  <arg name="namespace" default="mobipick" doc="the tf prefix of the uploaded robot description" />
   <include if="$(arg upload_description)" file="$(find mobipick_description)/launch/mobipick/upload_mobipick_description.launch">
     <arg name="robot" value="mobipick-os" />
     <arg name="main_camera" value="astra" />
-    <arg name="tf_prefix" value="mobipick" />
+    <arg name="tf_prefix" value="$(arg namespace)" />
   </include>
 
   <!-- rqt to load/move/scale/save boxes in 3D space -->

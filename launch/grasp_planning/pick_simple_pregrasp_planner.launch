@@ -1,8 +1,9 @@
 <?xml version="1.0"?>
 <launch>
 
-  <arg name="anygrasp_action_name" default="/mobipick/grasp_object" />
-  <arg name="anygrasp_generate_action_name" default="/mobipick/generate_grasps" />
+  <arg name="namespace" default="mobipick" doc="the robot namespace of the AnyGrasp actions" />
+  <arg name="anygrasp_action_name" default="/$(arg namespace)/grasp_object" />
+  <arg name="anygrasp_generate_action_name" default="/$(arg namespace)/generate_grasps" />
   <arg name="anygrasp_handles_execution" default="false" />
   <arg name="anygrasp_server_timeout" default="2.0" />
   <arg name="anygrasp_result_timeout" default="300.0" />
