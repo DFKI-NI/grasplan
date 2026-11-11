@@ -90,6 +90,30 @@ class TestLeastStretchBranch(unittest.TestCase):
         pinned = dict(zip(self.p.grasp_ik_states['handcoded_1'].name, self.p.grasp_ik_states['handcoded_1'].position))
         self.assertAlmostEqual(pinned[PREFIX + 'ur5_wrist_2_joint'], SLACK_W2)
 
+    def shaping_ik_timeouts(self):
+        '''the compute_ik timeouts ensure_shaping_ik asks for one closed-set grasp'''
+        self.p.arm_group, self.p.eef_link = 'arm', PREFIX + 'gripper_tcp'
+        self.p.grasp_ik_states = {}
+        timeouts = []
+
+        class TimedIK(FakeIK):
+            def __call__(self, request):
+                timeouts.append(request.ik_request.timeout.to_sec())
+                return super().__call__(request)
+        ik = TimedIK()
+        ik.wait_for_service = lambda t: None
+        with mock.patch.object(mpp.rospy, 'wait_for_message', lambda *a, **k: self.start), \
+                mock.patch.object(mpp.rospy, 'ServiceProxy', lambda *a, **k: ik):
+            self.p.ensure_shaping_ik(NS(id='handcoded_1', grasp_pose='pose'))
+        return timeouts
+
+    def test_closed_set_branch_ik_keeps_its_own_timeout(self):
+        # the open-set pre-filter's timeout (launch value 0.1, GUI 0.01) does not change this IK call
+        self.params['~external_grasp_ik_timeout'] = 0.01
+        self.assertAlmostEqual(self.shaping_ik_timeouts()[0], 0.05)
+        self.params['~shaping_ik_timeout'] = 0.2
+        self.assertAlmostEqual(self.shaping_ik_timeouts()[0], 0.2)
+
     def test_pinned_grasp_is_left_alone(self):
         self.p.grasp_ik_states = {'g1': 'pinned by the pre-filter'}
         self.p.ensure_shaping_ik(NS(id='g1', grasp_pose='pose'))

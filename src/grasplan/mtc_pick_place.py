@@ -1826,7 +1826,8 @@ class MtcPickPlace:
             request.ik_request.avoid_collisions = False   # the fingers touch the object at the grasp pose
             request.ik_request.ik_link_name = self.eef_link
             request.ik_request.pose_stamped = grasp.grasp_pose
-            request.ik_request.timeout = rospy.Duration(float(rospy.get_param('~external_grasp_ik_timeout', 0.05)))
+            # its own timeout: ~external_grasp_ik_timeout belongs to the open-set pre-filter and the launch sets it
+            request.ik_request.timeout = rospy.Duration(float(rospy.get_param('~shaping_ik_timeout', 0.05)))
             response = ik(request)
             if response.error_code.val != MoveItErrorCodes.SUCCESS:
                 rospy.loginfo(f'mtc: cable branches of grasp {grasp.id}: no IK ({response.error_code.val}), MTC IK as before')
