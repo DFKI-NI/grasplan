@@ -1404,7 +1404,10 @@ class PickTools:
 
         # go to intermediate arm poses if needed to disentangle arm cable
         untangle = self.untangle_poses_before_pick(object_to_pick.obj_class)
-        if untangle and self.start_move_while_planning(untangle):
+        single = self.single_plan_for(untangle, external_grasp_candidates is not None)
+        if single is not None:
+            untangle = []   # the poses are stages of the one MTC task
+        elif untangle and self.start_move_while_planning(untangle):
             untangle = []   # running now, the pick is planned meanwhile
         for arm_pose in untangle:
             rospy.loginfo(f'going to intermediate arm pose {arm_pose} to disentangle cable')
@@ -1432,7 +1435,10 @@ class PickTools:
             first = grasps[: self.cable_gate_passing]
             rospy.loginfo(f'from the current arm state: the {len(first)} predicted-pass grasps, the other '
                           f'{len(grasps) - len(first)} from {self.stayed_for_pick} if needed')
-        result = self.offer_grasps(object_to_pick, first, support_surface_name, external_grasp_candidates is not None)
+        if single is not None:
+            result = self.offer_single_plan(object_to_pick, grasps, support_surface_name, single)
+        else:
+            result = self.offer_grasps(object_to_pick, first, support_surface_name, external_grasp_candidates is not None)
         self.finish_start_move()   # nothing planned (or preempted) while the start move ran: let it end first
         if result is False:
             return False   # preempted
@@ -1495,6 +1501,51 @@ class PickTools:
             if self.mtc is not None and self.mtc.executed and not self.pick_action_server.is_preempt_requested():
                 self.retract_after_failure('pick')
         return False
+
+    def single_plan_for(self, untangle, open_set):
+        '''
+        (careful feature flag ~mtc_single_plan_pick, default false): (poses before the grasp, pose after the lift)
+        when this pick plans them and the grasp as one MTC task: a closed-set pick with MTC; None otherwise (the old
+        way). ~mtc_single_plan_pick_end_pose (default transport, empty = none) is the pose after the lift.
+        '''
+        from grasplan.mtc_pick_place import single_plan_end_pose, single_plan_pick
+        if open_set or not single_plan_pick() or getattr(self, 'mtc', None) is None:
+            return None
+        single = (list(untangle), single_plan_end_pose())
+        if not single[0] and not single[1]:
+            return None
+        return single
+
+    def offer_single_plan(self, object_to_pick, grasps, support_surface_name, single):
+        '''
+        offer the grasps as single-plan tasks (the untangle poses, the grasp and the end pose in one MTC task);
+        when none of them could be planned and the arm did not move, the old way: the poses one by one, then the pick.
+        The MoveIt error code of the last try, False when preempted.
+        '''
+        before, end = single
+        rospy.loginfo(f'single plan: {before} + pick of {object_to_pick.get_object_class_and_id_as_string()}'
+                      f'{f" + {end}" if end else ""} as one MTC task')
+        self.mtc.single_plan = single
+        try:
+            result = self.offer_grasps(object_to_pick, grasps, support_surface_name, False)
+        finally:
+            self.mtc.single_plan = None
+        if result == MoveItErrorCodes.SUCCESS:
+            if end:
+                rospy.loginfo(f'single plan: picked{" and at " + end if self.mtc.end_move_done else ""}'
+                              f'{"" if self.mtc.end_move_done else f" (not moved to {end}: the lift was replanned)"}')
+            return result
+        if result is False or result is None or not self.arm_did_not_move(result) \
+                or self.pick_action_server.is_preempt_requested():
+            return result
+        rospy.logwarn('single plan: no grasp could be planned as one task, the old way: the untangle poses one by one, '
+                      'then the pick')
+        for arm_pose in before:
+            rospy.loginfo(f'going to intermediate arm pose {arm_pose} to disentangle cable')
+            self.move_arm_to_posture(arm_pose)
+        if self.pick_action_server.is_preempt_requested():
+            return False
+        return self.offer_grasps(object_to_pick, grasps, support_surface_name, False)
 
     def grasp_funnel_start(self, object_name, object_pose):
         '''

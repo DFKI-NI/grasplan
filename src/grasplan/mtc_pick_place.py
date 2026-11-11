@@ -87,7 +87,7 @@ from grasplan.tools.pad_gap import PINCH_GAP_RATIO, PINCH_MAX_TILT_DEG, is_pinch
 from grasplan import cable_shaping
 from grasplan.tools import cable_path as cp
 from grasplan.tools.touching_boxes import boxes_touch
-from grasplan.tools.stage_timing import timed
+from grasplan.tools.stage_timing import TIMER, timed
 from grasplan.tools.moveit_errors import arm_stop_text, moveit_code_text
 
 # the name MoveIt gives the octomap inside the planning scene (planning_scene::PlanningScene::OCTOMAP_NS)
@@ -117,6 +117,8 @@ REGRASP_THRESHOLD_M = 0.020
 ARM, GRIPPER, ATTACH, DETACH, NOOP = 'arm', 'gripper', 'attach', 'detach', 'noop'
 # a stage that only puts the plan's start where a StartMove ends; never executed, never replayed by the guard
 PREFIX = 'prefix'
+# the single-plan pick's last arm move (to ~mtc_single_plan_pick_end_pose), executed like ARM
+END_MOVE = 'end_move'
 
 
 def pose_to_matrix(pose):
@@ -508,7 +510,8 @@ def _logged_named_move(arm, name, guard):
 def _plan_named_logged(arm, name, guard):
     '''the log mode of guarded_named_move without the motion: one plan of arm's target, the guard's verdict only logged
     (guard None: not even that, the off mode). Returns (trajectory, '') or (None, 'no plan').'''
-    planned = arm.plan()
+    with TIMER.stage('named_plan'):   # the planning share of a named move in the TIMING line
+        planned = arm.plan()
     success, trajectory = (planned[0], planned[1]) if isinstance(planned, tuple) else (True, planned)
     if not success or not trajectory.joint_trajectory.points:
         return None, 'no plan'
@@ -592,7 +595,8 @@ def _plan_named_checked(arm, name, guard, attempts, w3, chain_stops=None, report
     try:
         reason = 'no plan'
         for attempt in range(1, attempts + 1):
-            planned = arm.plan()
+            with TIMER.stage('named_plan'):   # the planning share of a named move in the TIMING line
+                planned = arm.plan()
             success, trajectory = (planned[0], planned[1]) if isinstance(planned, tuple) else (True, planned)
             if not success or not trajectory.joint_trajectory.points:
                 reason = 'no plan'
@@ -659,6 +663,18 @@ def plan_pick_during_start_move():
     '''~plan_pick_during_start_move (careful, off in code): the closed-set pick is planned while the arm runs its
     untangle poses (see StartMove)'''
     return bool(rospy.get_param('~plan_pick_during_start_move', False))
+
+
+def single_plan_pick():
+    '''~mtc_single_plan_pick (careful, off in code): a closed-set pick plans its untangle poses, the grasp and the move
+    to ~mtc_single_plan_pick_end_pose (default transport, empty = none) as one MTC task and executes that one solution
+    instead of moving through the poses one by one before planning the pick'''
+    return bool(rospy.get_param('~mtc_single_plan_pick', False))
+
+
+def single_plan_end_pose():
+    '''the named arm pose the single-plan pick ends in (~mtc_single_plan_pick_end_pose), '' for none'''
+    return str(rospy.get_param('~mtc_single_plan_pick_end_pose', 'transport') or '')
 
 
 class StartMove:
@@ -884,6 +900,9 @@ class _SolutionView:
 
 class MtcPickPlace:
     start_move = None   # the StartMove the arm runs while the pick is planned (set by pick.py)
+    # (named poses before the grasp, named pose after the lift or '') of a single-plan pick (set by pick.py)
+    single_plan = None
+    end_move_done = False   # the last execute() ran the single plan's end move
 
     def __init__(self, arm_group, eef_link, gripper_links, planning_frame, is_preempt_requested):
         '''
@@ -1182,7 +1201,9 @@ class MtcPickPlace:
         ) else []
         if neighbours:
             rospy.loginfo(f'mtc: lift of {obj} tolerates touching neighbours only: {neighbours}')
-        task, roles = self.start_task(f'pick {obj} {grasp.id}')
+        single = self.single_plan if self.start_move is None else None
+        name = f'pick {obj} {grasp.id}'
+        task, roles = self.start_task(name, single[0]) if single else self.start_task(name)
         touch = self.gripper_links + [obj]
         # the gripper may touch the object only from the grasp pose on (MTC pick demo layout): allowed from the
         # start, the free-space Connect to the pregrasp and the approach could sweep the open gripper through the
@@ -1244,6 +1265,9 @@ class MtcPickPlace:
             grasp_stages.add(block)
             roles.append(NOOP)
         task.add(grasp_stages)
+        if single and single[1]:
+            task.add(self.move_to(f'move to {single[1]}', single[1]))   # with the object, after the lift
+            roles.append(END_MOVE)
         # what a re-grasp needs to plan the lift again from the arm's new state
         self.pick_tail = {'object': obj, 'support': goal.support_surface_name, 'neighbours': neighbours,
                           'retreat': retreat, 'touch': touch}
@@ -1357,13 +1381,16 @@ class MtcPickPlace:
         task.add(place_stages)
         return task, roles
 
-    def start_task(self, name):
+    def start_task(self, name, poses=()):
+        '''the cleared task from the current state; poses (single plan): named arm poses it moves through first'''
         task = self.task
         task.clear()
         task.name = name
         task.add(stages.CurrentState('current state'))
         if self.start_move is None:
-            return task, [NOOP]
+            for pose in poses:
+                task.add(self.move_to(f'move to {pose}', pose))
+            return task, [NOOP] + [ARM] * len(poses)
         # the arm is on its way to the start move's last pose; plan from there (a stand-in path, dropped)
         prefix = stages.MoveTo('start move (planned meanwhile)', self.pipeline)
         prefix.group = self.arm_group
@@ -1411,6 +1438,17 @@ class MtcPickPlace:
             if role == ARM and trajectory.points:
                 return dict(zip(trajectory.joint_names, trajectory.points[0].positions))
         return None
+
+    def move_to(self, name, pose):
+        '''a MoveTo stage of the arm to the named pose, planned like the free-space Connect (pipeline planner, its
+        timeout, the cable guard's wrist_3 window); the guard checks the whole solution afterwards as for every pick'''
+        move = stages.MoveTo(name, self.pipeline)
+        move.group = self.arm_group
+        move.setGoal(pose)
+        move.timeout = self.connect_timeout
+        if self.cable_guard is not None:
+            move.properties['path_constraints'] = self.cable_guard.path_constraints()
+        return move
 
     def connect(self, name, shaped=None):
         '''
@@ -2034,11 +2072,12 @@ class MtcPickPlace:
         # test switch for sim tests, off in code, never a launch option: the pick refuses its lift after the close and
         # the attach, as a lift the controller rejects would, so the failure path between close and lift can be run
         fail_lift = bool(rospy.get_param('~test_fail_pick_lift', False))
+        self.end_move_done = False
         announce_trajectory_start('mtc solution')  # the whole solution is one executed trajectory for the cable monitor
         for step, (role, sub) in enumerate(steps):
             if self.is_preempt_requested():
                 return MoveItErrorCodes.PREEMPTED
-            if role == ARM:
+            if role in (ARM, END_MOVE):
                 if not sub.trajectory.joint_trajectory.points:
                     continue
                 if fail_lift and self.pick_progress['attached'] and not self.pick_progress['lifted']:
@@ -2048,6 +2087,7 @@ class MtcPickPlace:
                     code = MoveItErrorCodes.CONTROL_FAILED
                 else:
                     code = self.execute_arm(sub.trajectory)
+                self.end_move_done = role == END_MOVE and code == MoveItErrorCodes.SUCCESS
             elif role == GRIPPER:
                 posture = postures.pop(0)
                 recorder = self.start_close_recording(regrasp) if check_grasp and not postures else None
@@ -2085,7 +2125,7 @@ class MtcPickPlace:
                 if self.execution_failure and step < len(stage_names) and stage_names[step]:
                     self.execution_failure += f' (stage {stage_names[step]})'
                 return code
-            if role == ARM and self.pick_progress['attached']:
+            if role in (ARM, END_MOVE) and self.pick_progress['attached']:
                 self.pick_progress['lifted'] = True
         return MoveItErrorCodes.SUCCESS
 
