@@ -119,6 +119,9 @@ ARM, GRIPPER, ATTACH, DETACH, NOOP = 'arm', 'gripper', 'attach', 'detach', 'noop
 PREFIX = 'prefix'
 # the single-plan pick's last arm move (to ~mtc_single_plan_pick_end_pose), executed like ARM
 END_MOVE = 'end_move'
+# a single-plan move through an untangle pose, executed like ARM but checked by the cable guard and announced to
+# the cable monitor like the named move it replaces (one leg, a fresh chain, the monitor's stop criterion)
+UNTANGLE = 'untangle'
 
 
 def pose_to_matrix(pose):
@@ -1390,7 +1393,7 @@ class MtcPickPlace:
         if self.start_move is None:
             for pose in poses:
                 task.add(self.move_to(f'move to {pose}', pose))
-            return task, [NOOP] + [ARM] * len(poses)
+            return task, [NOOP] + [UNTANGLE] * len(poses)
         # the arm is on its way to the start move's last pose; plan from there (a stand-in path, dropped)
         prefix = stages.MoveTo('start move (planned meanwhile)', self.pipeline)
         prefix.group = self.arm_group
@@ -1882,7 +1885,7 @@ class MtcPickPlace:
         else:
             least_bad, checks = float('inf'), []
             for index, solution in enumerate(task.solutions):
-                ok, stretch, span, q = self.cable_guard.check(self.without_prefix(solution.toMsg()))
+                ok, stretch, span, q = self.check_solution(solution.toMsg())
                 if not ok and span != 'wrist_3 window' and stretch < least_bad:
                     least_bad, self.guard_rejected_q = stretch, self.cable_guard.worst_q_rad
                 checks.append(f'{index}: cost {solution.cost:.1f} stretch {stretch:+.3f} ({span})')
@@ -1910,6 +1913,48 @@ class MtcPickPlace:
         rospy.loginfo(f'mtc: {what} planned in {elapsed:.1f} s (cost {self.chosen_solution.cost:.2f}{motion})')
         task.publish(self.chosen_solution)
         return True
+
+    def check_solution(self, solution_msg):
+        '''the cable guard's (ok, stretch, span, q) of a planned solution: as one path from a fresh chain, or for the
+        single plan in the legs the old way checks and the monitor replays separately (see check_single_plan)'''
+        msg = self.without_prefix(solution_msg)
+        single = self.single_plan if self.start_move is None else None
+        if not single or not single[0]:
+            return self.cable_guard.check(msg)
+        return self.check_single_plan(msg, len(single[0]))
+
+    def check_single_plan(self, msg, legs):
+        '''
+        the single plan's solution checked like the old way runs it. Each untangle leg (sub trajectories 1..legs,
+        after the current state) alone, from a fresh chain, with the named moves' criterion (the monitor's stop stretch,
+        a chain replay stop only logged unless ~mtc_cable_named_move_rope_stops); then the pick and the end move from a
+        fresh chain at the last untangle pose with the MTC margin. execute() announces the same legs to the monitor,
+        which starts its chain afresh at each (reset_at_trajectory_start). One replay over all legs carried the chain
+        pulled taut by the untangle legs into the pregrasp move and refused every grasp (+0.086/+0.088 in a sim series);
+        the same replay of the old way's own executed path predicts that stop too, which the monitor never saw because
+        it starts afresh at every named move.
+        '''
+        guard = self.cable_guard
+        chain_stops = bool(rospy.get_param('~mtc_cable_named_move_rope_stops', False))
+        for index in range(1, 1 + legs):
+            ok, stretch, span, q = guard.check(self.only_subs(msg, [index]), max_stretch=guard.stop_stretch(),
+                                               chain_stops=chain_stops)
+            rospy.loginfo(f'mtc cable guard: single plan untangle leg {index}/{legs}: stretch {stretch:+.3f} '
+                          f'({span}), {"ok" if ok else "refused"}')
+            if not ok:
+                return False, stretch, f'{span}, untangle leg {index}', q
+        return guard.check(self.only_subs(msg, range(1 + legs, len(msg.sub_trajectory))))
+
+    @staticmethod
+    def only_subs(msg, keep):
+        '''a copy of the solution message with the points of every sub trajectory not in keep removed (indices stay, so
+        the guard's worst point still names its stage)'''
+        keep = set(keep)
+        part = copy.deepcopy(msg)
+        for index, sub in enumerate(part.sub_trajectory):
+            if index not in keep:
+                sub.trajectory.joint_trajectory.points = []
+        return part
 
     @staticmethod
     def only_retreat_failed(task):
@@ -2074,12 +2119,20 @@ class MtcPickPlace:
         fail_lift = bool(rospy.get_param('~test_fail_pick_lift', False))
         self.end_move_done = False
         announce_trajectory_start('mtc solution')  # the whole solution is one executed trajectory for the cable monitor
+        previous = None
         for step, (role, sub) in enumerate(steps):
             if self.is_preempt_requested():
                 return MoveItErrorCodes.PREEMPTED
-            if role in (ARM, END_MOVE):
+            if role in (ARM, END_MOVE, UNTANGLE):
                 if not sub.trajectory.joint_trajectory.points:
                     continue
+                # the monitor starts afresh at each untangle leg and at the pick after them, as the guard
+                # checked them and as for the named moves of the old way
+                if role == UNTANGLE:
+                    announce_trajectory_start('single plan untangle leg')
+                elif previous == UNTANGLE:
+                    announce_trajectory_start('mtc solution after the untangle legs')
+                previous = role
                 if fail_lift and self.pick_progress['attached'] and not self.pick_progress['lifted']:
                     self.execution_failure = ('the lift was refused on purpose by the test switch ~test_fail_pick_lift '
                                               '(a sim test of a pick that fails after the close and before the lift)')

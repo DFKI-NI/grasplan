@@ -85,7 +85,7 @@ class TestSingleTaskLayout(unittest.TestCase):
                          ['current state', f'move to {POSES[0]}', f'move to {POSES[1]}', 'allow octomap contact',
                           'move to pregrasp', 'grasp', 'move to transport'])
         self.assertEqual([task.children[i].goal for i in (1, 2, 6)], POSES + ['transport'])
-        self.assertEqual(roles[:5], [mpp.NOOP, mpp.ARM, mpp.ARM, mpp.NOOP, mpp.ARM])
+        self.assertEqual(roles[:5], [mpp.NOOP, mpp.UNTANGLE, mpp.UNTANGLE, mpp.NOOP, mpp.ARM])
         self.assertEqual(roles[-1], mpp.END_MOVE)
         self.assertEqual(len(roles), len(leaves(task)))   # one role per sub trajectory, as execute() requires
 
@@ -131,11 +131,26 @@ class TestExecuteEndMove(unittest.TestCase):
         m.execute_arm = lambda traj: (sent.append(traj), codes.pop(0))[1]
         m.attach = lambda *a: SUCCESS
         m.command_gripper = lambda posture: SUCCESS
-        subs = [mock.Mock(trajectory=trajectory() if r in (mpp.ARM, mpp.END_MOVE) else RobotTrajectory()) for r in roles]
+        subs = [mock.Mock(trajectory=trajectory() if r in (mpp.ARM, mpp.END_MOVE, mpp.UNTANGLE) else RobotTrajectory())
+                for r in roles]
         m.chosen_solution = mock.Mock(**{'toMsg.return_value': mock.Mock(sub_trajectory=subs)})
-        with mock.patch.object(mpp, 'announce_trajectory_start', lambda source: None):
+        self.announced = []
+        with mock.patch.object(mpp, 'announce_trajectory_start', self.announced.append):
             code = m.execute(None, roles, [], 'close', attach=(OBJ, GRIPPER))
         return m, code, sent
+
+    def test_untangle_legs_run_and_are_announced_like_named_moves(self):
+        # v2: the monitor starts afresh at each leg and at the pick after them, as the guard checked them
+        roles = [mpp.NOOP, mpp.UNTANGLE, mpp.UNTANGLE, mpp.NOOP, mpp.ARM, mpp.ARM, mpp.ATTACH, mpp.ARM, mpp.END_MOVE]
+        m, code, sent = self.run_execute(roles, [SUCCESS] * 6)
+        self.assertEqual(code, SUCCESS)
+        self.assertEqual(len(sent), 6)
+        self.assertEqual(self.announced, ['mtc solution', 'single plan untangle leg', 'single plan untangle leg',
+                                          'mtc solution after the untangle legs'])
+
+    def test_without_untangle_legs_one_announcement(self):
+        self.run_execute([mpp.NOOP, mpp.ARM, mpp.ATTACH, mpp.ARM], [SUCCESS, SUCCESS])
+        self.assertEqual(self.announced, ['mtc solution'])
 
     def test_end_move_runs_after_the_lift(self):
         roles = [mpp.NOOP, mpp.ARM, mpp.ARM, mpp.ATTACH, mpp.ARM, mpp.END_MOVE]
@@ -236,3 +251,61 @@ class TestPickSide(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+def solution(points_per_sub):
+    from types import SimpleNamespace
+    subs = []
+    for n in points_per_sub:
+        t = RobotTrajectory()
+        t.joint_trajectory.points = [JointTrajectoryPoint(positions=[float(i)]) for i in range(n)]
+        subs.append(SimpleNamespace(trajectory=t))
+    return SimpleNamespace(sub_trajectory=subs)
+
+
+class TestSegmentedGuardCheck(unittest.TestCase):
+    """v2: the single plan's solution is checked in the legs the old way checks: each untangle leg alone with the named
+    moves' criterion, then the pick and the end move from a fresh chain with the MTC margin (series_2359: one replay
+    over all legs refused every grasp)."""
+
+    def setUp(self):
+        self.calls = []
+        self.results = []
+        guard = mock.Mock()
+        guard.stop_stretch.return_value = 0.02
+
+        def check(msg, max_stretch=None, chain_stops=True):
+            kept = [i for i, sub in enumerate(msg.sub_trajectory) if sub.trajectory.joint_trajectory.points]
+            self.calls.append((kept, max_stretch, chain_stops))
+            return self.results.pop(0) if self.results else (True, -0.2, 'wrist', {})
+        guard.check.side_effect = check
+        self.m = mtc(single=(POSES, 'transport'), guard=guard)
+        self.m.cable_guard = guard
+        self.m.start_move = None
+        self.params = {}
+        patcher = mock.patch.object(mpp.rospy, 'get_param', lambda name, default=None: self.params.get(name, default))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_legs_alone_then_the_pick_from_a_fresh_chain(self):
+        # sub trajectories: current state, 2 untangle legs, pregrasp, approach, lift, transport
+        ok = self.m.check_solution(solution([0, 5, 5, 5, 3, 3, 4]))
+        self.assertTrue(ok[0])
+        self.assertEqual(self.calls, [([1], 0.02, False), ([2], 0.02, False), ([3, 4, 5, 6], None, True)])
+
+    def test_carrier_stops_param_reaches_the_legs(self):
+        self.params['~mtc_cable_named_move_rope_stops'] = True
+        self.m.check_solution(solution([0, 5, 5, 5]))
+        self.assertEqual([c[2] for c in self.calls[:2]], [True, True])
+
+    def test_a_refused_leg_refuses_the_solution(self):
+        self.results = [(True, -0.3, 'chord', {}), (False, 0.05, 'wrist', {'w': 1})]
+        ok, stretch, span, _ = self.m.check_solution(solution([0, 5, 5, 5]))
+        self.assertFalse(ok)
+        self.assertEqual((stretch, span), (0.05, 'wrist, untangle leg 2'))
+        self.assertEqual(len(self.calls), 2)   # the pick is not checked any more
+
+    def test_without_single_plan_one_check_of_everything(self):
+        self.m.single_plan = None
+        self.m.check_solution(solution([0, 5, 3]))
+        self.assertEqual(self.calls, [([1, 2], None, True)])
