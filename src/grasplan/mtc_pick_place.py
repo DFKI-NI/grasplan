@@ -905,6 +905,8 @@ class MtcPickPlace:
     start_move = None   # the StartMove the arm runs while the pick is planned (set by pick.py)
     # (named poses before the grasp, named pose after the lift or '') of a single-plan pick (set by pick.py)
     single_plan = None
+    # name -> {joint: rad} of a named arm pose (set by pick.py: MoveGroupCommander.get_named_target_values)
+    named_pose_q = None
     end_move_done = False   # the last execute() ran the single plan's end move
 
     def __init__(self, arm_group, eef_link, gripper_links, planning_frame, is_preempt_requested):
@@ -1417,11 +1419,26 @@ class MtcPickPlace:
         return task, [NOOP, PREFIX]
 
     def planned_start_q(self, timeout=2.0):
-        '''the arm joints (name -> rad) the pick is planned from: the end of the running StartMove, else the
-        current state'''
+        '''the arm joints (name -> rad) the pick is planned from: the end of the running StartMove, else the last
+        untangle pose of the single plan this task starts with, else the current state'''
         if self.start_move is not None:
             return dict(self.start_move.end_q)
+        legs_end = self.legs_end_q()
+        if legs_end is not None:
+            return legs_end
         return _current_arm_q(timeout=timeout)
+
+    def legs_end_q(self):
+        '''the arm joints (name -> rad) of the last untangle pose the current task moves through before the grasp
+        (single plan), None without such legs or when the pose has no joint values'''
+        if not getattr(self, 'task_legs', 0) or not self.single_plan or self.named_pose_q is None:
+            return None
+        pose = self.single_plan[0][-1]
+        try:
+            return dict(self.named_pose_q(pose))
+        except Exception as e:  # noqa: BLE001 - an unknown pose plans from the current state as before
+            rospy.logwarn(f'mtc: no joint values of untangle pose {pose!r} ({e}), planning from the current state')
+            return None
 
     def without_prefix(self, solution_msg):
         '''the solution message with the stand-in path of the start move prefix emptied (same sub trajectory indices): what
@@ -1798,8 +1815,9 @@ class MtcPickPlace:
         from sensor_msgs.msg import JointState
         try:
             current = rospy.wait_for_message('joint_states', JointState, timeout=2.0)
-            if self.start_move is not None:   # seeded where the pick will start, not where the arm is now
-                current.position = [self.start_move.end_q.get(n, p) for n, p in zip(current.name, current.position)]
+            start = self.start_move.end_q if self.start_move is not None else self.legs_end_q()
+            if start:   # seeded where the pick will start, not where the arm is now
+                current.position = [start.get(n, p) for n, p in zip(current.name, current.position)]
             ik = rospy.ServiceProxy('compute_ik', GetPositionIK)
             ik.wait_for_service(2.0)
             request = GetPositionIKRequest()

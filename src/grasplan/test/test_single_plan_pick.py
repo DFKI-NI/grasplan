@@ -7,6 +7,7 @@ from unittest import mock
 
 from geometry_msgs.msg import PoseStamped
 from moveit_msgs.msg import Grasp, MoveItErrorCodes, PickupGoal, RobotTrajectory
+from sensor_msgs.msg import JointState
 from trajectory_msgs.msg import JointTrajectoryPoint
 
 import grasplan.cable_detour as cable_detour
@@ -27,6 +28,9 @@ class Stage:
         self.allowed.append(args)
 
     def attachObject(self, *args):
+        pass
+
+    def setCostTerm(self, *args):
         pass
 
     def setGoal(self, goal):
@@ -426,6 +430,80 @@ class TestRefusedLeg(unittest.TestCase):
         self.assertFalse(self.m.plan(task, 'pick g1'))
         task.plan.assert_not_called()
         self.assertIn('untangle leg 1', self.m.last_plan_failure)
+
+
+W2 = 'mobipick/ur5_wrist_2_joint'
+
+
+class TestPlannedFromTheLastUntanglePose(unittest.TestCase):
+    """the single plan runs its untangle legs first: the cable path to the grasp and the IK seed start where the last
+    leg ends, not where the arm stands now"""
+    NOW, LEG_ENDS = {W2: 1.57}, {POSES[0]: {W2: -0.5}, POSES[1]: {W2: -1.57}}
+
+    def setUp(self):
+        patcher = mock.patch.object(mpp, '_current_arm_q', lambda timeout=2.0, not_before=None: dict(self.NOW))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def single(self, single=(POSES, 'transport'), start_move=None):
+        m = mtc(single=single, start_move=start_move)
+        m.named_pose_q = lambda pose: dict(self.LEG_ENDS[pose])
+        return m
+
+    def test_the_shaped_route_starts_at_the_last_untangle_pose(self):
+        m = self.single()
+        m.cable_guard = mock.Mock(max_stretch=-0.1, path_constraints=lambda: 'wrist_3 window')
+        m.cable_shaper = mock.Mock(**{'plan.return_value': None})
+        m.grasp_ik_states = {'grasp_0': JointState(name=[W2], position=[0.3])}
+        with mock.patch.object(mpp.cable_shaping, 'shaping_on', lambda: True):
+            build(m)
+        self.assertEqual(m.cable_shaper.plan.call_args[0][0], self.LEG_ENDS[POSES[1]])
+
+    def test_without_untangle_poses_the_current_state(self):
+        m = self.single(single=([], 'transport'))
+        build(m)
+        self.assertEqual(m.planned_start_q(), self.NOW)
+
+    def test_flag_off_the_current_state(self):
+        m = self.single(single=None)
+        build(m)
+        self.assertEqual(m.planned_start_q(), self.NOW)
+
+    def test_a_running_start_move_still_wins(self):
+        m = self.single(start_move=mock.Mock(names=POSES, end_q={W2: 0.7}))
+        build(m)
+        self.assertEqual(m.planned_start_q(), {W2: 0.7})
+
+    def test_a_later_task_without_legs_plans_from_the_current_state(self):
+        m = self.single()
+        build(m)
+        m.single_plan = None
+        with mock.patch.object(mpp, 'stages', mock.Mock(CurrentState=Stage)):
+            m.start_task('place')
+        self.assertEqual(m.planned_start_q(), self.NOW)
+
+    def test_a_pose_without_joint_values_falls_back_to_the_current_state(self):
+        m = self.single()
+        m.named_pose_q = mock.Mock(side_effect=KeyError('no such pose'))
+        build(m)
+        self.assertEqual(m.planned_start_q(), self.NOW)
+
+    def test_the_branch_ik_is_seeded_at_the_last_untangle_pose(self):
+        m = self.single()
+        m.arm_group, m.eef_link = 'arm', 'gripper_tcp'
+        seeds = []
+
+        def ik(request):
+            seeds.append(dict(zip(request.ik_request.robot_state.joint_state.name,
+                                  request.ik_request.robot_state.joint_state.position)))
+            return mock.Mock(error_code=mock.Mock(val=FAILED))
+        ik.wait_for_service = lambda timeout: None
+        with mock.patch.object(mpp.cable_shaping, 'sub_flag', lambda name: True), \
+                mock.patch.object(mpp.rospy, 'wait_for_message',
+                                  lambda *a, **k: JointState(name=[W2], position=[self.NOW[W2]])), \
+                mock.patch.object(mpp.rospy, 'ServiceProxy', lambda *a, **k: ik):
+            build(m)
+        self.assertEqual(seeds, [self.LEG_ENDS[POSES[1]]])
 
 
 if __name__ == '__main__':

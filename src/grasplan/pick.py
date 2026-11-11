@@ -348,6 +348,7 @@ class PickTools:
                 self.robot.get_planning_frame(),
                 lambda: self.pick_action_server.is_preempt_requested(),
             )
+            self.mtc.named_pose_q = self.robot.arm.get_named_target_values
             rospy.loginfo('pick: grasps are planned and executed with MoveIt Task Constructor')
         self.pickup_action_client = actionlib.SimpleActionClient('pickup', PickupAction)
         if not self.use_mtc:
