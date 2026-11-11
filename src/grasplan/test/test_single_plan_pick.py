@@ -9,6 +9,7 @@ from geometry_msgs.msg import PoseStamped
 from moveit_msgs.msg import Grasp, MoveItErrorCodes, PickupGoal, RobotTrajectory
 from trajectory_msgs.msg import JointTrajectoryPoint
 
+import grasplan.cable_detour as cable_detour
 import grasplan.mtc_pick_place as mpp
 import grasplan.pick as pick
 
@@ -297,6 +298,14 @@ class TestPickSide(unittest.TestCase):
         self.assertEqual(self.offer(p), FAILED)
         self.assertTrue(p.pick_failure_reason.startswith('single plan given up (untangle leg 1/2'), p.pick_failure_reason)
         self.assertIn('then the old way failed: no grasp could be planned', p.pick_failure_reason)
+
+    def test_a_cable_guard_refusal_is_explained_once(self):
+        p = picker([MoveItErrorCodes.CONTROL_FAILED, FAILED], executed=True,
+                   untangle_failure='untangle leg 1/2 (move to x) failed: stop')
+        p.pick_failure_reason, p.mtc.failure_reason = '', 'all 3 grasps: 3 refused by the cable guard'
+        with mock.patch.object(cable_detour, 'requested_cable_aware', return_value=True):
+            self.assertEqual(self.offer(p), FAILED)
+            self.assertEqual(p.failure_text().count('cable-aware mode:'), 1, p.failure_text())
 
     def test_no_fallback_when_preempted(self):
         p = picker([False])

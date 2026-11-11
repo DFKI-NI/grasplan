@@ -1575,7 +1575,9 @@ class PickTools:
                                              if self.mtc.untangle_leg_refused else '')
         if result != MoveItErrorCodes.SUCCESS and result is not False and single_reason:
             # the agent gets why the single plan was given up too, not only the old way's reason
-            old = self.failure_text() or f'MoveIt error {result}'
+            # the raw reason: failure_text() explains a cable guard refusal once, over the whole text
+            old = (getattr(self, 'pick_failure_reason', '') or getattr(self.mtc, 'failure_reason', '')
+                   or f'MoveIt error {result}')
             self.pick_failure_reason = f'single plan given up ({single_reason}); then the old way failed: {old}'
         return result
 
