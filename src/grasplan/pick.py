@@ -1524,6 +1524,9 @@ class PickTools:
         single = (list(untangle), mtc_pick_place.single_plan_end_pose())
         if not single[0] and not single[1]:
             return None
+        if single[0] and mtc_pick_place.plan_pick_during_start_move():
+            rospy.loginfo('single plan: ~plan_pick_during_start_move is on too; the single plan moves through the '
+                          'untangle poses itself, no start move')
         return single
 
     def offer_single_plan(self, object_to_pick, grasps, support_surface_name, single):

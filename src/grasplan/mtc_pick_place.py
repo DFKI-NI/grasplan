@@ -2176,6 +2176,7 @@ class MtcPickPlace:
                 return MoveItErrorCodes.PREEMPTED
             if role in (ARM, END_MOVE, UNTANGLE):
                 if not sub.trajectory.joint_trajectory.points:
+                    self.end_move_done = self.end_move_done or role == END_MOVE   # already at the end pose
                     continue
                 # the monitor starts afresh at each untangle leg and at the pick after them, as the guard
                 # checked them and as for the named moves of the old way

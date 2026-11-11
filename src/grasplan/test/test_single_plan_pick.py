@@ -138,18 +138,19 @@ def trajectory():
 
 
 class TestExecuteEndMove(unittest.TestCase):
-    def run_execute(self, roles, codes):
+    def run_execute(self, roles, codes, empty=()):
         m = mtc()
         m.is_preempt_requested = lambda: False
         sent = []
         m.execute_arm = lambda traj: (sent.append(traj), codes.pop(0))[1]
         m.attach = lambda *a: SUCCESS
         m.command_gripper = lambda posture: SUCCESS
-        subs = [mock.Mock(trajectory=trajectory() if r in (mpp.ARM, mpp.END_MOVE, mpp.UNTANGLE) else RobotTrajectory())
-                for r in roles]
+        subs = [mock.Mock(trajectory=trajectory() if r in (mpp.ARM, mpp.END_MOVE, mpp.UNTANGLE) and i not in empty
+                          else RobotTrajectory()) for i, r in enumerate(roles)]
         m.chosen_solution = mock.Mock(**{'toMsg.return_value': mock.Mock(sub_trajectory=subs)})
         self.announced = []
-        with mock.patch.object(mpp, 'announce_trajectory_start', self.announced.append):
+        with mock.patch.object(mpp, 'announce_trajectory_start', self.announced.append), \
+                mock.patch.object(mpp.rospy, 'get_param', lambda name, default=None: default):
             code = m.execute(None, roles, [], 'close', attach=(OBJ, GRIPPER))
         return m, code, sent
 
@@ -196,6 +197,14 @@ class TestExecuteEndMove(unittest.TestCase):
         self.assertTrue(m.untangle_failure.startswith('untangle leg 2/2'), m.untangle_failure)
         self.assertFalse(m.pick_progress['closed'])
 
+    def test_an_end_move_without_motion_counts_as_done(self):
+        # MTC found the arm already at the end pose after the lift: no motion, but the arm is there
+        roles = [mpp.NOOP, mpp.ARM, mpp.ATTACH, mpp.ARM, mpp.END_MOVE]
+        m, code, sent = self.run_execute(roles, [SUCCESS, SUCCESS], empty=(4,))
+        self.assertEqual(code, SUCCESS)
+        self.assertEqual(len(sent), 2)
+        self.assertTrue(m.end_move_done)
+
     def test_without_end_move_nothing_is_marked(self):
         m, code, _ = self.run_execute([mpp.NOOP, mpp.ARM, mpp.ATTACH, mpp.ARM], [SUCCESS, SUCCESS])
         self.assertEqual(code, SUCCESS)
@@ -228,6 +237,14 @@ class TestPickSide(unittest.TestCase):
     def test_skipped_when_the_monitor_does_not_start_afresh(self):
         # the legs are checked apart, as the monitor sees them only with reset_at_trajectory_start
         self.assertIsNone(self.single_for({'~mtc_single_plan_pick': True}, resets=False))
+
+    def test_the_single_plan_says_it_takes_the_poses_of_the_start_move(self):
+        # both careful flags on: the single plan wins (plans the poses itself); the log says so
+        logged = []
+        with mock.patch.object(pick.rospy, 'loginfo', logged.append):
+            single = self.single_for({'~mtc_single_plan_pick': True, '~plan_pick_during_start_move': True})
+        self.assertEqual(single, (POSES, 'transport'))
+        self.assertTrue(any('plan_pick_during_start_move' in line for line in logged), logged)
 
     def test_off_by_default(self):
         self.assertIsNone(self.single_for({}))
