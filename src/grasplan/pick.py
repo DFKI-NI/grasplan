@@ -1526,20 +1526,35 @@ class PickTools:
         rospy.loginfo(f'single plan: {before} + pick of {object_to_pick.get_object_class_and_id_as_string()}'
                       f'{f" + {end}" if end else ""} as one MTC task')
         self.mtc.single_plan = single
+        self.mtc.untangle_leg_refused = ''
         try:
             result = self.offer_grasps(object_to_pick, grasps, support_surface_name, False)
         finally:
             self.mtc.single_plan = None
         if result == MoveItErrorCodes.SUCCESS:
-            if end:
-                rospy.loginfo(f'single plan: picked{" and at " + end if self.mtc.end_move_done else ""}'
-                              f'{"" if self.mtc.end_move_done else f" (not moved to {end}: the lift was replanned)"}')
+            if end and self.mtc.end_move_done:
+                rospy.loginfo(f'single plan: picked and at {end}')
+            elif end and getattr(self.mtc, 'end_move_failure', ''):
+                rospy.logwarn(f'single plan: picked, but the move to {end} failed ({self.mtc.end_move_failure}); the '
+                              f'arm stays after the lift')
+            elif end:
+                rospy.loginfo(f'single plan: picked (not moved to {end}: the lift was replanned)')
             return result
-        if result is False or result is None or not self.arm_did_not_move(result) \
-                or self.pick_action_server.is_preempt_requested():
+        if result is False or result is None or self.pick_action_server.is_preempt_requested():
             return result
-        rospy.logwarn('single plan: no grasp could be planned as one task, the old way: the untangle poses one by one, '
-                      'then the pick')
+        untangle_failure = getattr(self.mtc, 'untangle_failure', '') if self.mtc.executed else ''
+        if untangle_failure:
+            # the old way goes on after a failed untangle move: so does the single plan, before anything was grasped
+            rospy.logwarn(f'single plan: {untangle_failure}; the old way from here: the untangle poses one by one, '
+                          f'then the pick')
+        elif not self.arm_did_not_move(result):
+            return result
+        elif self.mtc.untangle_leg_refused:
+            rospy.logwarn(f'single plan: refused by the cable guard at {self.mtc.untangle_leg_refused}, the old way: '
+                          f'the untangle poses one by one, then the pick')
+        else:
+            rospy.logwarn('single plan: no grasp could be planned as one task, the old way: the untangle poses one by '
+                          'one, then the pick')
         for arm_pose in before:
             rospy.loginfo(f'going to intermediate arm pose {arm_pose} to disentangle cable')
             self.move_arm_to_posture(arm_pose)

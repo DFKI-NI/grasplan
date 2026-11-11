@@ -20,9 +20,10 @@ SUCCESS, FAILED = MoveItErrorCodes.SUCCESS, MoveItErrorCodes.PLANNING_FAILED
 class Stage:
     def __init__(self, name, *args):
         self.name, self.children, self.properties, self.goal, self.group = name, [], {}, None, None
+        self.allowed = []
 
     def allowCollisions(self, *args):
-        pass
+        self.allowed.append(args)
 
     def attachObject(self, *args):
         pass
@@ -83,11 +84,19 @@ class TestSingleTaskLayout(unittest.TestCase):
         task, roles = build(mtc(single=(POSES, 'transport')))
         self.assertEqual([s.name for s in task.children],
                          ['current state', f'move to {POSES[0]}', f'move to {POSES[1]}', 'allow octomap contact',
-                          'move to pregrasp', 'grasp', 'move to transport'])
-        self.assertEqual([task.children[i].goal for i in (1, 2, 6)], POSES + ['transport'])
+                          'move to pregrasp', 'grasp', 'forbid pick contacts before the end move', 'move to transport'])
+        self.assertEqual([task.children[i].goal for i in (1, 2, 7)], POSES + ['transport'])
         self.assertEqual(roles[:5], [mpp.NOOP, mpp.UNTANGLE, mpp.UNTANGLE, mpp.NOOP, mpp.ARM])
         self.assertEqual(roles[-1], mpp.END_MOVE)
         self.assertEqual(len(roles), len(leaves(task)))   # one role per sub trajectory, as execute() requires
+
+    def test_the_end_move_counts_the_pick_contacts_again(self):
+        # the lift may touch the support and the octomap; the move to transport carrying the object may not
+        task, _ = build(mtc(single=(POSES, 'transport')))
+        block = task['forbid pick contacts before the end move']
+        self.assertIn((OBJ, ['table_2'], False), block.allowed)
+        self.assertIn((mpp.OCTOMAP_COLLISION_NAME, GRIPPER + [OBJ], False), block.allowed)
+        self.assertNotIn(True, [args[-1] for args in block.allowed])
 
     def test_flag_off_keeps_the_old_layout(self):
         task, roles = build(mtc())
@@ -160,11 +169,27 @@ class TestExecuteEndMove(unittest.TestCase):
         self.assertTrue(m.end_move_done)
         self.assertTrue(m.pick_progress['lifted'])
 
-    def test_failed_end_move_is_reported(self):
+    def test_failed_end_move_keeps_the_pick(self):
+        # the object is held and lifted as at the end of the old way's pick: success, the end move's failure named
         roles = [mpp.NOOP, mpp.ARM, mpp.ATTACH, mpp.ARM, mpp.END_MOVE]
         m, code, _ = self.run_execute(roles, [SUCCESS, SUCCESS, MoveItErrorCodes.CONTROL_FAILED])
-        self.assertEqual(code, MoveItErrorCodes.CONTROL_FAILED)
+        self.assertEqual(code, SUCCESS)
         self.assertFalse(m.end_move_done)
+        self.assertIn(str(MoveItErrorCodes.CONTROL_FAILED), m.end_move_failure)
+
+    def test_preempted_end_move_is_no_success(self):
+        roles = [mpp.NOOP, mpp.ARM, mpp.ATTACH, mpp.ARM, mpp.END_MOVE]
+        m, code, _ = self.run_execute(roles, [SUCCESS, SUCCESS, MoveItErrorCodes.PREEMPTED])
+        self.assertEqual(code, MoveItErrorCodes.PREEMPTED)
+        self.assertEqual(m.end_move_failure, '')
+
+    def test_failed_untangle_leg_is_named(self):
+        roles = [mpp.NOOP, mpp.UNTANGLE, mpp.UNTANGLE, mpp.NOOP, mpp.ARM, mpp.ATTACH, mpp.ARM, mpp.END_MOVE]
+        m, code, sent = self.run_execute(roles, [SUCCESS, MoveItErrorCodes.CONTROL_FAILED])
+        self.assertEqual(code, MoveItErrorCodes.CONTROL_FAILED)
+        self.assertEqual(len(sent), 2)   # nothing after the failed leg
+        self.assertTrue(m.untangle_failure.startswith('untangle leg 2/2'), m.untangle_failure)
+        self.assertFalse(m.pick_progress['closed'])
 
     def test_without_end_move_nothing_is_marked(self):
         m, code, _ = self.run_execute([mpp.NOOP, mpp.ARM, mpp.ATTACH, mpp.ARM], [SUCCESS, SUCCESS])
@@ -172,9 +197,10 @@ class TestExecuteEndMove(unittest.TestCase):
         self.assertFalse(m.end_move_done)
 
 
-def picker(offer_results, executed=False, preempt=False):
+def picker(offer_results, executed=False, preempt=False, untangle_failure=''):
     p = pick.PickTools.__new__(pick.PickTools)
-    p.mtc = mock.Mock(single_plan=None, end_move_done=True, executed=executed)
+    p.mtc = mock.Mock(single_plan=None, end_move_done=True, executed=executed, end_move_failure='',
+                      untangle_failure=untangle_failure)
     p.pick_action_server = mock.Mock(**{'is_preempt_requested.return_value': preempt})
     p.calls, p.moves = [], []
 
@@ -233,6 +259,26 @@ class TestPickSide(unittest.TestCase):
         self.assertEqual(p.moves, [])
         self.assertEqual(len(p.calls), 1)
 
+    def test_a_failed_untangle_leg_goes_on_the_old_way(self):
+        # the old way ignores a failed untangle move and goes on; nothing was grasped yet
+        p = picker([MoveItErrorCodes.CONTROL_FAILED, SUCCESS], executed=True,
+                   untangle_failure='untangle leg 1/2 (move to x) failed: stop')
+        self.assertEqual(self.offer(p), SUCCESS)
+        self.assertEqual(p.moves, POSES)
+        self.assertEqual(p.calls[-1], (None, False))
+
+    def test_a_refused_untangle_leg_goes_to_the_old_way(self):
+        p = picker([FAILED, SUCCESS])
+
+        def offer(obj, grasps, support, external):
+            p.calls.append((p.mtc.single_plan, external))
+            if p.mtc.single_plan:
+                p.mtc.untangle_leg_refused = 'wrist, untangle leg 1'
+            return [FAILED, SUCCESS][len(p.calls) - 1]
+        p.offer_grasps = offer
+        self.assertEqual(self.offer(p), SUCCESS)
+        self.assertEqual(p.moves, POSES)
+
     def test_no_fallback_when_preempted(self):
         p = picker([False])
         self.assertIs(self.offer(p), False)
@@ -282,6 +328,11 @@ class TestSegmentedGuardCheck(unittest.TestCase):
         self.m = mtc(single=(POSES, 'transport'), guard=guard)
         self.m.cable_guard = guard
         self.m.start_move = None
+        self.m.task_legs = 2   # start_task of the single-plan pick task
+        self.resets = True
+        patcher = mock.patch.object(mpp, 'monitor_resets_at_trajectory_start', lambda: self.resets)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.params = {}
         patcher = mock.patch.object(mpp.rospy, 'get_param', lambda name, default=None: self.params.get(name, default))
         patcher.start()
@@ -306,6 +357,47 @@ class TestSegmentedGuardCheck(unittest.TestCase):
         self.assertEqual(len(self.calls), 2)   # the pick is not checked any more
 
     def test_without_single_plan_one_check_of_everything(self):
-        self.m.single_plan = None
+        self.m.single_plan, self.m.task_legs = None, 0
         self.m.check_solution(solution([0, 5, 3]))
         self.assertEqual(self.calls, [([1, 2], None, True)])
+
+    def test_a_regrasp_task_during_the_single_plan_has_no_legs(self):
+        # 'regrasp deeper' and the tail are planned while single_plan is set: one check, no bogus legs
+        with mock.patch.object(mpp, 'stages', mock.Mock(CurrentState=Stage, MoveTo=Stage)):
+            self.m.start_task('regrasp deeper')
+        self.m.check_solution(solution([0, 5, 3]))
+        self.assertEqual(self.calls, [([1, 2], None, True)])
+
+    def test_without_the_monitor_reset_one_check_of_everything(self):
+        self.resets = False
+        self.m.check_solution(solution([0, 5, 5, 5, 3]))
+        self.assertEqual(self.calls, [([1, 2, 3, 4], None, True)])
+
+
+class TestRefusedLeg(unittest.TestCase):
+    """a refused untangle leg is no grasp rejection: no turned grasp, no chain detour, the other grasps not planned"""
+
+    def setUp(self):
+        self.m = mtc(single=(POSES, 'transport'), guard=mock.Mock(chain_stopped=True, max_stretch=0.0))
+        self.m.task_legs, self.m.chain_rejections, self.m.cable_rejections = 2, 0, 0
+        self.m.check_solution = lambda msg: (False, 0.05, 'wrist, untangle leg 1', {})
+        patcher = mock.patch.object(mpp.rospy, 'get_param', lambda name, default=None: default)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def task(self):
+        sol = mock.Mock(cost=1.0)
+        return mock.Mock(**{'plan.return_value': True, 'solutions': [sol]})
+
+    def test_leg_refusal_is_remembered_and_counts_no_rejection(self):
+        self.assertFalse(self.m.plan(self.task(), 'pick g0'))
+        self.assertEqual(self.m.untangle_leg_refused, 'wrist, untangle leg 1')
+        self.assertIsNone(self.m.guard_rejected_q)
+        self.assertEqual((self.m.chain_rejections, self.m.cable_rejections), (0, 0))
+
+    def test_later_grasps_are_not_planned(self):
+        self.m.untangle_leg_refused = 'wrist, untangle leg 1'
+        task = self.task()
+        self.assertFalse(self.m.plan(task, 'pick g1'))
+        task.plan.assert_not_called()
+        self.assertIn('untangle leg 1', self.m.last_plan_failure)

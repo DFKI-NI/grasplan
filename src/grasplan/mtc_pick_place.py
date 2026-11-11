@@ -1269,6 +1269,18 @@ class MtcPickPlace:
             roles.append(NOOP)
         task.add(grasp_stages)
         if single and single[1]:
+            # the end move carries the object through free space: the contacts the grasp and the lift allowed (the
+            # object with its support and touching neighbours, the octomap with the gripper and the object) count
+            # again, as in the separate named move of the old way
+            block = stages.ModifyPlanningScene('forbid pick contacts before the end move')
+            if goal.support_surface_name:
+                block.allowCollisions(obj, [goal.support_surface_name], False)
+            if neighbours:
+                block.allowCollisions(obj, neighbours, False)
+            if self.allow_octomap_contact:
+                block.allowCollisions(OCTOMAP_COLLISION_NAME, touch, False)
+            task.add(block)
+            roles.append(NOOP)
             task.add(self.move_to(f'move to {single[1]}', single[1]))   # with the object, after the lift
             roles.append(END_MOVE)
         # what a re-grasp needs to plan the lift again from the arm's new state
@@ -1390,6 +1402,9 @@ class MtcPickPlace:
         task.clear()
         task.name = name
         task.add(stages.CurrentState('current state'))
+        # untangle legs at the start of this task: check_solution checks them one by one, every other task (a place, a
+        # re-grasp) as one path
+        self.task_legs = len(poses) if self.start_move is None else 0
         if self.start_move is None:
             for pose in poses:
                 task.add(self.move_to(f'move to {pose}', pose))
@@ -1864,6 +1879,10 @@ class MtcPickPlace:
         start = time.monotonic()
         self.chosen_solution = None
         self.guard_rejected_q = None   # joint state (radians) of the least bad solution when the guard rejects all
+        if getattr(self, 'task_legs', 0) and getattr(self, 'untangle_leg_refused', ''):
+            # a refused untangle leg hardly depends on the grasp: the other grasps would be refused the same way
+            self.last_plan_failure = f'refused by the cable guard ({self.untangle_leg_refused})'
+            return False
         if self.cable_guard is None or speed_changes_on():
             count = 1
         else:
@@ -1886,6 +1905,12 @@ class MtcPickPlace:
             least_bad, checks = float('inf'), []
             for index, solution in enumerate(task.solutions):
                 ok, stretch, span, q = self.check_solution(solution.toMsg())
+                if not ok and 'untangle leg' in span:
+                    self.untangle_leg_refused = span
+                    checks.append(f'{index}: cost {solution.cost:.1f} stretch {stretch:+.3f} ({span})')
+                    rospy.loginfo(f'mtc: {what} solution {index} refused at an untangle leg ({span}, stretch '
+                                  f'{stretch:+.3f}): the single plan is given up for every grasp')
+                    break
                 if not ok and span != 'wrist_3 window' and stretch < least_bad:
                     least_bad, self.guard_rejected_q = stretch, self.cable_guard.worst_q_rad
                 checks.append(f'{index}: cost {solution.cost:.1f} stretch {stretch:+.3f} ({span})')
@@ -1918,10 +1943,10 @@ class MtcPickPlace:
         '''the cable guard's (ok, stretch, span, q) of a planned solution: as one path from a fresh chain, or for the
         single plan in the legs the old way checks and the monitor replays separately (see check_single_plan)'''
         msg = self.without_prefix(solution_msg)
-        single = self.single_plan if self.start_move is None else None
-        if not single or not single[0]:
+        legs = getattr(self, 'task_legs', 0)
+        if not legs:
             return self.cable_guard.check(msg)
-        return self.check_single_plan(msg, len(single[0]))
+        return self.check_single_plan(msg, legs)
 
     def check_single_plan(self, msg, legs):
         '''
@@ -1935,6 +1960,11 @@ class MtcPickPlace:
         it starts afresh at every named move.
         '''
         guard = self.cable_guard
+        if not monitor_resets_at_trajectory_start():
+            # the monitor carries its chain through the legs into the pick: check the whole path as it will see it
+            rospy.loginfo('mtc cable guard: single plan checked as one path (the monitor does not start afresh at each '
+                          'leg: cable_model/reset_at_trajectory_start is off)')
+            return guard.check(msg)
         chain_stops = bool(rospy.get_param('~mtc_cable_named_move_rope_stops', False))
         for index in range(1, 1 + legs):
             ok, stretch, span, q = guard.check(self.only_subs(msg, [index]), max_stretch=guard.stop_stretch(),
@@ -2118,6 +2148,9 @@ class MtcPickPlace:
         # the attach, as a lift the controller rejects would, so the failure path between close and lift can be run
         fail_lift = bool(rospy.get_param('~test_fail_pick_lift', False))
         self.end_move_done = False
+        self.end_move_failure = ''   # why the single plan's end move failed after a successful pick
+        self.untangle_failure = ''   # which untangle leg failed and why (the pick never started)
+        legs, leg = roles.count(UNTANGLE), 0
         announce_trajectory_start('mtc solution')  # the whole solution is one executed trajectory for the cable monitor
         previous = None
         for step, (role, sub) in enumerate(steps):
@@ -2129,6 +2162,7 @@ class MtcPickPlace:
                 # the monitor starts afresh at each untangle leg and at the pick after them, as the guard
                 # checked them and as for the named moves of the old way
                 if role == UNTANGLE:
+                    leg += 1
                     announce_trajectory_start('single plan untangle leg')
                 elif previous == UNTANGLE:
                     announce_trajectory_start('mtc solution after the untangle legs')
@@ -2177,6 +2211,17 @@ class MtcPickPlace:
             if code != MoveItErrorCodes.SUCCESS:
                 if self.execution_failure and step < len(stage_names) and stage_names[step]:
                     self.execution_failure += f' (stage {stage_names[step]})'
+                why = self.execution_failure or f'MoveIt error code {code}'
+                if role == END_MOVE and self.pick_progress['lifted'] and code != MoveItErrorCodes.PREEMPTED \
+                        and not self.is_preempt_requested():
+                    # the object is held and lifted, as at the end of the old way's pick: the pick succeeded, only the
+                    # extra move to the end pose did not
+                    self.end_move_failure = why
+                    rospy.logwarn(f'mtc: picked, but the end move failed: {why}; the arm stays after the lift')
+                    return MoveItErrorCodes.SUCCESS
+                if role == UNTANGLE:
+                    name = stage_names[step] if step < len(stage_names) and stage_names[step] else 'an untangle pose'
+                    self.untangle_failure = f'untangle leg {leg}/{legs} ({name}) failed: {why}'
                 return code
             if role in (ARM, END_MOVE) and self.pick_progress['attached']:
                 self.pick_progress['lifted'] = True
