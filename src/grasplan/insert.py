@@ -148,13 +148,14 @@ class InsertTools:
         reason = getattr(self, 'insert_failure_reason', '')
         if not reason and getattr(self.place, 'mtc', None) is not None:
             reason = self.place.mtc.failure_reason
-        return cable_detour.explain_refusal(reason)
+        return cable_detour.explain_refusal(reason) + (getattr(self.place, 'retract_failure', '') if reason else '')
 
     @action('insert', lambda goal: goal.support_surface_name)
     def insert_obj_action_callback(self, goal):
         success = False
         self.insert_failure_reason = ''   # why a check before MTC stopped the insert
         self.insert_tried = {'poses': 0, 'attempts': 0, 'started': time.time()}   # for the failure text
+        self.place.retract_failure = ''   # the insert retracts with the place node's retract_after_failure
         if getattr(self.place, 'mtc', None) is not None:
             self.place.mtc.failure_reason, self.place.mtc.executed = '', False  # nothing left over from the previous goal
         self.place.reset_detour()

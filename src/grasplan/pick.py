@@ -406,6 +406,7 @@ class PickTools:
             return
 
         self.pick_failure_reason = ''   # why a check before MTC stopped the pick
+        self.retract_failure = ''   # set by retract_after_failure when the arm could not go back
         if self.mtc is not None:
             self.mtc.failure_reason, self.mtc.executed = '', False  # nothing left over from the previous goal
         self.pick_note = ''   # what a successful pick did not do (the single plan's end move), for the status text
@@ -1053,7 +1054,9 @@ class PickTools:
         if getattr(self, 'mtc', None) is not None:
             self.mtc.update_cable_guard()
             guard = self.mtc.cable_guard
-        return guarded_named_move(self.robot.arm, arm_posture_name, guard)
+        # why the move was refused, for a caller's failure text (the guard fills 'reason'; no guard: empty)
+        self.arm_move_report = {}
+        return guarded_named_move(self.robot.arm, arm_posture_name, guard, report=self.arm_move_report)
 
     def move_arm_to_pick_start(self, pose):
         '''
@@ -1642,12 +1645,17 @@ class PickTools:
         retract the arm, not leave the arm in the open"): the gripper was opened already, the arm goes back to
         ~retract_pose_after_failure (default transport, empty = stays) with the guarded named move
         '''
+        self.retract_failure = ''
         pose = rospy.get_param('~retract_pose_after_failure', 'transport')
         if not pose:
             return
         rospy.loginfo(f'{what} failed after the arm moved: retracting the arm to {pose}')
         if not self.move_arm_to_posture(pose):
-            rospy.logwarn(f'could not retract the arm to {pose} after the failed {what}')
+            why = getattr(self, 'arm_move_report', {}).get('reason') or 'the arm move failed'
+            # failure_text() adds it, so the caller hears where the arm was left, not only why it failed
+            self.retract_failure = (f'; retracting the arm to {pose} afterwards failed too ({why}): the arm stays where '
+                                    f'the {what} stopped')
+            rospy.logwarn(f'could not retract the arm to {pose} after the failed {what}: {why}')
 
     def shape_rule(self, external_object):
         '''
@@ -2034,7 +2042,7 @@ class PickTools:
         reason = getattr(self, 'pick_failure_reason', '')
         if not reason and getattr(self, 'mtc', None) is not None:
             reason = self.mtc.failure_reason
-        return cable_detour.explain_refusal(reason)
+        return cable_detour.explain_refusal(reason) + (getattr(self, 'retract_failure', '') if reason else '')
 
     def start_pose_failed(self):
         '''the arm could not reach the open-set pick start pose: the pick stops, the reason goes to the action text'''

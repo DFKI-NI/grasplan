@@ -10,6 +10,7 @@ from unittest import mock
 from geometry_msgs.msg import PoseStamped
 from moveit_msgs.msg import PlaceGoal, PlaceLocation
 
+import grasplan.insert as insert
 import grasplan.mtc_pick_place as mpp
 import grasplan.pick as pick
 import grasplan.place as place
@@ -130,6 +131,61 @@ class TestRetractAfterFailure(unittest.TestCase):
         p._pick_with_action = lambda *a: mpp.MoveItErrorCodes.FAILURE
         p.arm_did_not_move = lambda result: not executed
         return p
+
+
+class TestRetractFailureText(unittest.TestCase):
+    """a retract that fails after a failed pick, place or insert joins the failure text: the caller hears where the
+    arm was left"""
+    def setUp(self):
+        for module in (pick, place):
+            for name, value in (('get_param', lambda name, default=None: default), ('logwarn', lambda *a: None),
+                                ('loginfo', lambda *a: None)):
+                patcher = mock.patch.object(module.rospy, name, value)
+                patcher.start()
+                self.addCleanup(patcher.stop)
+
+    def tools(self, cls, moved, reason=''):
+        t = cls.__new__(cls)
+        t.mtc = None
+
+        def move(name):
+            t.arm_move_report = {'reason': reason} if reason else {}
+            return moved
+        t.move_arm_to_posture = move
+        return t
+
+    def test_a_refused_retract_is_named_with_the_guards_reason(self):
+        for cls, attr, what in ((pick.PickTools, 'pick_failure_reason', 'pick'),
+                                (place.PlaceTools, 'place_failure_reason', 'place')):
+            t = self.tools(cls, moved=False, reason='the cable guard refused both plans')
+            setattr(t, attr, 'the lift was refused')
+            t.retract_after_failure(what)
+            self.assertEqual(t.failure_text(), 'the lift was refused; retracting the arm to transport afterwards failed '
+                             f'too (the cable guard refused both plans): the arm stays where the {what} stopped')
+
+    def test_a_failed_retract_without_a_guard_reason_says_so(self):
+        t = self.tools(pick.PickTools, moved=False)
+        t.pick_failure_reason = 'no grasp could be planned'
+        t.retract_after_failure('pick')
+        self.assertIn('afterwards failed too (the arm move failed)', t.failure_text())
+
+    def test_a_good_retract_or_no_failure_adds_nothing(self):
+        t = self.tools(pick.PickTools, moved=True)
+        t.pick_failure_reason = 'no grasp could be planned'
+        t.retract_after_failure('pick')
+        self.assertEqual(t.failure_text(), 'no grasp could be planned')
+        t = self.tools(pick.PickTools, moved=False)
+        t.pick_failure_reason = ''
+        t.retract_after_failure('pick')
+        self.assertEqual(t.failure_text(), '')   # no reason: no dangling '; retracting ...'
+
+    def test_the_insert_text_carries_the_place_nodes_retract(self):
+        ins = insert.InsertTools.__new__(insert.InsertTools)
+        ins.place = self.tools(place.PlaceTools, moved=False, reason='refused')
+        ins.place.mtc = None
+        ins.insert_failure_reason = 'the insert was refused'
+        ins.place.retract_after_failure('insert')
+        self.assertTrue(ins.failure_text().endswith('the arm stays where the insert stopped'), ins.failure_text())
 
 
 if __name__ == '__main__':
