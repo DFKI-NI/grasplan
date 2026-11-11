@@ -213,11 +213,16 @@ def picker(offer_results, executed=False, preempt=False, untangle_failure=''):
 
 
 class TestPickSide(unittest.TestCase):
-    def single_for(self, params, open_set=False, untangle=POSES, has_mtc=True):
+    def single_for(self, params, open_set=False, untangle=POSES, has_mtc=True, resets=True):
         p = pick.PickTools.__new__(pick.PickTools)
         p.mtc = object() if has_mtc else None
-        with mock.patch.object(mpp.rospy, 'get_param', lambda name, default=None: params.get(name, default)):
+        with mock.patch.object(mpp.rospy, 'get_param', lambda name, default=None: params.get(name, default)), \
+                mock.patch.object(mpp, 'monitor_resets_at_trajectory_start', lambda: resets):
             return p.single_plan_for(untangle, open_set)
+
+    def test_skipped_when_the_monitor_does_not_start_afresh(self):
+        # the legs are checked apart, as the monitor sees them only with reset_at_trajectory_start
+        self.assertIsNone(self.single_for({'~mtc_single_plan_pick': True}, resets=False))
 
     def test_off_by_default(self):
         self.assertIsNone(self.single_for({}))
@@ -279,6 +284,20 @@ class TestPickSide(unittest.TestCase):
         self.assertEqual(self.offer(p), SUCCESS)
         self.assertEqual(p.moves, POSES)
 
+    def test_a_failed_end_move_reaches_the_status_text(self):
+        p = picker([SUCCESS])
+        p.mtc.end_move_done, p.mtc.end_move_failure = False, 'protective stop'
+        self.assertEqual(self.offer(p), SUCCESS)
+        self.assertEqual(p.pick_note, 'the move to transport failed: protective stop, the arm is not at transport')
+
+    def test_the_old_way_failure_names_why_the_single_plan_was_given_up(self):
+        p = picker([MoveItErrorCodes.CONTROL_FAILED, FAILED], executed=True,
+                   untangle_failure='untangle leg 1/2 (move to x) failed: stop')
+        p.pick_failure_reason, p.mtc.failure_reason = '', 'no grasp could be planned'
+        self.assertEqual(self.offer(p), FAILED)
+        self.assertTrue(p.pick_failure_reason.startswith('single plan given up (untangle leg 1/2'), p.pick_failure_reason)
+        self.assertIn('then the old way failed: no grasp could be planned', p.pick_failure_reason)
+
     def test_no_fallback_when_preempted(self):
         p = picker([False])
         self.assertIs(self.offer(p), False)
@@ -294,9 +313,6 @@ class TestPickSide(unittest.TestCase):
             self.offer(p)
         self.assertIsNone(p.mtc.single_plan)
 
-
-if __name__ == '__main__':
-    unittest.main()
 
 
 def solution(points_per_sub):
@@ -401,3 +417,7 @@ class TestRefusedLeg(unittest.TestCase):
         self.assertFalse(self.m.plan(task, 'pick g1'))
         task.plan.assert_not_called()
         self.assertIn('untangle leg 1', self.m.last_plan_failure)
+
+
+if __name__ == '__main__':
+    unittest.main()

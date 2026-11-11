@@ -407,6 +407,7 @@ class PickTools:
         self.pick_failure_reason = ''   # why a check before MTC stopped the pick
         if self.mtc is not None:
             self.mtc.failure_reason, self.mtc.executed = '', False  # nothing left over from the previous goal
+        self.pick_note = ''   # what a successful pick did not do (the single plan's end move), for the status text
 
         # Unknown objects are sent directly to the open-set pipeline. A known
         # object's result is final, including a failed Grasplan attempt.
@@ -415,6 +416,8 @@ class PickTools:
                 goal.object_name, goal.support_surface_name, self.grasp_type, goal.ignore_object_list
             )
             status_text = 'Grasplan pick succeeded' if success else 'Grasplan pick failed'
+            if success and getattr(self, 'pick_note', ''):
+                status_text += f'; {self.pick_note}'
             if not success and self.failure_text():
                 status_text += f': {self.failure_text()}'
             preempted = False
@@ -1508,10 +1511,16 @@ class PickTools:
         when this pick plans them and the grasp as one MTC task: a closed-set pick with MTC; None otherwise (the old
         way). ~mtc_single_plan_pick_end_pose (default transport, empty = none) is the pose after the lift.
         '''
-        from grasplan.mtc_pick_place import single_plan_end_pose, single_plan_pick
-        if open_set or not single_plan_pick() or getattr(self, 'mtc', None) is None:
+        from grasplan import mtc_pick_place
+        if open_set or not mtc_pick_place.single_plan_pick() or getattr(self, 'mtc', None) is None:
             return None
-        single = (list(untangle), single_plan_end_pose())
+        if not mtc_pick_place.monitor_resets_at_trajectory_start():
+            # the guard checks the legs apart, as the monitor sees them only when it starts afresh at each one; without
+            # it the whole path would be refused for nearly every grasp (the legs leave the chain taut): the old way
+            rospy.logwarn('single plan skipped: the cable monitor does not start afresh at each trajectory '
+                          '(cable_model/reset_at_trajectory_start is off), the old way')
+            return None
+        single = (list(untangle), mtc_pick_place.single_plan_end_pose())
         if not single[0] and not single[1]:
             return None
         return single
@@ -1535,8 +1544,9 @@ class PickTools:
             if end and self.mtc.end_move_done:
                 rospy.loginfo(f'single plan: picked and at {end}')
             elif end and getattr(self.mtc, 'end_move_failure', ''):
-                rospy.logwarn(f'single plan: picked, but the move to {end} failed ({self.mtc.end_move_failure}); the '
-                              f'arm stays after the lift')
+                # the caller's next arm move must know (e.g. a protective stop of the cable monitor is still on)
+                self.pick_note = f'the move to {end} failed: {self.mtc.end_move_failure}, the arm is not at {end}'
+                rospy.logwarn(f'single plan: picked, but {self.pick_note}')
             elif end:
                 rospy.loginfo(f'single plan: picked (not moved to {end}: the lift was replanned)')
             return result
@@ -1560,7 +1570,14 @@ class PickTools:
             self.move_arm_to_posture(arm_pose)
         if self.pick_action_server.is_preempt_requested():
             return False
-        return self.offer_grasps(object_to_pick, grasps, support_surface_name, False)
+        result = self.offer_grasps(object_to_pick, grasps, support_surface_name, False)
+        single_reason = untangle_failure or (f'the cable guard refused {self.mtc.untangle_leg_refused}'
+                                             if self.mtc.untangle_leg_refused else '')
+        if result != MoveItErrorCodes.SUCCESS and result is not False and single_reason:
+            # the agent gets why the single plan was given up too, not only the old way's reason
+            old = self.failure_text() or f'MoveIt error {result}'
+            self.pick_failure_reason = f'single plan given up ({single_reason}); then the old way failed: {old}'
+        return result
 
     def grasp_funnel_start(self, object_name, object_pose):
         '''
@@ -2526,7 +2543,10 @@ class PickTools:
         # grasp_ik_states stays set for every batch of this pick (pick_object resets it for the next pick)
         pickup_result = self.mtc.pickup(goal)
         result = pickup_result.error_code.val
-        detour = self.cable_replay_detour(result) if result != MoveItErrorCodes.SUCCESS else None
+        # not during the single plan: its pickup again would replay the untangle legs from the detour pose and check the
+        # pick part the same way; the single plan falls back to the old way instead, which may detour
+        detour = self.cable_replay_detour(result) if result != MoveItErrorCodes.SUCCESS and \
+            getattr(self.mtc, 'single_plan', None) is None else None
         if detour is not None:
             self.detoured = detour   # the arm moved: arm_did_not_move() and the failure text must know
             pickup_result = self.mtc.pickup(goal)

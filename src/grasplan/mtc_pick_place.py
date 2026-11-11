@@ -2217,7 +2217,7 @@ class MtcPickPlace:
                     # the object is held and lifted, as at the end of the old way's pick: the pick succeeded, only the
                     # extra move to the end pose did not
                     self.end_move_failure = why
-                    rospy.logwarn(f'mtc: picked, but the end move failed: {why}; the arm stays after the lift')
+                    rospy.logwarn(f'mtc: picked, but the end move failed: {why}; the arm is not at the end pose')
                     return MoveItErrorCodes.SUCCESS
                 if role == UNTANGLE:
                     name = stage_names[step] if step < len(stage_names) and stage_names[step] else 'an untangle pose'
