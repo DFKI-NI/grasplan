@@ -29,6 +29,7 @@ import copy
 import importlib
 import json
 import math
+import re
 import time
 import traceback
 
@@ -200,6 +201,15 @@ def no_open_set_grasp_reason(name, support, offered, clear):
         return f'no open-set grasp of {name} keeps the fingertips clear of {support} ({offered} offered)'
     return (f'none of the {clear} open-set grasps of {name} that keep the fingertips clear of {support} has an IK '
             f'solution ({offered} offered): out of the arm\'s reach from where the robot stands')
+
+
+def open_set_selector_name(name):
+    '''
+    the pose selector name of an open-set object asked for by its description: the open-set perception stores what it
+    finds under the description in lower case with every run of other characters than a-z and 0-9 made one underscore
+    ("tennis ball" -> tennis_ball, instances tennis_ball_1, ...); a name that already has that form stays as it is
+    '''
+    return re.sub(r'[^a-z0-9]+', '_', name.strip().lower()).strip('_') or name
 
 
 class PickTools:
@@ -607,10 +617,11 @@ class PickTools:
         '''
         if not rospy.get_param('~open_set_topdown_fallback', False):
             return False, anygrasp_message, False
+        selector_name = open_set_selector_name(goal.object_name)
         rospy.logwarn(f'{anygrasp_message}; trying the top-down fallback from the pose selector box of '
-                      f'{goal.object_name}')
+                      f'{selector_name}' + (f' ({goal.object_name!r})' if selector_name != goal.object_name else ''))
         success = self.pick_object(
-            goal.object_name,
+            selector_name,
             goal.support_surface_name,
             self.grasp_type,
             goal.ignore_object_list,
