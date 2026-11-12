@@ -510,9 +510,18 @@ def _logged_named_move(arm, name, guard):
     return bool(arm.execute(trajectory, wait=True))
 
 
-def _plan_named_logged(arm, name, guard):
+def _plan_named_logged(arm, name, guard, start_q=None):
     '''the log mode of guarded_named_move without the motion: one plan of arm's target, the guard's verdict only logged
-    (guard None: not even that, the off mode). Returns (trajectory, '') or (None, 'no plan').'''
+    (guard None: not even that, the off mode). start_q: the joints (name -> rad) the plan starts from, None: the current
+    state (only read for the plan cache). Returns (trajectory, '') or (None, 'no plan').'''
+    key = None
+    if guard is not None and plan_cache_named_moves():
+        guard.update_params()
+        key = _named_cache_key(name, guard, 'log', True, False)
+        start_q = _current_arm_q() if start_q is None else start_q
+        cached = _named_plan_from_cache(arm, name, key, start_q, 'log only, ')
+        if cached is not None:
+            return cached[0], ''
     with TIMER.stage('named_plan'):   # the planning share of a named move in the TIMING line
         planned = arm.plan()
     success, trajectory = (planned[0], planned[1]) if isinstance(planned, tuple) else (True, planned)
@@ -526,6 +535,8 @@ def _plan_named_logged(arm, name, guard):
                                            chain_stops=True)
         if ok:
             rospy.loginfo(f'moving arm to {name} (cable check passed: stretch {stretch:+.3f}, log only)')
+            if key is not None:
+                named_plan_cache().store(key, _first_point(trajectory), (trajectory, stretch, span))
         else:
             rospy.logwarn(f'moving arm to {name} although the cable guard would refuse it (log only): stretch '
                           f'{stretch:+.3f} in the {span} span at {q}')
@@ -578,17 +589,28 @@ def guarded_named_move(arm, name, guard, attempts=2, via=None, chain_stops=None,
     return False
 
 
-def _plan_named_checked(arm, name, guard, attempts, w3, chain_stops=None, report=None):
+def _plan_named_checked(arm, name, guard, attempts, w3, chain_stops=None, report=None, start_q=None):
     '''the enforce mode of guarded_named_move without the motion: plan arm's target (set by the caller, from its start
     state) up to attempts times until the cable guard passes a plan; w3 is the start's wrist_3 angle (rad, None if
-    unknown); chain_stops None: ~mtc_cable_named_move_carrier_stops; report: see guarded_named_move. Returns
-    (trajectory, '') or (None, reason).'''
+    unknown); chain_stops None: ~mtc_cable_named_move_carrier_stops; report: see guarded_named_move; start_q: the joints
+    (name -> rad) of that start, None: the current state (only read for the plan cache; a hit is reported as
+    attempt 0). Returns (trajectory, '') or (None, reason).'''
     guard.update_params()
     if chain_stops is None:
         chain_stops = carrier_param('~mtc_cable_named_move_carrier_stops', '~mtc_cable_named_move_rope_stops', False)
     chain_stops = bool(chain_stops)
     lo, hi = guard.wrist_3_neutral - guard.half_window, guard.wrist_3_neutral + guard.half_window
-    if w3 is not None and lo <= w3 <= hi:
+    constrained = w3 is not None and lo <= w3 <= hi
+    key = None
+    if plan_cache_named_moves():
+        key = _named_cache_key(name, guard, 'enforce', chain_stops, constrained)
+        start_q = _current_arm_q() if start_q is None else start_q
+        cached = _named_plan_from_cache(arm, name, key, start_q)
+        if cached is not None:
+            if report is not None:
+                report.setdefault('plans', []).append((name, 0, cached[1], True, cached[2]))
+            return cached[0], ''
+    if constrained:
         arm.set_path_constraints(guard.path_constraints())
     else:
         # a start outside the window (manual jog, after a protective stop) would make every plan fail: plan without
@@ -612,6 +634,8 @@ def _plan_named_checked(arm, name, guard, attempts, w3, chain_stops=None, report
                 report.setdefault('plans', []).append((name, attempt, stretch, ok, span))
             if ok:
                 rospy.loginfo(f'moving arm to {name} (cable check passed: stretch {stretch:+.3f}, attempt {attempt})')
+                if key is not None:
+                    named_plan_cache().store(key, _first_point(trajectory), (trajectory, stretch, span))
                 return trajectory, ''
             reason = f'cable guard: stretch {stretch:+.3f} in the {span} span at {q}'
             rospy.logwarn(f'arm move to {name}: plan {attempt}/{attempts} rejected by the {reason}')
@@ -620,6 +644,112 @@ def _plan_named_checked(arm, name, guard, attempts, w3, chain_stops=None, report
     if report is not None:
         report['reason'] = reason
     return None, reason
+
+
+def plan_cache_named_moves():
+    '''~plan_cache_named_moves (careful, off in code): a named move (guarded_named_move and the planned start move,
+    enforce and log mode) whose start is within ~plan_cache_start_tolerance_rad of a plan the guard passed before, under
+    the same guard settings, runs that plan again with its verdict once its path is collision free in the current
+    scene (see tools/plan_cache.py)'''
+    return bool(rospy.get_param('~plan_cache_named_moves', False))
+
+
+_named_plan_cache = None
+
+
+def named_plan_cache():
+    '''the PlanCache of this process's named moves'''
+    global _named_plan_cache
+    if _named_plan_cache is None:
+        from grasplan.tools.plan_cache import PlanCache
+        _named_plan_cache = PlanCache()
+    return _named_plan_cache
+
+
+def _named_cache_key(name, guard, mode, chain_stops, constrained):
+    '''the cache key of a named move: the pose, the guard (its model and config), its mode and every setting its verdict
+    and the planner's path constraint depend on'''
+    return (name, id(guard), mode, bool(chain_stops), bool(constrained), round(float(guard.stop_stretch()), 6),
+            bool(getattr(guard, 'chain_check', False)), float(getattr(guard, 'chain_rate', 0.0)),
+            round(float(guard.half_window), 6), round(float(guard.wrist_3_neutral), 6), int(guard.max_points))
+
+
+def _first_point(trajectory):
+    '''the joints (name -> rad) a moveit_msgs/RobotTrajectory starts from'''
+    jt = trajectory.joint_trajectory
+    return dict(zip(jt.joint_names, jt.points[0].positions))
+
+
+def _plan_cache_tolerance():
+    '''~plan_cache_start_tolerance_rad (default 0.005); None when it is not a number from 0 to MoveIt's start tolerance
+    (then the cache is not used, warned once)'''
+    from grasplan.tools.plan_cache import MAX_TOLERANCE_RAD
+    value = rospy.get_param('~plan_cache_start_tolerance_rad', 0.005)
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        value = float('nan')
+    if not (math.isfinite(value) and 0.0 <= value <= MAX_TOLERANCE_RAD):
+        rospy.logwarn_once(f'~plan_cache_start_tolerance_rad {value} refused (0 to {MAX_TOLERANCE_RAD}): no plan cache')
+        return None
+    return value
+
+
+def _named_plan_from_cache(arm, name, key, start_q, how=''):
+    '''(trajectory, stretch, span) of a cached plan of key that starts within tolerance of start_q and is still
+    collision free in the current planning scene, else None; logs the hit or the miss'''
+    cache = named_plan_cache()
+    tolerance = _plan_cache_tolerance()
+    if tolerance is None or not start_q:
+        return None
+    value, offset = cache.lookup(key, start_q, tolerance)
+    if value is None:
+        nearest = 'none cached' if not math.isfinite(offset) else f'nearest start {offset * 1000:.1f} mrad off'
+        rospy.loginfo(f'moving arm to {name}: plan cache miss ({nearest}; {cache.counts()})')
+        return None
+    trajectory, stretch, span = value
+    free, why = _path_collision_free(arm, trajectory)
+    if not free:
+        cache.drop(key, value)
+        cache.hits, cache.misses = cache.hits - 1, cache.misses + 1
+        rospy.loginfo(f'moving arm to {name}: cached plan dropped, {why} ({cache.counts()})')
+        return None
+    rospy.loginfo(f'moving arm to {name} (cable check passed: stretch {stretch:+.3f}, {how}plan cache hit '
+                  f'{offset * 1000:.1f} mrad from its start, {why}; {cache.counts()})')
+    return trajectory, stretch, span
+
+
+_validity_service = None
+
+
+@timed('cache_check')
+def _path_collision_free(arm, trajectory):
+    '''(True, 'N states collision free') when every state along trajectory (its points and states in between at most
+    ~plan_cache_check_step_rad apart) is valid in the current planning scene (objects, octomap, attached object, joint
+    limits), else (False, why), also when the check service does not answer'''
+    global _validity_service
+    from moveit_msgs.msg import RobotState
+    from moveit_msgs.srv import GetStateValidity, GetStateValidityRequest
+    from sensor_msgs.msg import JointState
+    from grasplan.tools.plan_cache import check_states
+    jt = trajectory.joint_trajectory
+    step = max(0.005, float(rospy.get_param('~plan_cache_check_step_rad', 0.05)))
+    states = check_states([list(p.positions) for p in jt.points], step)
+    try:
+        if _validity_service is None:
+            rospy.wait_for_service('check_state_validity', 2.0)
+            _validity_service = rospy.ServiceProxy('check_state_validity', GetStateValidity, persistent=True)
+        for index, q in enumerate(states):
+            request = GetStateValidityRequest(group_name=arm.get_name(), robot_state=RobotState(
+                joint_state=JointState(name=list(jt.joint_names), position=q), is_diff=True))
+            response = _validity_service(request)
+            if not response.valid:
+                contacts = sorted({f'{c.contact_body_1}-{c.contact_body_2}' for c in response.contacts})
+                return False, f'state {index + 1}/{len(states)} is in collision ({", ".join(contacts[:3]) or "invalid"})'
+    except (rospy.ROSException, rospy.ServiceException) as e:
+        _validity_service = None
+        return False, f'collision check unavailable ({e})'
+    return True, f'{len(states)} states collision free'
 
 
 def pick_start_move_carrier_stops():
@@ -723,9 +853,9 @@ class StartMove:
                     w3 = start.get(guard.wrist_3_joint) if guard is not None else None
                 arm.set_named_target(name)
                 if mode == 'enforce':
-                    trajectory, reason = _plan_named_checked(arm, name, guard, attempts, w3)
+                    trajectory, reason = _plan_named_checked(arm, name, guard, attempts, w3, start_q=start)
                 else:
-                    trajectory, reason = _plan_named_logged(arm, name, guard if mode == 'log' else None)
+                    trajectory, reason = _plan_named_logged(arm, name, guard if mode == 'log' else None, start_q=start)
                 if trajectory is None:
                     rospy.logwarn(f'start move to {names}: {name}: {reason}; moving the old way, one pose after the other')
                     return None
