@@ -510,12 +510,13 @@ def _logged_named_move(arm, name, guard):
     return bool(arm.execute(trajectory, wait=True))
 
 
-def _plan_named_logged(arm, name, guard, start_q=None):
+def _plan_named_logged(arm, name, guard, start_q=None, use_cache=True):
     '''the log mode of guarded_named_move without the motion: one plan of arm's target, the guard's verdict only logged
     (guard None: not even that, the off mode). start_q: the joints (name -> rad) the plan starts from, None: the current
-    state (only read for the plan cache). Returns (trajectory, '') or (None, 'no plan').'''
+    state (only read for the plan cache). use_cache False: no plan cache (a start state the current planning scene does
+    not show yet). Returns (trajectory, '') or (None, 'no plan').'''
     key = None
-    if guard is not None and plan_cache_named_moves():
+    if guard is not None and use_cache and plan_cache_named_moves():
         guard.update_params()
         key = _named_cache_key(name, guard, 'log', True, False)
         start_q = _current_arm_q() if start_q is None else start_q
@@ -589,12 +590,12 @@ def guarded_named_move(arm, name, guard, attempts=2, via=None, chain_stops=None,
     return False
 
 
-def _plan_named_checked(arm, name, guard, attempts, w3, chain_stops=None, report=None, start_q=None):
+def _plan_named_checked(arm, name, guard, attempts, w3, chain_stops=None, report=None, start_q=None, use_cache=True):
     '''the enforce mode of guarded_named_move without the motion: plan arm's target (set by the caller, from its start
     state) up to attempts times until the cable guard passes a plan; w3 is the start's wrist_3 angle (rad, None if
     unknown); chain_stops None: ~mtc_cable_named_move_carrier_stops; report: see guarded_named_move; start_q: the joints
     (name -> rad) of that start, None: the current state (only read for the plan cache; a hit is reported as
-    attempt 0). Returns (trajectory, '') or (None, reason).'''
+    attempt 0); use_cache False: no plan cache. Returns (trajectory, '') or (None, reason).'''
     guard.update_params()
     if chain_stops is None:
         chain_stops = carrier_param('~mtc_cable_named_move_carrier_stops', '~mtc_cable_named_move_rope_stops', False)
@@ -602,7 +603,7 @@ def _plan_named_checked(arm, name, guard, attempts, w3, chain_stops=None, report
     lo, hi = guard.wrist_3_neutral - guard.half_window, guard.wrist_3_neutral + guard.half_window
     constrained = w3 is not None and lo <= w3 <= hi
     key = None
-    if plan_cache_named_moves():
+    if use_cache and plan_cache_named_moves():
         key = _named_cache_key(name, guard, 'enforce', chain_stops, constrained)
         start_q = _current_arm_q() if start_q is None else start_q
         cached = _named_plan_from_cache(arm, name, key, start_q)
@@ -952,6 +953,177 @@ class StartMove:
         return 2.0 * self.seconds() + 10.0
 
 
+
+def plan_transport_during_pick():
+    '''~plan_transport_during_pick (careful, off in code): a closed-set pick plans its move to
+    ~plan_transport_during_pick_pose (default transport) from the end of its MTC solution while the pick executes,
+    checked like a named move, and moves there right after the pick (see TransportMove): a successful pick then always
+    ends at that pose'''
+    return bool(rospy.get_param('~plan_transport_during_pick', False))
+
+
+def transport_during_pick_pose():
+    '''the named pose of ~plan_transport_during_pick (~plan_transport_during_pick_pose, default transport)'''
+    return str(rospy.get_param('~plan_transport_during_pick_pose', 'transport') or 'transport')
+
+
+_transport_commander = None
+
+
+def _transport_planning_commander(group, robot_description='robot_description', ns=''):
+    '''a MoveGroupCommander of group for TransportMove's background planning, separate from the pick's own one (the
+    pick thread keeps using that while this one plans); made once per process'''
+    global _transport_commander
+    if _transport_commander is None:
+        import moveit_commander
+        _transport_commander = moveit_commander.MoveGroupCommander(group, robot_description, ns, 5.0)
+    return _transport_commander
+
+
+def solution_end_state(solution_msg, target_name):
+    '''(moveit_msgs/RobotState, arm joints name -> rad) where an MTC pick solution ends: the robot state of its last
+    sub trajectory's scene with the picked object attached (geometry in the link frame, operation ADD, so a plan request
+    starting from it carries the object and drops the world copy of the same id), the arm joints overwritten by the last
+    point of the last arm trajectory; (None, reason) when the object is not attached there or there is no arm motion'''
+    from moveit_msgs.msg import CollisionObject
+    subs = list(solution_msg.sub_trajectory)
+    if not subs:
+        return None, 'the pick solution is empty'
+    state = copy.deepcopy(subs[-1].scene_diff.robot_state)
+    attached = [a for a in state.attached_collision_objects if a.object.id == target_name]
+    if not attached:
+        return None, f'{target_name} is not attached at the end of the pick solution'
+    for aco in state.attached_collision_objects:
+        aco.object.operation = CollisionObject.ADD
+    last = None
+    for sub in subs:
+        jt = sub.trajectory.joint_trajectory
+        if jt.points:
+            last = dict(zip(jt.joint_names, jt.points[-1].positions))
+    if not last:
+        return None, 'the pick solution has no arm motion'
+    names, positions = list(state.joint_state.name), list(state.joint_state.position)
+    for joint, value in last.items():
+        if joint in names:
+            positions[names.index(joint)] = value
+        else:
+            names.append(joint)
+            positions.append(value)
+    state.joint_state.name, state.joint_state.position = names, positions
+    state.joint_state.velocity, state.joint_state.effort = [], []
+    state.is_diff = True
+    return state, last
+
+
+class TransportMove:
+    '''
+    (~plan_transport_during_pick): the move to the transport pose after a pick, planned in a background thread from
+    where the MTC pick solution ends (object attached) while the pick executes, with the planning and the cable guard
+    of a named move in its current mode (named_move_guard_mode: enforce = only a plan the guard passes, log = the guard
+    only logs, off = no check), without the named-move plan cache (the start state is not in the planning scene yet).
+    finish() after the pick runs that plan when the arm stands within ~plan_pick_during_start_move_tolerance_rad of its
+    start (the start move's arrival rule), else the normal guarded named move from the real state; if that fails too
+    the arm stays and the reason is returned (the caller's own transport move is then today's way).
+    '''
+
+    _running = None   # the planning thread of the last TransportMove (one at a time per process)
+
+    def __init__(self, name, start_state, start_q, guard, commander):
+        self.name, self.start_state, self.start_q, self.guard, self.commander = name, start_state, start_q, guard, commander
+        self.trajectory, self.reason, self.plan_s, self.runner = None, 'not planned yet', None, None
+
+    @classmethod
+    def begin(cls, group, solution_msg, target_name, guard, name=None):
+        '''start planning the move to name (default ~plan_transport_during_pick_pose) from the end of solution_msg in
+        a background thread; None (logged) when that is not possible: the pick then ends as without the flag'''
+        import threading
+        name = name or transport_during_pick_pose()
+        if cls._running is not None and cls._running.is_alive():
+            rospy.logwarn(f'transport during pick: the planning of the last pick still runs, no plan to {name} this time')
+            return None
+        state, start_q = solution_end_state(solution_msg, target_name)
+        if state is None:
+            rospy.logwarn(f'transport during pick: {start_q}; no plan to {name}')
+            return None
+        try:
+            commander = _transport_planning_commander(group)
+        except Exception as e:  # noqa: BLE001 - the pick goes on without the flag
+            rospy.logwarn(f'transport during pick: no planning interface ({e}); no plan to {name}')
+            return None
+        move = cls(name, state, start_q, guard, commander)
+        move.runner = threading.Thread(target=move.plan, name='transport during pick', daemon=True)
+        cls._running = move.runner
+        move.runner.start()
+        rospy.loginfo(f'transport during pick: planning the move to {name} while the pick executes')
+        return move
+
+    def plan(self):
+        '''the background part: one named-move planning from start_state; sets trajectory or reason'''
+        started = time.monotonic()
+        arm, guard = self.commander, self.guard
+        mode = named_move_guard_mode() if guard is not None else 'off'
+        try:
+            arm.set_start_state(self.start_state)
+            arm.set_named_target(self.name)
+            if mode == 'enforce':
+                w3 = self.start_q.get(guard.wrist_3_joint)
+                self.trajectory, self.reason = _plan_named_checked(arm, self.name, guard, 2, w3, start_q=self.start_q,
+                                                                   use_cache=False)
+            else:
+                self.trajectory, self.reason = _plan_named_logged(arm, self.name, guard if mode == 'log' else None,
+                                                                  start_q=self.start_q, use_cache=False)
+        except Exception as e:  # noqa: BLE001 - any failure falls back to the normal move after the pick
+            self.trajectory, self.reason = None, f'planning failed ({e})'
+        finally:
+            try:
+                arm.set_start_state_to_current_state()
+            except Exception:  # noqa: BLE001
+                pass
+            self.plan_s = time.monotonic() - started
+        if self.trajectory is not None:
+            rospy.loginfo(f'transport during pick: move to {self.name} planned in {self.plan_s:.1f} s ({mode})')
+        else:
+            rospy.logwarn(f'transport during pick: no plan to {self.name} ({self.reason}, {mode})')
+
+    @timed('transport')
+    def finish(self, arm, guard, wait_s=10.0):
+        '''after a successful pick: (moved, how). Runs the plan made meanwhile when the arm stands at its start, else
+        the guarded named move from the real state (guard None: the plain move)'''
+        self.runner.join(wait_s)
+        why = ''
+        if self.runner.is_alive():
+            why = f'its planning did not end within {wait_s:.0f} s after the pick'
+        elif self.trajectory is None:
+            why = f'no plan was made during the pick ({self.reason})'
+        else:
+            tolerance = rospy.get_param('~plan_pick_during_start_move_tolerance_rad', 0.01)
+            try:
+                tolerance = float(tolerance)
+            except (TypeError, ValueError):
+                tolerance = float('nan')
+            jt = self.trajectory.joint_trajectory
+            first = dict(zip(jt.joint_names, jt.points[0].positions))
+            now = _current_arm_q(not_before=_ros_now())
+            if not (math.isfinite(tolerance) and 0.0 <= tolerance <= StartMove.MAX_TOLERANCE_RAD):
+                why = f'invalid arrival tolerance {tolerance} rad (0 to {StartMove.MAX_TOLERANCE_RAD})'
+            elif now is None:
+                why = 'no fresh joint state after the pick'
+            else:
+                off, why = _joint_offset(first, now, 'the joint state')
+                if not why and off > tolerance:
+                    why = (f'the pick ended {math.degrees(off):.2f} deg from the planned start (tolerance '
+                           f'{math.degrees(tolerance):.2f} deg)')
+            if not why:
+                announce_trajectory_start(f'named move {self.name}')
+                if arm.execute(self.trajectory, wait=True):
+                    return True, f'moved to {self.name} with the plan made during the pick'
+                why = 'executing the plan made during the pick failed'
+        rospy.logwarn(f'transport during pick: {why}; planning the move to {self.name} again from the current state')
+        if guarded_named_move(arm, self.name, guard):
+            return True, f'moved to {self.name} with a new plan ({why})'
+        return False, f'the arm did not move to {self.name}: {why}, and the new plan failed too'
+
+
 def _joint_offset(reference, actual, label):
     '''(largest |actual - reference| over every joint of reference, '') or (inf, why) when actual misses one of them or
     a value is not finite'''
@@ -1121,6 +1293,7 @@ class MtcPickPlace:
         self.pinch_verdict = False   # the last close of this pickup held at the rim (see pinched)
         self.unplanned = []   # why each grasp could not be planned, for the failure reason
         self.chain_rejections = 0   # solutions the chain replay alone rejected in this pickup (cable replay detour)
+        self.transport_move = None   # ~plan_transport_during_pick: the move planned while this pickup executes
         self.update_cable_guard()
         touch = self.gripper_links + [goal.target_name]
         for index, grasp in enumerate(goal.possible_grasps):
@@ -1164,6 +1337,10 @@ class MtcPickPlace:
             self.executed = True
             self.executed_grasp = grasp   # for the grasp funnel debug output of pick.py
             self.executed_offer_id = goal.possible_grasps[index].id   # grasp may be a turned copy of the offered one
+            if plan_transport_during_pick() and END_MOVE not in roles:
+                # planned from where this solution ends while it executes; pick.py runs it after the pick
+                self.transport_move = TransportMove.begin(self.arm_group, self.chosen_solution.toMsg(),
+                                                          goal.target_name, self.cable_guard)
             code = self.execute(task, roles, [grasp.pre_grasp_posture], grasp.grasp_posture,
                                 attach=(goal.target_name, touch), check_grasp=True,
                                 regrasp=self.regrasp_request(goal, grasp))

@@ -8,9 +8,11 @@ measured with the same numbers. Log only: no behaviour changes, no flag.
 block; stages nest and are named by their path (``plan/guard_replay``); a stage that runs several times is summed and gets
 its count in ``<path>#``. ``end(ok)`` logs the line: ``total`` is the wall time of the action, the top-level stages follow
 in the order they first ran, ``other`` is the part of ``total`` that no top-level stage covers. Outside an action
-everything is a no-op. Not thread safe on purpose: the action server thread runs the whole goal.
+everything is a no-op. Not thread safe on purpose: the action server thread runs the whole goal; a stage entered from
+any other thread (e.g. a plan made in the background while the pick executes) is a no-op, so it cannot break the nesting.
 '''
 import functools
+import threading
 import time
 from contextlib import contextmanager
 
@@ -37,15 +39,19 @@ class StageTimer:
             self.end(False)
         self.action = (kind, str(target), self._clock())
         self.totals, self.counts, self._open = {}, {}, []
+        self._thread = threading.get_ident()   # the thread that runs the goal; stages of other threads are ignored
+
+    def _foreign(self):
+        return getattr(self, '_thread', None) not in (None, threading.get_ident())
 
     def open(self, name):
         '''start a stage that closes with close() (or with end()), for code that cannot be wrapped in a with block'''
-        if self.action is not None:
+        if self.action is not None and not self._foreign():
             self.totals.setdefault('/'.join([n for n, _ in self._open] + [name]), 0.0)   # keeps the start order
             self._open.append((name, self._clock()))
 
     def close(self):
-        if self.action is None or not self._open:
+        if self.action is None or not self._open or self._foreign():
             return
         name, start = self._open.pop()
         path = '/'.join([n for n, _ in self._open] + [name])
@@ -54,6 +60,9 @@ class StageTimer:
 
     @contextmanager
     def stage(self, name):
+        if self._foreign():
+            yield
+            return
         self.open(name)
         depth = len(self._open)
         try:

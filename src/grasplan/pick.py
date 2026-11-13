@@ -427,6 +427,7 @@ class PickTools:
             success = self.pick_object(
                 goal.object_name, goal.support_surface_name, self.grasp_type, goal.ignore_object_list
             )
+            self.transport_after_pick(success)
             status_text = 'Grasplan pick succeeded' if success else 'Grasplan pick failed'
             if success and getattr(self, 'pick_note', ''):
                 status_text += f'; {self.pick_note}'
@@ -456,6 +457,28 @@ class PickTools:
         else:
             rospy.logwarn("Pick goal failed to complete: %s", status_text)
             self.pick_action_server.set_aborted(PickObjectResult(success=False), status_text)
+
+    def transport_after_pick(self, success):
+        '''
+        (~plan_transport_during_pick, careful, off in code) after a successful closed-set pick: the move to the
+        transport pose that was planned while the pick executed (mtc_pick_place.TransportMove.finish). A failed move only
+        goes into the status text, the pick stays successful, and the caller's own transport move then runs as before.
+        Never after a failed or cancelled pick: the plan made meanwhile is dropped.
+        '''
+        mtc = getattr(self, 'mtc', None)
+        move = getattr(mtc, 'transport_move', None)
+        if move is None:
+            return
+        mtc.transport_move = None
+        if not success or self.pick_action_server.is_preempt_requested():
+            return
+        mtc.update_cable_guard()
+        moved, how = move.finish(self.robot.arm, mtc.cable_guard)
+        if moved:
+            rospy.loginfo(f'transport during pick: {how}')
+            return
+        self.pick_note = f'{self.pick_note}; {how}' if getattr(self, 'pick_note', '') else how
+        rospy.logwarn(f'transport during pick: picked, but {how}')
 
     def pick_unknown_object_with_anygrasp(self, goal):
         object_name = goal.object_name
