@@ -1203,6 +1203,48 @@ class _SolutionView:
         self.sub_trajectory = [self._Sub(t) for t in trajectories]
 
 
+def wait_for_action_server(name, action_type, period, client_factory=None):
+    '''
+    A SimpleActionClient of `name` whose server answered. Waits in rounds of `period` s (~moveit_action_startup_timeout)
+    and keeps waiting, with one warning per round, until the server is there or ROS shuts down; each new round builds a
+    fresh client (a client that missed the server's first status messages under startup load can wait for ever while the
+    server already runs; seen in the sim: move_group executed trajectories while one node's client still waited). Never
+    raises for a slow server: the pick, place and insert nodes are required nodes of the demo launch, and an exception
+    here ended the whole simulation. Raises only when ROS shuts down meanwhile.
+    '''
+    make = client_factory or actionlib.SimpleActionClient
+    waited = 0.0
+    while True:
+        client = make(name, action_type)
+        if client.wait_for_server(rospy.Duration(period)):
+            if waited:
+                rospy.loginfo(f'mtc: {rospy.resolve_name(name)} found after about {waited + period:.0f} s')
+            return client
+        stop = getattr(getattr(client, 'action_client', None), 'stop', None)
+        if callable(stop):
+            stop()   # the client of this round goes: its publishers and subscribers too
+        if rospy.is_shutdown():
+            raise RuntimeError(f'{rospy.resolve_name(name)} action server not found before shutdown')
+        waited += period
+        rospy.logwarn(f'mtc: {rospy.resolve_name(name)} action server not found after {waited:.0f} s, still waiting '
+                      '(move_group may be starting slowly)')
+
+
+def wait_for_service_until_up(name, period):
+    '''rospy.wait_for_service in rounds of `period` s, one warning per round, until the service is there; raises only
+    when ROS shuts down (see wait_for_action_server)'''
+    waited = 0.0
+    while True:
+        try:
+            rospy.wait_for_service(name, period)
+            return
+        except rospy.ROSException:
+            if rospy.is_shutdown():
+                raise
+            waited += period
+            rospy.logwarn(f'mtc: service {rospy.resolve_name(name)} not found after {waited:.0f} s, still waiting')
+
+
 class MtcPickPlace:
     start_move = None   # the StartMove the arm runs while the pick is planned (set by pick.py)
     # (named poses before the grasp, named pose after the lift or '') of a single-plan pick (set by pick.py)
@@ -1258,13 +1300,11 @@ class MtcPickPlace:
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
 
-        self.execute_client = actionlib.SimpleActionClient('execute_trajectory', ExecuteTrajectoryAction)
         self.gripper_client = actionlib.SimpleActionClient(self.gripper_action_name, GripperCommandAction)
         rospy.loginfo(f'mtc: waiting for {rospy.resolve_name("execute_trajectory")} and {self.gripper_action_name}')
-        if not self.execute_client.wait_for_server(rospy.Duration(server_timeout)):
-            raise RuntimeError(f'{rospy.resolve_name("execute_trajectory")} action server not found')
-        rospy.wait_for_service('apply_planning_scene', server_timeout)
-        rospy.wait_for_service('get_planning_scene', server_timeout)
+        self.execute_client = wait_for_action_server('execute_trajectory', ExecuteTrajectoryAction, server_timeout)
+        for service in ('apply_planning_scene', 'get_planning_scene'):
+            wait_for_service_until_up(service, server_timeout)
         self.apply_planning_scene_srv = rospy.ServiceProxy('apply_planning_scene', ApplyPlanningScene)
         self.get_planning_scene_srv = rospy.ServiceProxy('get_planning_scene', GetPlanningScene)
 
