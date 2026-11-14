@@ -361,3 +361,34 @@ def box_overlap_fraction(center_a, orientation_a, size_a, center_b, orientation_
         return 0.0
     shared = _clip(hull_a, hull_b)
     return min(1.0, _polygon_area(shared) * dz / smaller) if len(shared) >= 3 else 0.0
+
+
+SAME_OBJECT_MIN_OVERLAP = 0.5        # shared volume, as a fraction of the smaller box
+SAME_OBJECT_MIN_VOLUME_RATIO = 0.5   # smaller box volume / larger box volume
+
+
+def centre_inside_box(point, center, orientation, size):
+    '''whether a point lies inside a box (centre, (x, y, z, w) orientation, full size), its faces included'''
+    local = quaternion_to_matrix(orientation).T @ (np.asarray(point, dtype=float) - np.asarray(center, dtype=float))
+    return bool(np.all(np.abs(local) <= np.asarray(size, dtype=float) / 2.0 + 1e-9))
+
+
+def same_object_copy(target, candidate, target_known, candidate_known, same_frame, target_is_container=False):
+    '''
+    (is a copy, shared fraction): whether the box of a pose selector entry may be the pick target itself, stored a
+    second time under another name by a search for unknown objects. target and candidate are (centre, orientation,
+    size). All must hold: the candidate's class has no stored grasps and the target's has, both are in the same frame,
+    the target is no container, each centre lies inside the other box, they share at least SAME_OBJECT_MIN_OVERLAP of
+    the smaller volume and the smaller volume is at least SAME_OBJECT_MIN_VOLUME_RATIO of the larger. A heuristic:
+    geometry cannot prove that two boxes are one object (distinct contents of a box can pass every test).
+    '''
+    if candidate_known or not target_known or not same_frame or target_is_container:
+        return False, 0.0
+    (tc, to, ts), (cc, co, cs) = target, candidate
+    if not (centre_inside_box(cc, tc, to, ts) and centre_inside_box(tc, cc, co, cs)):
+        return False, 0.0
+    volumes = sorted((float(np.prod(ts)), float(np.prod(cs))))
+    if volumes[1] <= 0.0 or volumes[0] / volumes[1] < SAME_OBJECT_MIN_VOLUME_RATIO:
+        return False, 0.0
+    shared = box_overlap_fraction(tc, to, ts, cc, co, cs)
+    return shared >= SAME_OBJECT_MIN_OVERLAP, shared

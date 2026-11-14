@@ -91,6 +91,7 @@ from grasplan.tools.topdown_grasps import (
     height_above_support_top,
     lift_onto_support,
     pick_target_report,
+    same_object_copy,
     topdown_grasps,
 )
 from grasplan.tools.cable_rank import gate_chunks, joint_path, order_by_predicted_stretch
@@ -422,6 +423,7 @@ class PickTools:
         if self.mtc is not None:
             self.mtc.failure_reason, self.mtc.executed = '', False  # nothing left over from the previous goal
         self.pick_note = ''   # what a successful pick did not do (the single plan's end move), for the status text
+        self.dropped_copies = []   # entries ~drop_unknown_copy_of_target left out of this goal's planning scene
 
         # Unknown objects are sent directly to the open-set pipeline. A known
         # object's result is final, including a failed Grasplan attempt.
@@ -433,6 +435,8 @@ class PickTools:
             status_text = 'Grasplan pick succeeded' if success else 'Grasplan pick failed'
             if success and getattr(self, 'pick_note', ''):
                 status_text += f'; {self.pick_note}'
+            for name in getattr(self, 'dropped_copies', []) if success else []:
+                status_text += f'; a second entry {name} at the same place was left out of the obstacle map for this pick'
             if not success and self.failure_text():
                 status_text += f': {self.failure_text()}'
             preempted = False
@@ -724,6 +728,7 @@ class PickTools:
         perceived = {f'{o.class_id}_{o.instance_id}' for o in resp.poses.objects} | {external_object_name}
         supports = self.support_boxes(exclude=perceived) if self.clamp_object_boxes_to_support else []
         target = None   # (pose, size) of the verified open-set target: perceived boxes overlapping it are left out
+        copies = self.unknown_copies_of_target(object_to_pick, resp) if external_object is None else {}
         self.target_padding_left = 0.0   # the detector's padding per side still in the target's box
         if external_object is not None:
             target_pose = PoseStamped()
@@ -777,6 +782,10 @@ class PickTools:
                 elif self.overlaps_target(object_name, pose_stamped_msg, object_bounding_box, target, external_object_name,
                                           supports):
                     self.remove_from_scene(object_name)
+                elif object_name in copies:
+                    self.remove_from_scene(object_name)
+                    if object_name not in getattr(self, 'dropped_copies', []):
+                        self.dropped_copies = getattr(self, 'dropped_copies', []) + [object_name]
                 else:
                     rospy.loginfo(f'adding object {object_name} to planning scene')
                     # add all perceived objects to planning scene (one at at time)
@@ -811,6 +820,47 @@ class PickTools:
             object_to_pick_bounding_box,
             object_to_pick_id,
         )
+
+    def unknown_copies_of_target(self, object_to_pick, resp):
+        '''
+        ~drop_unknown_copy_of_target (careful, default off, read per goal): {name: shared fraction} of the pose selector
+        entries of a closed-set pick that may be the target itself, stored a second time by the search for unknown
+        objects (a perceive by description commits the object under its own name, the detector for known objects sees
+        it too): such an entry blocks every lift, as the held object starts inside its box. The test is
+        same_object_copy (an entry without stored grasps, each centre inside the other box, sharing at least half of
+        the smaller volume, volumes within a factor two). These entries are left out of the planning scene and stay out
+        until the next goal builds the scene from the pose selector again (as the open-set path does with boxes on its
+        target; putting one back correctly would need ownership of the shared scene); the pose selector keeps them. No container knowledge exists in this node,
+        so distinct contents filling most of a known box can be taken for a copy (a known limit of the heuristic).
+        '''
+        target = None
+        for o in resp.poses.objects:   # the target as the scene loop below picks it (the last instance of the class)
+            name = f'{o.class_id}_{o.instance_id}'
+            if (object_to_pick.any_obj_id and object_to_pick.obj_class == o.class_id) or \
+                    object_to_pick.get_object_class_and_id_as_string() == name:
+                target = (name, o)
+        if target is None or not rospy.get_param('~drop_unknown_copy_of_target', False):
+            return {}
+        target_name, t = target
+
+        def box(o):
+            p, q = o.pose.position, o.pose.orientation
+            return (p.x, p.y, p.z), (q.x, q.y, q.z, q.w), (o.size.x, o.size.y, o.size.z)
+
+        copies = {}
+        for o in resp.poses.objects:
+            name = f'{o.class_id}_{o.instance_id}'
+            if name == target_name:
+                continue
+            # one pose selector answer: all its entries share its frame
+            same, shared = same_object_copy(box(t), box(o), self.grasp_planner.supports_object(target_name),
+                                            self.grasp_planner.supports_object(name), same_frame=True)
+            if same:
+                rospy.logwarn(f'{name}: may be the same object as target {target_name}, found by the unknown-object '
+                              f'search too (centres inside each other\'s box, shares {shared * 100:.0f} % of the '
+                              'smaller volume): left out of the planning scene for this pick')
+                copies[name] = shared
+        return copies
 
     def lift_sunk_target(self, name, pose_stamped, size, supports):
         '''

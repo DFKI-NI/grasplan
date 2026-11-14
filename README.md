@@ -75,6 +75,16 @@ The fallback is configured by these private parameters on `pick_object_node`:
   gripper goes: the release at a place or insert is up to the lift lower than before
 - `drop_boxes_overlapping_target` (default `0.2`, `0` = off): a perceived box that shares at least this fraction of
   the smaller volume with the open-set target is left out of the planning scene (a false detection on the target)
+- `drop_unknown_copy_of_target` (default `false`, careful): for a closed-set pick, a pose selector entry whose class
+  has no stored grasps and that may be the target itself, stored a second time by the search for unknown objects, is
+  left out of the planning scene for this pick: each centre lies inside the other box, the boxes share at least half
+  of the smaller volume and their volumes are within a factor two. Such a copy otherwise blocks every lift (the held
+  object starts inside it). The entry stays out of the planning scene until the next goal builds the scene from the
+  pose selector again (as the open-set path does with boxes on its target), whatever the end of this goal; the pose
+  selector keeps it, and a successful pick says it was left out. Meanwhile named arm moves have no box for the part of
+  a wrongly judged distinct object outside the target's box A heuristic: geometry cannot prove
+  that two boxes are one object, and the node knows no container classes, so distinct contents filling most of a
+  known box can be taken for a copy of it
 
 On `place_object_node` and `insert_object_node` (with `disentangle_required`): an object picked open-set (its class is
 not in the pick node's catalog `pick_grasp_catalog_param`, default
