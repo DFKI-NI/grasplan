@@ -67,6 +67,12 @@ The fallback is configured by these private parameters on `pick_object_node`:
   full depth behind the visible face, in the planning scene and for grasping
 - `max_box_sink_into_support` (default `0.09` m, `0` = off): a perceived box whose bottom is deeper than this inside
   its support is left out of the planning scene as implausible (a false detection); the object being picked stays
+- `lift_sunk_target_to_support` (default `false`): a closed-set pick target whose box bottom reaches into its
+  support (a pose estimate a few mm too low) is raised whole until its bottom is 1 mm above the support top, so its
+  grasps and its planning scene box start from where it stands; a lift of at most `lift_sunk_target_max` (default
+  `0.03` m) including the 1 mm clearance (a sink of up to 29 mm), a deeper one stays as perceived and is reported. Never lowers; tilted, floating and open-set targets are left as
+  they are. Acts only with `clamp_object_boxes_to_support` on (it needs the support boxes). It changes where the
+  gripper goes: the release at a place or insert is up to the lift lower than before
 - `drop_boxes_overlapping_target` (default `0.2`, `0` = off): a perceived box that shares at least this fraction of
   the smaller volume with the open-set target is left out of the planning scene (a false detection on the target)
 

@@ -89,6 +89,7 @@ from grasplan.tools.topdown_grasps import (
     clamp_box_to_support,
     depth_below_support_top,
     height_above_support_top,
+    lift_onto_support,
     pick_target_report,
     topdown_grasps,
 )
@@ -764,6 +765,8 @@ class PickTools:
                     object_to_pick_id = copy.deepcopy(pose_selector_object.instance_id)
                     object_found = is_target = True
                     rospy.loginfo(f'found specific object to be picked in pose selector: {object_name}')
+                if is_target and self.lift_sunk_target(object_name, pose_stamped_msg, object_bounding_box, supports):
+                    object_to_pick_pose = copy.deepcopy(pose_stamped_msg)   # the grasps start from the raised pose
                 # planning scene exceptions
                 if object_name in ignore_object_list:
                     # check if object is already in the planning scene, if so, remove it
@@ -808,6 +811,33 @@ class PickTools:
             object_to_pick_bounding_box,
             object_to_pick_id,
         )
+
+    def lift_sunk_target(self, name, pose_stamped, size, supports):
+        '''
+        ~lift_sunk_target_to_support (default off): a closed-set pick target whose box bottom reaches into its support
+        (the pose estimate of a known object is often a few mm too low) is raised whole until its bottom stands 1 mm
+        above the support top, at most ~lift_sunk_target_max (m, default 0.03), so the grasps are built from where it
+        stands, not only its scene box. Changes pose_stamped in place, before its scene box is added (which then has
+        nothing left to clamp). Needs the supports (~clamp_object_boxes_to_support). Returns whether it raised it.
+        '''
+        if not rospy.get_param('~lift_sunk_target_to_support', False):
+            return False
+        frame_supports = supports_in_frame(supports, pose_stamped.header.frame_id)
+        if not frame_supports:
+            return False
+        max_lift = float(rospy.get_param('~lift_sunk_target_max', 0.03))
+        p, o = pose_stamped.pose.position, pose_stamped.pose.orientation
+        z, lifted, too_deep = lift_onto_support((p.x, p.y, p.z), (o.x, o.y, o.z, o.w), size, frame_supports, max_lift)
+        if too_deep > 0.0:
+            rospy.logwarn(f'{name}: pose {too_deep * 100:.1f} cm inside its support, more than the limit '
+                          f'{max_lift * 100:.1f} cm: left as perceived')
+            return False
+        if lifted <= 0.0:
+            return False
+        rospy.loginfo(f'{name}: pose raised {lifted * 100:.1f} cm onto its support (was z {p.z:.3f})')
+        pose_stamped.pose.position = copy.deepcopy(p)   # the pose selector answer keeps the perceived value
+        pose_stamped.pose.position.z = z
+        return True
 
     def log_pick_target(self, name, pose_stamped, size, supports):
         '''

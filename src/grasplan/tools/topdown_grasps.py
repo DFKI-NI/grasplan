@@ -180,6 +180,24 @@ def clamp_box_to_support(center, orientation, size, supports, clearance=0.001):
     return center, size, 0.0
 
 
+def lift_onto_support(center, orientation, size, supports, max_lift, clearance=0.001):
+    '''
+    Where a box whose bottom reaches into its support stands when it is raised, whole and unchanged in size, until its
+    bottom is clearance above the support top (the conditions of clamp_box_to_support: an axis near vertical, the
+    centre above the support top and over its footprint). Never lowers. Returns (z, lifted_m, too_deep_m): the new
+    centre z and the lift; a box that would need a lift of more than max_lift stays where it is, too_deep_m then says
+    how far it reaches into the support.
+    '''
+    z = float(center[2])
+    _, _, lift = clamp_box_to_support(center, orientation, size, supports, clearance)
+    if lift <= 0.0:
+        return z, 0.0, 0.0
+    if lift > max_lift:
+        return z, 0.0, lift - clearance
+    # 1 nm more, so that the raised bottom is not a rounding error below the clearance and clamped again
+    return z + lift + 1e-9, lift, 0.0
+
+
 def depth_below_support_top(center, orientation, size, supports):
     '''
     how far (m) the bottom of a box reaches below the top of a support box (supports as for clamp_box_to_support) whose
