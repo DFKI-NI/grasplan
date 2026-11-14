@@ -196,6 +196,7 @@ class InsertTools:
         if (not success and getattr(self.place, 'mtc', None) is not None and self.place.mtc.executed
                 and not self.insert_action_server.is_preempt_requested()):
             self.place.retract_after_failure('insert')
+        self.place.forget_open_set_fallback_held()   # the second try's note goes with the object it named
         if success:
             self.insert_action_server.set_succeeded(InsertObjectResult(success=True))
         elif self.insert_action_server.is_preempt_requested():
@@ -273,7 +274,7 @@ class InsertTools:
         '''
         object_tbi_height = None
         support_obj_height = None
-        if object_class_tbi not in OBJECT_HEIGHTS:
+        if object_class_tbi not in OBJECT_HEIGHTS or getattr(self, 'inserting_open_set', False):
             attached_object = self.place.scene.get_attached_objects([object_to_be_inserted]).get(object_to_be_inserted)
             if attached_object is None or len(attached_object.object.primitives) == 0:
                 self.fail(
@@ -328,6 +329,8 @@ class InsertTools:
         # deduce object_to_be_inserted by querying which object the gripper currently has attached to its gripper
         object_to_be_inserted = list(self.place.scene.get_attached_objects().keys())[0]
         object_class_tbi = separate_object_class_from_id(object_to_be_inserted)[0]
+        # picked by the pick node's second try: inserted as an open-set object (measured height, no resting roll)
+        self.inserting_open_set = self.place.picked_by_open_set_fallback(object_to_be_inserted)
 
         rospy.loginfo(
             f'received request to insert the object I am currently holding ({object_to_be_inserted})\
@@ -390,6 +393,7 @@ class InsertTools:
                 ),
                 frame_id=self.place.global_reference_frame,
                 same_orientation_as_support_obj=same_orientation_as_support_obj,
+                open_set=getattr(self, 'inserting_open_set', False),
             )
         if len(place_poses_as_object_list_msg.objects) == 0:
             return self.fail(f'cannot insert {object_to_be_inserted} into {support_object_name_as_string}: no insert '
@@ -525,7 +529,8 @@ class InsertTools:
         if free_yaw:
             # the roll and pitch the object was picked with: the one the usual insert poses give it (open-set
             # objects were added map-axis-aligned, some known ones lie on their side), their yaw does not matter
-            picked_pose = gen_insert_poses_from_obj(object_class, support_object_pose, 0.0).objects[0].pose
+            picked_pose = gen_insert_poses_from_obj(object_class, support_object_pose, 0.0,
+                                                    open_set=getattr(self, 'inserting_open_set', False)).objects[0].pose
             picked_rotation = pose_to_matrix(picked_pose)[:3, :3]
             o = collision_object.pose.orientation
             if not any((o.x, o.y, o.z, o.w)):

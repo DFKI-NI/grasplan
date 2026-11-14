@@ -9,7 +9,21 @@ The pick action uses the configured Grasplan planner for objects present in
 that planner's object catalog. If the object class is not in the catalog, the
 goal is forwarded to an AnyGrasp server using the same `PickObjectAction`
 interface. A failed Grasplan attempt for a known object is final and does not
-trigger the fallback.
+trigger the fallback, unless `known_pick_open_set_fallback` is on (see below).
+
+`known_pick_open_set_fallback` (default `false`, careful, read per goal): a known object whose stored grasps were all
+refused in planning (MTC ended with "none of the N grasps could be planned") before any stage of a pick solution ran in
+the goal (the goal-scoped latch of the MTC executor, set before every gripper command and pick motion) gets one second
+try in the same goal with the open-set path above: the grasp view, a `GenerateGrasps` goal on the server's known-target
+action (`anygrasp_generate_known_action_name`, default the generate action's name + `_known_target`: the server takes
+exactly that pose selector entry as its target, segments the image in that entry's box and leaves the entry as it is; a
+server without that action gets no second try), and the measured box as the planning object. The grasp finder's object
+is picked only when all 8 corners of its measured box lie inside the known entry's box grown by
+`known_pick_fallback_target_margin` (default `0.03` m) per side, in the frame of that box; the log says how far the
+measured box reaches beyond the known one along each axis. A check of position and extent (a measured box that took in a
+neighbour, a wall or the table spills out), not an identity proof: an object wholly inside that volume passes; a box measured around only part of the object can still spill out and be refused. The status text names both attempts. An object attached by the second try is noted in
+`~open_set_fallback_held`, so the place and insert nodes handle it as an open-set object; a normal pick clears it. With
+the flag off nothing of this runs and no parameter is written.
 
 For the handcoded planner, known classes are the keys below the
 `handcoded_grasp_planner_transforms` parameter. Numeric instance suffixes are

@@ -1294,6 +1294,9 @@ class MtcPickPlace:
         # why the last goal failed (for the action status text) and whether it moved anything
         self.failure_reason = ''
         self.executed = False
+        self.pick_stage_executed = False   # goal-scoped latch of the pick node (see execute)
+        self.planning_exhausted = None   # set by pickup (see there)
+        self.pick_goal_token = None   # set by pick.py for each pick goal
         # ~mtc_check_grasp, ~mtc_grasp_check_delay and ~mtc_grasp_check_squeeze are read at every check, so the check
         # can be switched off without a restart; the fact is built anyway, it only subscribes to gripper topics
         self.gripper_fact = self.make_gripper_fact()
@@ -1332,6 +1335,10 @@ class MtcPickPlace:
         result = PickupResult()
         result.error_code.val = MoveItErrorCodes.PLANNING_FAILED
         self.failure_reason, self.executed, self.executed_grasp = '', False, None
+        # (pick goal token, target, grasps offered) when this pickup ended with every grasp refused in planning, else
+        # None; cleared at every pickup entry (also the recursive one after a start move). pick.py reads it for its
+        # second try with the open-set grasp finder (~known_pick_open_set_fallback), never the failure text
+        self.planning_exhausted, self.planning_breakdown = None, ''
         self.pinch_verdict = False   # the last close of this pickup held at the rim (see pinched)
         self.unplanned = []   # why each grasp could not be planned, for the failure reason
         self.chain_rejections = 0   # solutions the chain replay alone rejected in this pickup (cable replay detour)
@@ -1410,6 +1417,9 @@ class MtcPickPlace:
             return self.pickup(goal)
         self.failure_reason = (f'none of the {len(goal.possible_grasps)} grasps could be planned'
                                + self.unplanned_breakdown())
+        if goal.possible_grasps:
+            self.planning_exhausted = (getattr(self, 'pick_goal_token', None), goal.target_name, len(goal.possible_grasps))
+            self.planning_breakdown = self.unplanned_breakdown()[2:]
         rospy.logerr(f'mtc: none of the {len(goal.possible_grasps)} grasps of {goal.target_name} could be planned'
                      f'{self.unplanned_breakdown()}')
         return result
@@ -2571,6 +2581,10 @@ class MtcPickPlace:
                 elif previous == UNTANGLE:
                     announce_trajectory_start('mtc solution after the untangle legs')
                 previous = role
+                if role != UNTANGLE:
+                    # goal-scoped latch for pick.py (reset only there, never by a pickup): a motion of the pick itself
+                    # (from the move to the pregrasp on) is about to run; untangle legs are pre-pick repositioning
+                    self.pick_stage_executed = True
                 if fail_lift and self.pick_progress['attached'] and not self.pick_progress['lifted']:
                     self.execution_failure = ('the lift was refused on purpose by the test switch ~test_fail_pick_lift '
                                               '(a sim test of a pick that fails after the close and before the lift)')
@@ -2581,6 +2595,10 @@ class MtcPickPlace:
                 self.end_move_done = role == END_MOVE and code == MoveItErrorCodes.SUCCESS
             elif role == GRIPPER:
                 posture = postures.pop(0)
+                # the goal-scoped latch (see above) for every gripper command of the solution, the pre-open before
+                # the approach too: when it fails (no gripper server -4, a timeout -6) a stored grasp was planned and
+                # its execution had started, so pick.py offers no extra grasps after it
+                self.pick_stage_executed = True
                 recorder = self.start_close_recording(regrasp) if check_grasp and not postures else None
                 code = self.command_gripper(posture)
                 if recorder is not None:

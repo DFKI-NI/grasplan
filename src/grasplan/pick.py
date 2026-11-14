@@ -424,22 +424,40 @@ class PickTools:
         self.retract_failure = ''   # set by retract_after_failure when the arm could not go back
         if self.mtc is not None:
             self.mtc.failure_reason, self.mtc.executed = '', False  # nothing left over from the previous goal
+            # goal-scoped: set by the MTC executor when a motion of the pick itself starts, never reset by a pickup
+            self.mtc.pick_stage_executed = False
+            self.pick_goal_token = getattr(self, 'pick_goal_token', 0) + 1   # names this goal in the MTC record
+            self.mtc.pick_goal_token = self.pick_goal_token
+            self.mtc.planning_exhausted, self.mtc.planning_breakdown = None, ''
         self.pick_note = ''   # what a successful pick did not do (the single plan's end move), for the status text
         self.dropped_copies = []   # entries ~drop_unknown_copy_of_target left out of this goal's planning scene
+        self.in_open_set_fallback = False   # the second try of a known object with the open-set grasp finder runs
+        self.open_set_fallback_done = False   # at most one second try per goal
+        self.stored_grasp_count = 0   # the stored grasps this goal's closed-set pick offered (for that try's text)
+        self.pick_target_name = ''   # the instance this goal's pick resolved (soup -> soup_1)
 
-        # Unknown objects are sent directly to the open-set pipeline. A known
-        # object's result is final, including a failed Grasplan attempt.
+        # Unknown objects are sent directly to the open-set pipeline. A known object's result is final, including a
+        # failed Grasplan attempt, unless ~known_pick_open_set_fallback gives it one second try (see there).
         if self.grasp_planner.supports_object(goal.object_name):
+            started = time.time()
             success = self.pick_object(
                 goal.object_name, goal.support_surface_name, self.grasp_type, goal.ignore_object_list
             )
+            second = self.known_pick_open_set_fallback(goal, success, time.time() - started)
+            if second is not None:
+                success, status_text, preempted = second
+                if preempted:
+                    rospy.logwarn(status_text)
+                    self.pick_action_server.set_preempted(PickObjectResult(success=False), status_text)
+                    return
             self.transport_after_pick(success)
-            status_text = 'Grasplan pick succeeded' if success else 'Grasplan pick failed'
+            if second is None:
+                status_text = 'Grasplan pick succeeded' if success else 'Grasplan pick failed'
             if success and getattr(self, 'pick_note', ''):
                 status_text += f'; {self.pick_note}'
             for name in getattr(self, 'dropped_copies', []) if success else []:
                 status_text += f'; a second entry {name} at the same place was left out of the obstacle map for this pick'
-            if not success and self.failure_text():
+            if second is None and not success and self.failure_text():
                 status_text += f': {self.failure_text()}'
             preempted = False
         else:
@@ -491,6 +509,199 @@ class PickTools:
             return
         self.pick_note = f'{self.pick_note}; {how}' if getattr(self, 'pick_note', '') else how
         rospy.logwarn(f'transport during pick: picked, but {how}')
+
+    def open_set_fallback_refusal(self, success):
+        '''
+        why a known object's failed pick gets no second try with the open-set grasp finder, '' when it gets one
+        (~known_pick_open_set_fallback, careful, off in code): only a pick whose stored grasps were all refused in
+        planning (MTC ended at "none of the N grasps could be planned") before any pick stage of this goal ran, with
+        nothing in the gripper, no cancel and no check before MTC that stopped it
+        '''
+        mtc = getattr(self, 'mtc', None)
+        if success:
+            return 'the pick succeeded'
+        if getattr(self, 'open_set_fallback_done', False):
+            return 'this goal already had its second try'
+        if mtc is None:
+            return 'no MTC (the second try needs its planning result)'
+        if getattr(self, 'anygrasp_handles_execution', False):
+            return '~anygrasp_handles_execution is on (the open-set path does not execute through grasplan)'
+        record = getattr(mtc, 'planning_exhausted', None)
+        if not record or record[2] <= 0:
+            return 'the pick did not end with every stored grasp refused in planning'
+        if record[0] != getattr(self, 'pick_goal_token', None) or record[1] != getattr(self, 'pick_target_name', ''):
+            return f'the last planning record is not of this goal and target ({record[1]})'
+        if getattr(mtc, 'pick_stage_executed', False):
+            return 'a pick stage of this goal ran (arm or gripper)'
+        if getattr(self, 'pick_failure_reason', ''):
+            return f'a check before MTC stopped the pick ({self.pick_failure_reason})'
+        if getattr(self, 'retract_failure', ''):
+            return 'the arm could not go back after the failure'
+        if self.pick_action_server.is_preempt_requested() or rospy.is_shutdown():
+            return 'the pick was cancelled'
+        if self.scene.get_attached_objects():
+            return 'an object is attached to the gripper'
+        return ''
+
+    def known_pick_open_set_fallback(self, goal, success, first_seconds):
+        '''
+        ~known_pick_open_set_fallback (careful, default off, read per goal): a known object whose stored grasps were
+        all refused in planning (open_set_fallback_refusal) gets ONE second try in the same goal with the open-set path
+        (pick_unknown_object_with_grasplan: the grasp view, the open-set grasp finder for its name, the measured box as
+        the planning object). Returns None when no second try ran (the caller keeps its text), else (success, status
+        text naming both attempts, preempted).
+        '''
+        if not rospy.get_param('~known_pick_open_set_fallback', False):
+            return None
+        # the instance the first attempt resolved ("soup" -> soup_1): view, known-target goal, gate and text use it
+        name = getattr(self, 'pick_target_name', '') or goal.object_name
+        why_not = self.open_set_fallback_refusal(success)
+        if not why_not and not self.known_target_generate_client().wait_for_server(
+                rospy.Duration(self.anygrasp_server_timeout)):
+            why_not = (f'the grasp server offers no known-target action ({self.known_target_generate_action_name()} is '
+                       'not available)')
+        if why_not:
+            if not success:
+                rospy.loginfo(f'second try of {name} with the grasp finder for unknown objects not offered: {why_not}')
+            return None
+        mtc = self.mtc
+        stored = getattr(self, 'stored_grasp_count', 0) or mtc.planning_exhausted[2]
+        breakdown = getattr(mtc, 'planning_breakdown', '')
+        first = f'all {stored} stored grasps of {name} were refused' + (f' ({breakdown})' if breakdown else '')
+        rospy.logwarn(f'{first} in {first_seconds:.1f} s: second try with the grasp finder for unknown objects '
+                      '(~known_pick_open_set_fallback)')
+        # only the second try's own reasons count from here; the first attempt's text is kept in `first`
+        self.pick_failure_reason, self.retract_failure, mtc.failure_reason = '', '', ''
+        self.pick_note, self.dropped_copies = '', []
+        mtc.transport_move, mtc.transport_done = None, None
+        self.open_set_fallback_done, self.in_open_set_fallback = True, True
+        started = time.time()
+        try:
+            second_goal = copy.deepcopy(goal)
+            second_goal.object_name = name
+            success, message, preempted = self.pick_unknown_object_with_grasplan(second_goal)
+        finally:
+            self.in_open_set_fallback = False
+        rospy.loginfo(f'second try of {name} with the grasp finder for unknown objects: '
+                      f'{"held" if success else "failed"} after {time.time() - started:.1f} s '
+                      f'(first attempt {first_seconds:.1f} s)')
+        if preempted:
+            return False, message, True
+        if success:
+            return True, (f'Grasplan pick succeeded with the grasp finder for unknown objects after {first}'), False
+        return False, (f'Grasplan pick failed: {first}; the second try with the grasp finder for unknown objects '
+                       f'failed too: {message}'), False
+
+    def known_target_generate_action_name(self):
+        '''the grasp server's known-target action (~anygrasp_generate_known_action_name, default the generate action's
+        name + "_known_target"): a GenerateGrasps goal there targets exactly that pose selector entry, fails closed
+        when it is missing and leaves it as it is'''
+        return rospy.get_param('~anygrasp_generate_known_action_name',
+                               f'{self.anygrasp_generate_action_name}_known_target')
+
+    def known_target_generate_client(self):
+        '''the client of the known-target action, made at its first use (only with ~known_pick_open_set_fallback on)'''
+        name = self.known_target_generate_action_name()
+        client = getattr(self, 'known_target_client', None)
+        if client is None or getattr(self, 'known_target_client_name', '') != name:
+            client = actionlib.SimpleActionClient(name, GenerateGraspsAction)
+            self.known_target_client, self.known_target_client_name = client, name
+        return client
+
+    def second_try_stop(self, when):
+        '''(success, text, preempted) when the second try must not move on: rechecked right before its view move and
+        before its generate goal (a cancel, a shutdown or an attached object since the first attempt); None to go on'''
+        if self.pick_action_server.is_preempt_requested() or rospy.is_shutdown():
+            return False, f'the pick was cancelled {when} of the second try with the grasp finder for unknown objects', True
+        held = self.scene.get_attached_objects()
+        if held:
+            return False, (f'the second try with the grasp finder for unknown objects stopped {when}: the gripper '
+                           f'holds {", ".join(sorted(held))}'), False
+        return None
+
+    def known_target_gate(self, name, detected):
+        '''
+        the second try (~known_pick_open_set_fallback) picks the grasp finder's object only when all 8 corners of its
+        measured box, expressed in the frame of the pose selector box of name, lie inside that box grown by
+        ~known_pick_fallback_target_margin (m, default 0.03) per side: a bounded check of position and extent (a mask
+        that leaked onto a neighbour, the klt wall or the table makes the box spill out), not an identity proof (an
+        object wholly inside that volume passes; and a box measured around part of the object can still spill out: a
+        conservative refusal on the measured box, not on its points). Returns '' when it passes, else why not (also
+        when the entry or the transform is missing). Logs how far the measured box reaches beyond the known one per
+        axis, its size, yaw, padding, point count and depth completion, pass or refuse.
+        '''
+        margin = float(rospy.get_param('~known_pick_fallback_target_margin', 0.03))
+        target = objectToPick(name)
+        try:
+            resp = self.pose_selector_get_all_poses_srv()
+        except rospy.ServiceException as error:
+            return f'the second try could not check the grasp finder\'s object against {name}: pose selector: {error}'
+        entry = None
+        for o in resp.poses.objects:
+            if f'{o.class_id}_{o.instance_id}' == target.get_object_class_and_id_as_string():
+                entry = o
+        if entry is None:
+            return f'the second try could not check the grasp finder\'s object: {name} is no longer in the pose selector'
+        entry_frame = object_list_frame(resp.poses, self.global_reference_frame)
+        detected_frame = detected.header.frame_id or self.global_reference_frame
+        if detected_frame == entry_frame:
+            matrix = np.eye(4)
+        else:
+            matrix = self.frame_matrix(entry_frame, detected_frame)
+            if matrix is None:
+                return (f'the second try could not check the grasp finder\'s object against {name}: no transform from '
+                        f'{detected_frame} to {entry_frame}')
+        sizes = [detected.size.x, detected.size.y, detected.size.z, entry.size.x, entry.size.y, entry.size.z]
+        if not all(math.isfinite(v) and v > 0.0 for v in sizes):
+            return f'the second try could not check the grasp finder\'s object against {name}: a box has no valid size'
+
+        def rotation_of(q):
+            if not any((q.x, q.y, q.z, q.w)):
+                return np.eye(3)
+            return tf.transformations.quaternion_matrix([q.x, q.y, q.z, q.w])[:3, :3]
+        signs = np.array([[sx, sy, sz] for sx in (-1.0, 1.0) for sy in (-1.0, 1.0) for sz in (-1.0, 1.0)])
+        c = detected.pose.position
+        measured_half = np.array([detected.size.x, detected.size.y, detected.size.z]) / 2.0
+        corners = np.array([c.x, c.y, c.z]) + (signs * measured_half).dot(rotation_of(detected.pose.orientation).T)
+        corners = np.hstack([corners, np.ones((8, 1))]).dot(np.asarray(matrix, dtype=float).T)[:, :3]
+        e = entry.pose.position
+        local = (corners - np.array([e.x, e.y, e.z])).dot(rotation_of(entry.pose.orientation))
+        known_half = np.array([entry.size.x, entry.size.y, entry.size.z]) / 2.0
+        spill = np.abs(local).max(axis=0) - known_half   # per axis of the known box: > 0 reaches beyond it
+        centre = corners.mean(axis=0) - np.array([e.x, e.y, e.z])
+        inside = bool(np.all(spill <= margin))
+        q = detected.pose.orientation
+        yaw = math.degrees(math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z)))
+        shape = getattr(detected, 'shape', None)
+        points = shape.points if shape is not None and shape.valid else 'unknown'
+        completed = ('unknown' if shape is None or not shape.valid
+                     else ('no' if shape.height_reliable else 'yes (height from completed depth)'))
+        rospy.loginfo(f'second try: the grasp finder\'s object reaches {spill[0] * 1000:.0f} / {spill[1] * 1000:.0f} / '
+                      f'{spill[2] * 1000:.0f} mm beyond the box of {name} along its x / y / z (allowed {margin * 1000:.0f}'
+                      f' mm; centre {np.linalg.norm(centre) * 100:.1f} cm away; measured box {detected.size.x * 1000:.0f} x '
+                      f'{detected.size.y * 1000:.0f} x {detected.size.z * 1000:.0f} mm, yaw {yaw:.0f} deg, padding '
+                      f'{getattr(detected, "box_padding", 0.0) * 1000:.0f} mm, {points} points, depth completed: '
+                      f'{completed}): {"inside" if inside else "outside"}')
+        if inside:
+            return ''
+        return (f'the grasp finder\'s object reaches {spill.max() * 100:.1f} cm beyond where {name} was detected, more than '
+                f'its box grown by {margin * 100:.0f} cm: not picked (it may be a neighbour, or the object merged with one)')
+
+    def note_held_mode(self, name):
+        '''
+        ~known_pick_open_set_fallback only (flag off: no parameter write or delete at all): the held object's mode for
+        the place and insert nodes, kept with the attached object, not with the goal. An attachment made by the second
+        try writes its name to ~open_set_fallback_held (namespace-resolved, next to the grasp catalog the place node
+        reads), so place and insert handle it as an open-set object (measured height, no untangle detour); a pick that
+        attaches an object the normal way clears it. The place and insert nodes clear it when they let go.
+        '''
+        if not rospy.get_param('~known_pick_open_set_fallback', False):
+            return
+        if getattr(self, 'in_open_set_fallback', False):
+            rospy.set_param('~open_set_fallback_held', name)
+            rospy.loginfo(f'{name} was picked by the second try: place and insert handle it as an open-set object')
+        elif rospy.has_param('~open_set_fallback_held'):
+            rospy.delete_param('~open_set_fallback_held')
 
     def pick_unknown_object_with_anygrasp(self, goal):
         object_name = goal.object_name
@@ -569,20 +780,29 @@ class PickTools:
 
     def pick_unknown_object_with_grasplan(self, goal):
         object_name = goal.object_name
-        action_name = rospy.resolve_name(self.anygrasp_generate_action_name)
+        second_try = getattr(self, 'in_open_set_fallback', False)
+        # the second try of a known object asks the server's known-target action (same message, its own name)
+        client = self.known_target_generate_client() if second_try else self.anygrasp_generate_action_client
+        action_name = rospy.resolve_name(self.known_target_generate_action_name() if second_try
+                                         else self.anygrasp_generate_action_name)
         rospy.loginfo(
-            'object %r is not known by %s; requesting candidates from %s for Grasplan execution',
+            'object %r is %s; requesting candidates from %s for Grasplan execution',
             object_name,
-            type(self.grasp_planner).__name__,
+            'known, second try after its stored grasps' if second_try
+            else f'not known by {type(self.grasp_planner).__name__}',
             action_name,
         )
         if rospy.get_param('~open_set_topdown_test_only', False):  # testing the fallback: skip AnyGrasp, read per pick
             return self.pick_topdown_without_anygrasp(goal, 'AnyGrasp skipped (~open_set_topdown_test_only)')
-        if not self.anygrasp_generate_action_client.wait_for_server(rospy.Duration(self.anygrasp_server_timeout)):
+        if not client.wait_for_server(rospy.Duration(self.anygrasp_server_timeout)):
             message = f'AnyGrasp generate action server {action_name} is unavailable'
             rospy.logerr(message)
             return False, message, False
 
+        if second_try:
+            stop = self.second_try_stop('before the grasp view')
+            if stop is not None:
+                return stop
         viewed, message = self.move_to_anygrasp_view(object_name)
         if self.stopped_during_grasp_view():
             return False, GRASP_VIEW_CANCELLED, True
@@ -591,31 +811,35 @@ class PickTools:
             return False, message, False
 
         generate_goal = GenerateGraspsGoal(object_name=object_name)
+        if second_try:
+            stop = self.second_try_stop('before the grasp finder was asked')
+            if stop is not None:
+                return stop
         TIMER.open('anygrasp')   # closed after the wait, or with the action on an early return
-        self.anygrasp_generate_action_client.send_goal(generate_goal)
+        client.send_goal(generate_goal)
         deadline = None
         if self.anygrasp_result_timeout > 0:
             deadline = time.monotonic() + self.anygrasp_result_timeout
 
         while not rospy.is_shutdown():
             if self.pick_action_server.is_preempt_requested():
-                self.anygrasp_generate_action_client.cancel_goal()
+                client.cancel_goal()
                 return False, 'AnyGrasp generation was cancelled', True
-            if self.anygrasp_generate_action_client.wait_for_result(rospy.Duration(0.1)):
+            if client.wait_for_result(rospy.Duration(0.1)):
                 break
             if deadline is not None and time.monotonic() >= deadline:
-                self.anygrasp_generate_action_client.cancel_goal()
+                client.cancel_goal()
                 message = f'timed out waiting for AnyGrasp after {self.anygrasp_result_timeout:.1f} seconds'
                 rospy.logerr(message)
                 return False, message, False
         else:
-            self.anygrasp_generate_action_client.cancel_goal()
+            client.cancel_goal()
             return False, 'ROS shutdown while waiting for AnyGrasp', True
         TIMER.close()
 
-        state = self.anygrasp_generate_action_client.get_state()
-        result = self.anygrasp_generate_action_client.get_result()
-        server_text = self.anygrasp_generate_action_client.get_goal_status_text() or 'no status text'
+        state = client.get_state()
+        result = client.get_result()
+        server_text = client.get_goal_status_text() or 'no status text'
         if state != GoalStatus.SUCCEEDED or result is None or not result.success:
             message = (
                 f'AnyGrasp generation failed with action state {ACTION_STATES.get(state, str(state))}, '
@@ -630,6 +854,11 @@ class PickTools:
             rospy.logerr(message)
             return self.pick_topdown_without_anygrasp(goal, message)
         anchored_object_name = f'{detection.object.class_id}_{detection.object.instance_id}'
+        if second_try:
+            refused = self.known_target_gate(object_name, detection.object)
+            if refused:
+                rospy.logerr(refused)
+                return False, refused, False
         success = self.pick_object(
             anchored_object_name,
             goal.support_surface_name,
@@ -1450,6 +1679,7 @@ class PickTools:
         # this condition is when user only specified object class but no id, then we assign the first available id
         if id is not None:
             object_to_pick.set_id(id)
+        self.pick_target_name = object_to_pick.get_object_class_and_id_as_string()
         if self.mtc is not None:
             # a round object may be grasped turned about its approach axis when the cable guard needs it
             round_object = bounding_box is not None and is_compact_round(bounding_box)
@@ -1517,6 +1747,7 @@ class PickTools:
                 grasp_type,
             )
             self.note_regrasp_info(grasps, [None] * len(grasps), object_pose, bounding_box, support_surface_name, False)
+            self.stored_grasp_count = len(grasps)   # for the text of a second try (~known_pick_open_set_fallback)
         else:
             grasps, candidates = [], []
             self.grasp_funnel_start(object_to_pick.get_object_class_and_id_as_string(), object_pose)
@@ -1635,6 +1866,7 @@ class PickTools:
         # handle moveit pick result
         if result == MoveItErrorCodes.SUCCESS:
             self.ensure_attached(object_to_pick.get_object_class_and_id_as_string())
+            self.note_held_mode(object_to_pick.get_object_class_and_id_as_string())
             # remove picked object pose from pose selector
             rospy.loginfo(
                 'removing picked object from pose selector due to succesfull execution (as reported by moveit)'
@@ -2728,6 +2960,10 @@ class PickTools:
         keeps the motion free of cable entanglement instead
         '''
         if obj_class not in self.list_of_disentangle_objects:
+            return []
+        if getattr(self, 'in_open_set_fallback', False):
+            # the second try of a known object takes the open-set path, which has no untangle poses
+            rospy.loginfo(f'second try with the grasp finder for unknown objects: no untangle poses before {obj_class}')
             return []
         if cable_detour.cable_aware(self.mtc, f'pick of {obj_class}'):
             rospy.loginfo(f'cable-aware mode: no untangle poses before the pick of {obj_class}')
