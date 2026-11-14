@@ -1292,7 +1292,6 @@ class MtcPickPlace:
         # why the last goal failed (for the action status text) and whether it moved anything
         self.failure_reason = ''
         self.executed = False
-        self.pick_stage_executed = False   # goal-scoped latch of the pick node (see execute)
         # ~mtc_check_grasp, ~mtc_grasp_check_delay and ~mtc_grasp_check_squeeze are read at every check, so the check
         # can be switched off without a restart; the fact is built anyway, it only subscribes to gripper topics
         self.gripper_fact = self.make_gripper_fact()
@@ -2535,10 +2534,6 @@ class MtcPickPlace:
                 elif previous == UNTANGLE:
                     announce_trajectory_start('mtc solution after the untangle legs')
                 previous = role
-                if role != UNTANGLE:
-                    # goal-scoped latch for pick.py (reset only there, never by a pickup): a motion of the pick itself
-                    # (from the move to the pregrasp on) is about to run; untangle legs are pre-pick repositioning
-                    self.pick_stage_executed = True
                 if fail_lift and self.pick_progress['attached'] and not self.pick_progress['lifted']:
                     self.execution_failure = ('the lift was refused on purpose by the test switch ~test_fail_pick_lift '
                                               '(a sim test of a pick that fails after the close and before the lift)')
@@ -2549,10 +2544,6 @@ class MtcPickPlace:
                 self.end_move_done = role == END_MOVE and code == MoveItErrorCodes.SUCCESS
             elif role == GRIPPER:
                 posture = postures.pop(0)
-                # the goal-scoped latch (see above) for every gripper command of the solution, the pre-open before
-                # the approach too: when it fails (no gripper server -4, a timeout -6) a stored grasp was planned and
-                # its execution had started, so pick.py offers no extra grasps after it
-                self.pick_stage_executed = True
                 recorder = self.start_close_recording(regrasp) if check_grasp and not postures else None
                 code = self.command_gripper(posture)
                 if recorder is not None:

@@ -45,8 +45,6 @@ class HandcodedGraspPlanner(GraspPlanningCore):
 
         # get transforms as a dictionary
         self.grasp_poses = rospy.get_param('~handcoded_grasp_planner_transforms', [])
-        # optional second list per object class, same format, appended only with ~extra_grasp_sets (read per call)
-        self.extra_grasp_poses = rospy.get_param('~handcoded_grasp_planner_extra_transforms', {})
 
         rospy.sleep(0.5)  # give some time for publisher to register
         rospy.loginfo('handcoded grasp planner object was created')
@@ -54,36 +52,6 @@ class HandcodedGraspPlanner(GraspPlanningCore):
     def supports_object(self, object_name):
         object_class = separate_object_class_from_id(object_name)[0]
         return object_class in self.grasp_poses
-
-    def transforms_of(self, object_class, extras=False):
-        '''
-        The stored grasp transforms of a class, or with extras=True its list in ~handcoded_grasp_planner_extra_transforms
-        ([] when it has none). The stored list is what every pick plans with; the extras are offered only by
-        extra_grasps_msgs, after the whole pick with the stored grasps failed before the arm moved.
-        '''
-        if not extras:
-            return list(self.grasp_poses[object_class]['grasp_poses'])
-        return list(((getattr(self, 'extra_grasp_poses', None) or {}).get(object_class) or {}).get('grasp_poses') or [])
-
-    def extra_grasps_msgs(self, object_name, object_pose, end_effector_frame, grasp_type):
-        '''
-        ~extra_grasp_sets (careful, default off, read on every call): the moveit grasps of the class's extra list, with
-        the ids after the stored ones (grasp_32 ... for 32 stored grasps), so logs and results tell them apart; [] when
-        the flag is off or the class has no extras. Extras never make a class supported.
-        '''
-        object_class = separate_object_class_from_id(object_name)[0]
-        if not rospy.get_param('~extra_grasp_sets', False) or object_class not in self.grasp_poses \
-                or not self.transforms_of(object_class, extras=True):
-            return []
-        self._extras = True
-        try:
-            grasps = self.make_grasps_msgs(object_name, object_pose, end_effector_frame, grasp_type)
-        finally:
-            self._extras = False
-        stored = len(self.transforms_of(object_class))
-        for i, grasp in enumerate(grasps):
-            grasp.id = f'grasp_{stored + i}'
-        return grasps
 
     def gen_end_effector_grasp_poses(self, object_name, object_pose, grasp_type):
         '''
@@ -117,7 +85,7 @@ class HandcodedGraspPlanner(GraspPlanningCore):
             )
             return pose_array_msg
 
-        for transform in self.transforms_of(object_class, getattr(self, '_extras', False)):
+        for transform in self.grasp_poses[object_class]['grasp_poses']:
             # tf gripper to object
             rot = transform['rotation']
             euler_rot = tf.transformations.euler_from_quaternion(rot)
