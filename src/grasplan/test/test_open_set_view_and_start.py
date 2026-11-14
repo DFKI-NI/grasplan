@@ -144,3 +144,89 @@ class TestPickStartsFromTransport(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestStopDuringTheGraspView(unittest.TestCase):
+    '''a cancel that comes while the grasp view service runs ends the pick right after the view, before any AnyGrasp
+    goal is sent; both open-set ways (AnyGrasp executes, or Grasplan executes AnyGrasp's candidates)'''
+
+    def setUp(self):
+        self.params = {}
+        patcher = mock.patch.object(pick.rospy, 'get_param', lambda name, default=None: self.params.get(name, default))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.preempt = False
+        self.view_ok = True
+        p = pick.PickTools.__new__(pick.PickTools)
+        p.grasp_planner = mock.Mock()
+        p.anygrasp_action_name = 'anygrasp_pick'
+        p.anygrasp_generate_action_name = 'anygrasp_generate'
+        p.anygrasp_server_timeout = 1.0
+        p.anygrasp_result_timeout = 0.0
+        p.pick_action_server = mock.Mock(is_preempt_requested=lambda: self.preempt)
+        p.open_gripper = mock.Mock(return_value=True)
+        p.anygrasp_action_client = mock.Mock()
+        p.anygrasp_generate_action_client = mock.Mock()
+        for client in (p.anygrasp_action_client, p.anygrasp_generate_action_client):
+            client.wait_for_server.return_value = True
+            client.wait_for_result.return_value = True
+            client.get_state.return_value = pick.GoalStatus.ABORTED
+            client.get_result.return_value = None
+            client.get_goal_status_text.return_value = 'stub'
+        p.move_to_anygrasp_view = self.view
+        self.p = p
+
+    def view(self, object_name):
+        self.preempt = self.preempt or self.stop_in_view
+        if self.view_ok:
+            return True, 'camera 0.65 m from it'
+        return False, 'no grasp view of it: grasp view stopped: a stop was requested'
+
+    def run_way(self, way):
+        goal = NS(object_name='pear', support_surface_name='table_1', ignore_object_list=[])
+        if way == 'anygrasp':
+            return self.p.pick_unknown_object_with_anygrasp(goal), self.p.anygrasp_action_client
+        return self.p.pick_unknown_object_with_grasplan(goal), self.p.anygrasp_generate_action_client
+
+    def test_stop_during_view_sends_no_anygrasp_goal(self):
+        self.stop_in_view = True
+        for way in ('anygrasp', 'grasplan'):
+            with self.subTest(way=way):
+                self.preempt = False
+                (success, text, preempted), client = self.run_way(way)
+                self.assertEqual((success, text, preempted), (False, pick.GRASP_VIEW_CANCELLED, True))
+                client.send_goal.assert_not_called()
+
+    def test_stopped_view_that_failed_counts_as_cancelled_not_failed(self):
+        self.stop_in_view = True
+        self.view_ok = False   # the view service answered its own stop text
+        for way in ('anygrasp', 'grasplan'):
+            with self.subTest(way=way):
+                self.preempt = False
+                (success, text, preempted), client = self.run_way(way)
+                self.assertTrue(preempted)
+                self.assertEqual(text, pick.GRASP_VIEW_CANCELLED)
+                client.send_goal.assert_not_called()
+
+    def test_no_stop_sends_the_goal(self):
+        self.stop_in_view = False
+        for way in ('anygrasp', 'grasplan'):
+            with self.subTest(way=way):
+                (success, text, preempted), client = self.run_way(way)
+                self.assertFalse(preempted)
+                client.send_goal.assert_called_once()
+
+    def test_failed_view_without_stop_stays_a_failure(self):
+        self.stop_in_view = False
+        self.view_ok = False
+        for way in ('anygrasp', 'grasplan'):
+            with self.subTest(way=way):
+                (success, text, preempted), client = self.run_way(way)
+                self.assertEqual((success, preempted), (False, False))
+                self.assertIn('no grasp view', text)
+                client.send_goal.assert_not_called()
+
+    def test_the_view_stage_timing_stays_on_the_view_call(self):
+        '''the "view" stage timer wraps the grasp view service call, not the stop check placed after it'''
+        self.assertTrue(hasattr(pick.PickTools.move_to_anygrasp_view, '__wrapped__'))
+        self.assertFalse(hasattr(pick.PickTools.stopped_during_grasp_view, '__wrapped__'))

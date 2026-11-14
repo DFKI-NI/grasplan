@@ -132,6 +132,7 @@ ACTION_STATES = {value: name for name, value in vars(GoalStatus).items() if name
 
 # the name MoveIt gives the octomap inside the planning scene (planning_scene::PlanningScene::OCTOMAP_NS)
 OCTOMAP_COLLISION_NAME = '<octomap>'
+GRASP_VIEW_CANCELLED = 'pick was cancelled during the grasp view'   # a stop that came while the camera moved to the object
 
 
 def external_grasp_ik_timeout():
@@ -511,6 +512,8 @@ class PickTools:
             return False, message, False
 
         viewed, message = self.move_to_anygrasp_view(object_name)
+        if self.stopped_during_grasp_view():
+            return False, GRASP_VIEW_CANCELLED, True
         if not viewed:
             rospy.logerr(message)
             return False, message, False
@@ -576,6 +579,8 @@ class PickTools:
             return False, message, False
 
         viewed, message = self.move_to_anygrasp_view(object_name)
+        if self.stopped_during_grasp_view():
+            return False, GRASP_VIEW_CANCELLED, True
         if not viewed:
             rospy.logerr(message)
             return False, message, False
@@ -1109,6 +1114,16 @@ class PickTools:
         acm.entry_names = names
         acm.entry_values = [AllowedCollisionEntry(enabled=row) for row in rows]
         return acm
+
+    def stopped_during_grasp_view(self):
+        '''
+        True when the pick was cancelled while the grasp view ran: the view is a blocking service call that does not
+        see the cancel, so the check comes right after it, before any AnyGrasp goal is sent (not 0.1 s after it)
+        '''
+        if not self.pick_action_server.is_preempt_requested():
+            return False
+        rospy.logwarn(GRASP_VIEW_CANCELLED)
+        return True
 
     @timed('view')
     def move_to_anygrasp_view(self, object_name):
