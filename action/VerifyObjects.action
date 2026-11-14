@@ -7,6 +7,7 @@ string[] query_variants          # alternative phrasings shown to the verifier (
 grasplan/CandidateGroup[] candidates
 bool include_full_frames         # also send each view's full frame with the candidate outlined
 bool commit                      # push accepted candidates to the pose selector
+bool accept_best_when_none_match   # with commit: when the verifier refuses every candidate, push the one with the best detector score (default false)
 ---
 bool success                     # at least one candidate got a semantic verdict (MATCH or NO_MATCH)
 string message
