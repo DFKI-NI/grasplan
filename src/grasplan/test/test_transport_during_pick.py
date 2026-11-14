@@ -6,6 +6,7 @@ successful and says why. Fake arms, the real CableGuard with the carrier chain r
 test_cable_chain_guard); no ROS master; Mobipick image.'''
 import math
 import threading
+import time
 import unittest
 from types import SimpleNamespace as NS
 from unittest import mock
@@ -237,6 +238,99 @@ class PickSide(unittest.TestCase):
             p.transport_after_pick(success)
             move.finish.assert_not_called()
             self.assertIsNone(p.mtc.transport_move)
+
+
+class LiftCheck(unittest.TestCase):
+    '''with a move planned during the pick, the check after the lift runs while the arm moves to transport'''
+    def mtc(self, move, holds=True, preempt=False, hold_check=None):
+        m = mpp.MtcPickPlace.__new__(mpp.MtcPickPlace)
+        m.transport_move, m.transport_arm, m.transport_done = move, 'arm', None
+        m.is_preempt_requested = lambda: preempt
+        m.update_cable_guard = lambda: None
+        m.cable_guard = 'guard'
+        self.checks = []
+
+        def check(when):
+            self.checks.append(when)
+            return hold_check() if hold_check else holds
+        m.gripper_holds_object = check
+        return m
+
+    def test_without_a_planned_move_only_the_check(self):
+        m = self.mtc(None)
+        self.assertTrue(m.lift_check())
+        self.assertEqual(self.checks, ['after the lift'])
+        self.assertIsNone(m.transport_done)
+
+    def test_the_check_and_the_move_overlap(self):
+        checking, moving = threading.Event(), threading.Event()
+
+        def hold_check():
+            checking.set()
+            return moving.wait(5.0)   # True only when the move runs at the same time
+
+        def finish(arm, guard):
+            moving.set()
+            self.assertTrue(checking.wait(5.0))
+            return True, 'moved to transport with the plan made during the pick'
+        move = mock.Mock(finish=mock.Mock(side_effect=finish))
+        m = self.mtc(move, hold_check=hold_check)
+        self.assertTrue(m.lift_check())
+        move.finish.assert_called_once_with('arm', 'guard')
+        self.assertEqual(m.transport_done, (True, 'moved to transport with the plan made during the pick'))
+        self.assertIsNone(m.transport_move)
+
+    def test_a_lost_object_fails_the_check_and_leaves_the_arm_at_transport(self):
+        move = mock.Mock(finish=mock.Mock(return_value=(True, 'moved to transport with the plan made during the pick')))
+        m = self.mtc(move, holds=False)
+        with mock.patch.object(mpp.rospy, 'logwarn') as warn:
+            self.assertFalse(m.lift_check())
+        move.finish.assert_called_once()
+        self.assertTrue(m.transport_done[0])
+        self.assertIn('lost during the lift; the arm stands at transport', warn.call_args[0][0])
+
+    def test_a_cancel_keeps_the_old_order(self):
+        move = mock.Mock()
+        m = self.mtc(move, preempt=True)
+        self.assertTrue(m.lift_check())
+        move.finish.assert_not_called()
+
+    def test_an_error_of_the_check_reaches_the_pick(self):
+        move = mock.Mock(finish=mock.Mock(return_value=(True, 'x')))
+
+        def broken():
+            raise RuntimeError('no gripper fact')
+        m = self.mtc(move, hold_check=broken)
+        with self.assertRaises(RuntimeError):
+            m.lift_check()
+
+
+    def test_an_error_of_the_move_waits_for_the_check(self):
+        done = threading.Event()
+
+        def hold_check():
+            time.sleep(0.2)
+            done.set()
+            return True
+        move = mock.Mock(finish=mock.Mock(side_effect=RuntimeError('controller gone')))
+        m = self.mtc(move, hold_check=hold_check)
+        with self.assertRaises(RuntimeError):
+            m.lift_check()
+        self.assertTrue(done.is_set())   # the check has ended when the error reaches the pick
+
+class PickSideAfterLiftCheck(PickSide):
+    def test_a_move_run_during_the_check_is_only_reported(self):
+        p = self.tool(None)
+        p.mtc.transport_done = (False, 'the arm did not move to transport: x')
+        p.transport_after_pick(True)
+        self.assertEqual(p.pick_note, 'the arm did not move to transport: x')
+        self.assertIsNone(p.mtc.transport_done)
+
+    def test_after_a_failed_pick_nothing_is_reported(self):
+        p = self.tool(None)
+        p.mtc.transport_done = (True, 'moved')
+        p.transport_after_pick(False)
+        self.assertEqual(p.pick_note, '')
 
 
 class TimerThreads(unittest.TestCase):

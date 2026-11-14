@@ -1252,6 +1252,8 @@ class MtcPickPlace:
     # name -> {joint: rad} of a named arm pose (set by pick.py: MoveGroupCommander.get_named_target_values)
     named_pose_q = None
     end_move_done = False   # the last execute() ran the single plan's end move
+    # the MoveGroupCommander that runs the move to transport planned during the pick (set by pick.py)
+    transport_arm = None
 
     def __init__(self, arm_group, eef_link, gripper_links, planning_frame, is_preempt_requested):
         '''
@@ -1334,6 +1336,7 @@ class MtcPickPlace:
         self.unplanned = []   # why each grasp could not be planned, for the failure reason
         self.chain_rejections = 0   # solutions the chain replay alone rejected in this pickup (cable replay detour)
         self.transport_move = None   # ~plan_transport_during_pick: the move planned while this pickup executes
+        self.transport_done = None   # (moved, how) when this pickup already ran that move (see lift_check)
         self.update_cable_guard()
         touch = self.gripper_links + [goal.target_name]
         for index, grasp in enumerate(goal.possible_grasps):
@@ -1384,7 +1387,7 @@ class MtcPickPlace:
             code = self.execute(task, roles, [grasp.pre_grasp_posture], grasp.grasp_posture,
                                 attach=(goal.target_name, touch), check_grasp=True,
                                 regrasp=self.regrasp_request(goal, grasp))
-            if code == MoveItErrorCodes.SUCCESS and not self.gripper_holds_object('after the lift'):
+            if code == MoveItErrorCodes.SUCCESS and not self.lift_check():
                 self.failure_reason = f'{goal.target_name} was lost during the lift (the gripper is empty)'
                 code = MoveItErrorCodes.FAILURE
             if code != MoveItErrorCodes.SUCCESS and self.failure_reason:
@@ -1410,6 +1413,40 @@ class MtcPickPlace:
         rospy.logerr(f'mtc: none of the {len(goal.possible_grasps)} grasps of {goal.target_name} could be planned'
                      f'{self.unplanned_breakdown()}')
         return result
+
+    def lift_check(self):
+        '''
+        whether the gripper still holds the object after the lift. With a move to transport planned during the pick
+        (~plan_transport_during_pick) that move runs now, while the check waits for the fingers to settle, instead of
+        after it; its result (moved, how) goes to transport_done for pick.py. A lost object then leaves the arm at
+        transport, and the pick fails as without the move. The move is the guarded one of TransportMove.finish.
+        '''
+        move, arm = self.transport_move, self.transport_arm
+        if move is None or arm is None or self.is_preempt_requested():
+            return self.gripper_holds_object('after the lift')
+        import threading
+        self.transport_move = None
+        check = {}
+
+        def hold_check():
+            try:
+                check['holds'] = self.gripper_holds_object('after the lift')
+            except Exception as e:   # raised again in the pick's thread
+                check['error'] = e
+
+        checker = threading.Thread(target=hold_check, name='lift check', daemon=True)
+        checker.start()
+        try:
+            self.update_cable_guard()
+            self.transport_done = move.finish(arm, self.cable_guard)
+        finally:   # an error of the move still waits for the check, so no check runs on after the pick failed
+            checker.join()
+        if 'error' in check:
+            raise check['error']
+        if not check['holds']:
+            where = 'the arm stands at transport' if self.transport_done[0] else self.transport_done[1]
+            rospy.logwarn(f'transport during pick: the object was lost during the lift; {where}')
+        return check['holds']
 
     def place(self, goal):
         '''

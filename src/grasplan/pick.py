@@ -363,6 +363,7 @@ class PickTools:
                 lambda: self.pick_action_server.is_preempt_requested(),
             )
             self.mtc.named_pose_q = self.robot.arm.get_named_target_values
+            self.mtc.transport_arm = self.robot.arm
             rospy.loginfo('pick: grasps are planned and executed with MoveIt Task Constructor')
         self.pickup_action_client = actionlib.SimpleActionClient('pickup', PickupAction)
         if not self.use_mtc:
@@ -468,19 +469,23 @@ class PickTools:
     def transport_after_pick(self, success):
         '''
         (~plan_transport_during_pick, careful, off in code) after a successful closed-set pick: the move to the
-        transport pose that was planned while the pick executed (mtc_pick_place.TransportMove.finish). A failed move only
-        goes into the status text, the pick stays successful, and the caller's own transport move then runs as before.
-        Never after a failed or cancelled pick: the plan made meanwhile is dropped.
+        transport pose that was planned while the pick executed (mtc_pick_place.TransportMove.finish); MTC usually ran
+        it already during the gripper check after the lift (MtcPickPlace.lift_check), then only its result is reported
+        here. A failed move only goes into the status text, the pick stays successful, and the caller's own transport
+        move then runs as before. Never after a failed or cancelled pick: a plan made meanwhile and not run is dropped.
         '''
         mtc = getattr(self, 'mtc', None)
         move = getattr(mtc, 'transport_move', None)
-        if move is None:
+        done = getattr(mtc, 'transport_done', None)   # the move already ran during the check after the lift
+        if move is None and done is None:
             return
-        mtc.transport_move = None
-        if not success or self.pick_action_server.is_preempt_requested():
+        mtc.transport_move, mtc.transport_done = None, None
+        if not success or (done is None and self.pick_action_server.is_preempt_requested()):
             return
-        mtc.update_cable_guard()
-        moved, how = move.finish(self.robot.arm, mtc.cable_guard)
+        if done is None:
+            mtc.update_cable_guard()
+            done = move.finish(self.robot.arm, mtc.cable_guard)
+        moved, how = done
         if moved:
             rospy.loginfo(f'transport during pick: {how}')
             return
