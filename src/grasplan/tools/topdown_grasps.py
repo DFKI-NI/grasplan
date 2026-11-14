@@ -217,6 +217,45 @@ def height_above_support_top(center, orientation, size, supports):
     return height
 
 
+def support_top_under(center, supports):
+    '''
+    z of the top of the highest support box (supports as for clamp_box_to_support) whose footprint holds the centre,
+    with the centre above the middle of that support; None when no support is under it
+    '''
+    center = np.asarray(center, dtype=float)
+    best = None
+    for support_center, support_orientation, support_size in supports:
+        support_center = np.asarray(support_center, dtype=float)
+        local = quaternion_to_matrix(support_orientation).T @ (center - support_center)
+        if np.any(np.abs(local[:2]) > np.asarray(support_size, dtype=float)[:2] / 2.0) or center[2] < support_center[2]:
+            continue
+        top = support_center[2] + vertical_half_extent(support_orientation, support_size)
+        best = top if best is None else max(best, top)
+    return best
+
+
+def pick_target_report(name, frame, center, orientation, size, supports):
+    '''
+    One line on the pose a pick builds its grasps from: name, frame, position, orientation, box size, how far its most
+    upright axis leans from vertical, and where its bottom is against the support under its centre: the signed gap in
+    cm, negative inside the support, positive above it, also at 0. supports None: the supports were not loaded.
+    '''
+    center = np.asarray(center, dtype=float)
+    rotation = quaternion_to_matrix(orientation)
+    tilt = float(np.degrees(np.arccos(min(1.0, float(np.max(np.abs(rotation[2, :])))))))
+    text = (f'pick target {name}: frame {frame}, position ({center[0]:.3f}, {center[1]:.3f}, {center[2]:.3f}), '
+            f'orientation ({", ".join(f"{v:.3f}" for v in orientation)}), box '
+            f'({", ".join(f"{v:.3f}" for v in size)}), tilt {tilt:.1f} deg from upright, ')
+    if supports is None:
+        return text + 'supports not loaded'
+    top = support_top_under(center, supports)
+    if top is None:
+        return text + 'no support under its centre'
+    gap = center[2] - vertical_half_extent(orientation, size) - top
+    where = 'inside it' if gap < -0.0005 else 'above it' if gap > 0.0005 else 'on it'
+    return text + f'support top at z {top:.3f}, bottom {gap * 100:+.1f} cm from it ({where})'
+
+
 def rests_on_other(center, orientation, size, others, tolerance=0.03):
     '''
     whether a box stands on or in one of the other boxes (others: [(center, orientation, size)]): its centre lies over

@@ -89,6 +89,7 @@ from grasplan.tools.topdown_grasps import (
     clamp_box_to_support,
     depth_below_support_top,
     height_above_support_top,
+    pick_target_report,
     topdown_grasps,
 )
 from grasplan.tools.cable_rank import gate_chunks, joint_path, order_by_predicted_stretch
@@ -798,6 +799,8 @@ class PickTools:
                 + '; perceive it again or pick one that is there'
             )
             return None, None, None
+        self.log_pick_target(external_object_name or f'{object_to_pick.obj_class}_{object_to_pick_id}',
+                             object_to_pick_pose, object_to_pick_bounding_box, supports)
         # in the robot's map frame, like its grasps and the support boxes the open-set checks compare it with (several
         # robots in one sim: robot k's map frame is not the planning frame)
         return (
@@ -805,6 +808,16 @@ class PickTools:
             object_to_pick_bounding_box,
             object_to_pick_id,
         )
+
+    def log_pick_target(self, name, pose_stamped, size, supports):
+        '''
+        one line on the pose the grasps of this pick are built from, closed-set and open-set, also when it rests on its
+        support or floats (a line only for a sunk box would be a one-sided sample)
+        '''
+        p, o = pose_stamped.pose.position, pose_stamped.pose.orientation
+        frame = pose_stamped.header.frame_id
+        loaded = supports_in_frame(supports, frame) if self.clamp_object_boxes_to_support else None
+        rospy.loginfo(pick_target_report(name, frame, (p.x, p.y, p.z), (o.x, o.y, o.z, o.w), size, loaded))
 
     def support_boxes(self, exclude=()):
         '''
