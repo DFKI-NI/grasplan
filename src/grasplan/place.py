@@ -463,43 +463,12 @@ class PlaceTools:
                                     f'the {what} stopped')
             rospy.logwarn(f'could not retract the arm to {pose} after the failed {what}: {why}')
 
-    def picked_by_open_set_fallback(self, object_name):
-        '''
-        whether the held object_name was picked by the pick node's second try with the open-set grasp finder (its
-        ~known_pick_open_set_fallback): that flag is on and its ~open_set_fallback_held names object_name, which is
-        attached. Such an object is placed and inserted as an open-set one (measured height, no untangle detour, no
-        resting roll of its class): its class is known, but it may lie in a pose the class tables do not mean. Flag
-        off: False whatever the parameter holds
-        '''
-        if not rospy.get_param(robot_topic('pick_object_node/known_pick_open_set_fallback'), False):
-            return False
-        held = rospy.get_param(robot_topic('pick_object_node/open_set_fallback_held'), '')
-        return bool(held) and held == object_name and object_name in self.scene.get_attached_objects([object_name])
-
-    def forget_open_set_fallback_held(self):
-        '''
-        after a place or insert goal: the object the pick node's second try noted (~open_set_fallback_held) is no
-        longer attached (let go), so its note goes; flag off: no parameter read beyond the flag, no delete
-        '''
-        if not rospy.get_param(robot_topic('pick_object_node/known_pick_open_set_fallback'), False):
-            return
-        name = robot_topic('pick_object_node/open_set_fallback_held')
-        held = rospy.get_param(name, '')
-        if held and held not in self.scene.get_attached_objects([held]):
-            try:
-                rospy.delete_param(name)
-            except KeyError:
-                pass
-
     def picked_open_set(self, object_name):
         '''
         whether object_name was picked open-set, decided like the pick node does: its class is not in the pick node's
         handcoded grasp catalog (rosparam ~pick_grasp_catalog_param, default
-        /mobipick/pick_object_node/handcoded_grasp_planner_transforms), or the pick node's second try with the
-        open-set grasp finder picked it (picked_by_open_set_fallback); False when that catalog cannot be read
+        /mobipick/pick_object_node/handcoded_grasp_planner_transforms); False when that catalog cannot be read
         '''
-        if self.picked_by_open_set_fallback(object_name):
-            return True
         name = rospy.get_param('~pick_grasp_catalog_param', robot_topic('pick_object_node/handcoded_grasp_planner_transforms'))
         catalog = rospy.get_param(name, None) if name else None
         if not isinstance(catalog, (dict, list)):
@@ -684,7 +653,6 @@ class PlaceTools:
                     break  # the arm moved: the caller decides about a retry
         if not success and self.mtc is not None and self.mtc.executed and not self.place_action_server.is_preempt_requested():
             self.retract_after_failure('place')
-        self.forget_open_set_fallback_held()   # the second try's note goes with the object it named
         if success:
             self.place_action_server.set_succeeded(PlaceObjectResult(success=True))
         elif self.place_action_server.is_preempt_requested():
@@ -696,14 +664,14 @@ class PlaceTools:
                 PlaceObjectResult(success=False), f'place failed: {reason}' if reason else 'place failed'
             )
 
-    def place_sampling_options(self, object_class, support_object, open_set=False):
+    def place_sampling_options(self, object_class, support_object):
         '''
-        the options of the place pose sampling that depend on the object class: an open-set object (no known height,
-        or open_set: picked by the pick node's second try) is tried with yaws around the full circle and released
-        ~open_set_place_clearance above the support; a known object keeps the sampler's default clearance (1 mm) unless
-        ~place_height_offset (m) sets another, e.g. for a gripper that opens slowly above the surface
+        the options of the place pose sampling that depend on the object class: an open-set object (no known height)
+        is tried with yaws around the full circle and released ~open_set_place_clearance above the support; a known
+        object keeps the sampler's default clearance (1 mm) unless ~place_height_offset (m) sets another, e.g. for a
+        gripper that opens slowly above the surface
         '''
-        if object_class in OBJECT_HEIGHTS and not open_set:
+        if object_class in OBJECT_HEIGHTS:
             height_offset = rospy.get_param('~place_height_offset', None)
             if height_offset is None:
                 return {}
@@ -871,11 +839,7 @@ class PlaceTools:
 
         # generate random place poses within the plane
         object_class_tbp = separate_object_class_from_id(object_to_be_placed)[0]
-        # picked by the pick node's second try: placed as an open-set object, whatever its class
-        open_set = self.picked_by_open_set_fallback(object_to_be_placed)
-        sampling_options = self.place_sampling_options(object_class_tbp, support_object, open_set=open_set)
-        if open_set:
-            sampling_options['open_set'] = True   # no resting roll of the class (gen_place_poses_from_plane)
+        sampling_options = self.place_sampling_options(object_class_tbp, support_object)
         # drawn within ~place_max_reach; when none of them has a free footprint, drawn again within
         # ~place_max_reach_fallback (the comfortable re-pick distance is no hard limit, MTC decides the reach)
         radii = self.place_reach_radii()
@@ -909,7 +873,7 @@ class PlaceTools:
         self.place_poses_pub.publish(global_place_poses)
         attached_object = self.scene.get_attached_objects([object_to_be_placed])[object_to_be_placed].object
         box_size = list(attached_object.primitives[0].dimensions)
-        if open_set or object_class_tbp not in OBJECT_HEIGHTS:
+        if object_class_tbp not in OBJECT_HEIGHTS:
             self.publish_place_box_markers(global_place_poses, box_size)
 
         # Keep the observed occupancy map by default so unknown objects remain
@@ -936,7 +900,7 @@ class PlaceTools:
             tried['free'] = None if free is None else (free, len(global_place_poses.objects))
         for i in range(0, len(global_place_poses.objects), max_batch_size):
             # for 25 objs and max_batch_size of 10, "i" would be 0 in the first loop, 10 in the 2nd and 20 in the last
-            if i and (open_set or object_class_tbp not in OBJECT_HEIGHTS):
+            if i and object_class_tbp not in OBJECT_HEIGHTS:
                 self.publish_place_box_markers(global_place_poses, box_size)
             batch_poses = self.extract_batch(global_place_poses, i, max_batch_size)
             goal = self.make_place_goal_msg(

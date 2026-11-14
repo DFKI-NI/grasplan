@@ -282,12 +282,9 @@ def gen_place_poses_from_plane(
     yaws: Optional[List[float]] = None,
     height_offset: float = 0.001,
     within: Optional[tuple] = None,
-    open_set: bool = False,
 ):
     '''
     random sample poses within a plane and populate object list msg with the result
-    open_set: a known object placed as an open-set one (picked by the pick node's second try): no resting roll of its
-        class, its attached box is the measured one
 
     yaw_range: a single pose per position gets a random yaw in [0, yaw_range)
     yaws: the yaws every position is tried with when more than 20 poses are asked for
@@ -348,7 +345,7 @@ def gen_place_poses_from_plane(
         roll = 0.0
         pitch = 0.0
         yaw = round(random.uniform(0.0, yaw_range), 4)
-        roll = 0.0 if open_set else resting_roll(object_class)
+        roll = resting_roll(object_class)
         if number_of_poses > 20:
             rospy.loginfo(f'trying {len(yaws)} yaws for each pose')
             for yaw in yaws:
