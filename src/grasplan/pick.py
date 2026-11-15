@@ -1861,6 +1861,11 @@ class PickTools:
             self.grasp_funnel('topdown_fallback', fallback)
             if fallback:
                 result = self._pick_with_action(object_to_pick, fallback, support_surface_name)
+        if external_grasp_candidates is None:
+            result = self.offer_extra_grasps(object_to_pick, object_pose, bounding_box, support_surface_name, grasp_type,
+                                             single, result)
+            if result is False:
+                return False   # preempted
         if self.mtc is not None and self.mtc.executed and getattr(self.mtc, 'executed_grasp', None) is not None:
             self.grasp_funnel('executed', [self.mtc.executed_grasp])
         # handle moveit pick result
@@ -1887,6 +1892,40 @@ class PickTools:
             if self.mtc is not None and self.mtc.executed and not self.pick_action_server.is_preempt_requested():
                 self.retract_after_failure('pick')
         return False
+
+    def offer_extra_grasps(self, object_to_pick, object_pose, bounding_box, support_surface_name, grasp_type, single,
+                           result):
+        '''
+        ~extra_grasp_sets (careful, default off): a closed-set pick whose stored grasps all failed in planning, through
+        the whole pipeline (the single plan and the old way), offers the class's extra grasps through the same pipeline
+        (grasp_planner.extra_grasps_msgs, ids after the stored ones). The arm may already stand at its pre-pick pose
+        (untangle poses, start move of the old way); they come only when no pick stage of this goal ran: the goal-scoped latch
+        mtc.pick_stage_executed is set before every gripper command of a pick solution (the pre-open too, also when it
+        fails) and every arm motion from the move to the pregrasp on, so it or a detour or a cancel rules them out.
+        Returns the new result, or the given one when nothing was offered: a success, a pick stage executed, a cancel,
+        no server answer (None), the flag off or no extras.
+        '''
+        if self.mtc is not None:
+            # pre-pick repositioning (the old way's untangle poses, the start move) is allowed before the extras, as
+            # before the stored grasps; any pick stage of this goal that ran (the latch), or a detour, is not
+            pick_moved = bool(getattr(self.mtc, 'pick_stage_executed', False) or getattr(self, 'detoured', ''))
+        else:
+            pick_moved = not self.arm_did_not_move(result)
+        if (result in (MoveItErrorCodes.SUCCESS, None) or pick_moved
+                or self.pick_action_server.is_preempt_requested() or not hasattr(self.grasp_planner, 'extra_grasps_msgs')):
+            return result
+        extra = self.grasp_planner.extra_grasps_msgs(
+            object_to_pick.get_object_class_and_id_as_string(), object_pose, self.robot.arm.get_end_effector_link(),
+            grasp_type)
+        if not extra:
+            return result
+        rospy.logwarn(f'every stored grasp of {object_to_pick.get_object_class_and_id_as_string()} failed before any '
+                      f'pick stage ran: trying its {len(extra)} extra grasps ({extra[0].id} to {extra[-1].id}, '
+                      f'~extra_grasp_sets)')
+        self.note_regrasp_info(extra, [None] * len(extra), object_pose, bounding_box, support_surface_name, False)
+        if single is not None:
+            return self.offer_single_plan(object_to_pick, extra, support_surface_name, single)
+        return self.offer_grasps(object_to_pick, extra, support_surface_name, False)
 
     def single_plan_for(self, untangle, open_set):
         '''

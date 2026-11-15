@@ -30,6 +30,19 @@ For the handcoded planner, known classes are the keys below the
 ignored, so (for example) `relay_3` is checked as class `relay`. The fallback
 forwards the original object text unchanged.
 
+An optional second grasp list per class, `handcoded_grasp_planner_extra_transforms` (same format), is used only with
+`extra_grasp_sets` (default `false`, careful, read on every pick), and only after the whole pick with the stored grasps
+(the single plan and the old way) failed in planning: then its grasps go through the same pipeline, with the
+ids after the stored ones (`grasp_32` ... for 32 stored grasps). A pick the stored grasps can do never sees them; once
+they are exhausted an extra grasp may run, also on an object the extras were not made for (for example a standing
+can). The failure text of a pick that tried both is the one of the extras. Extras never make a class known. The arm may
+already stand at its pre-pick pose (the untangle poses and the start move of the old way), as the stored grasps did;
+any pick stage of the goal that ran rules the extras out: any gripper command of a pick solution (its pre-open too,
+also when it fails; a single plan sends it before its untangle legs) and any arm motion from the move to the pregrasp
+on; so do a detour after a refused pick and a cancel. The gripper opening before planning is no pick stage. Without
+MTC (`use_mtc` false, MoveIt's pickup) only the planning and IK failure codes MoveIt reports let them run; that
+path is not tested with extras.
+
 The fallback is configured by these private parameters on `pick_object_node`:
 
 - `anygrasp_action_name` (default `/mobipick/grasp_object`)
