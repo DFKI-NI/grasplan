@@ -109,7 +109,7 @@ The fallback is configured by these private parameters on `pick_object_node`:
   object starts inside it). The entry stays out of the planning scene until the next goal builds the scene from the
   pose selector again (as the open-set path does with boxes on its target), whatever the end of this goal; the pose
   selector keeps it, and a successful pick says it was left out. Meanwhile named arm moves have no box for the part of
-  a wrongly judged distinct object outside the target's box A heuristic: geometry cannot prove
+  a wrongly judged distinct object outside the target's box. A heuristic: geometry cannot prove
   that two boxes are one object, and the node knows no container classes, so distinct contents filling most of a
   known box can be taken for a copy of it
 
