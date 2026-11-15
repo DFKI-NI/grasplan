@@ -169,9 +169,11 @@ def compute_object_height_for_insertion(
 
 
 def gen_insert_poses_from_obj(
-    object_class, support_object_pose, obj_height, frame_id='map', same_orientation_as_support_obj=False
+    object_class, support_object_pose, obj_height, frame_id='map', same_orientation_as_support_obj=False, open_set=False
 ):
     '''
+    open_set: a known object inserted as an open-set one (picked by the pick node's second try): no resting roll of its
+        class
     if same_orientation_as_support_obj is True then the object is aligned with the support object (e.g. box)
     if same_orientation_as_support_obj is False then 360 degree orientations are used to place the object (can
         be used if first time fails)
@@ -188,7 +190,7 @@ def gen_insert_poses_from_obj(
     roll = 0.0
     pitch = 0.0
     yaw = 0.0
-    roll = resting_roll(object_class)
+    roll = 0.0 if open_set else resting_roll(object_class)
 
     if not same_orientation_as_support_obj:
         for i in range(8):
