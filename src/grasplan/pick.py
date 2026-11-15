@@ -94,6 +94,7 @@ from grasplan.tools.topdown_grasps import (
     same_object_copy,
     topdown_grasps,
 )
+from grasplan.tools.backoff_rank import backoff_step_counts, order_by_backoff
 from grasplan.tools.cable_rank import gate_chunks, joint_path, order_by_predicted_stretch
 from grasplan import cable_shaping
 from grasplan.tools import cable_path
@@ -147,6 +148,11 @@ def pick_from_current_state():
     '''~open_set_pick_from_current_state: off by default; the sim launch profile switches it on
     (Oscar 2026-09-28)'''
     return bool(rospy.get_param('~open_set_pick_from_current_state', False))
+
+
+def prefer_less_backoff_on():
+    '''~open_set_prefer_less_backoff: off by default; the launch profile switches it on (PickTools.prefer_less_backoff)'''
+    return bool(rospy.get_param('~open_set_prefer_less_backoff', False))
 
 
 def anygrasp_default_names(prefix):
@@ -1694,6 +1700,7 @@ class PickTools:
             self.mtc.regrasp_info = {}   # set per pick by note_regrasp_info
             self.mtc.grasp_ik_branches = {}   # the cable-ranked IK branches per grasp
         self.cable_gate_passing = 0
+        self.grasp_backoff = {}   # per goal: grasp id -> back-off of the table clearance step (raise_low_grasps)
         self.grasps_tried, self.pick_started = 0, time.time()   # for the failure text: how hard this pick tried
         self.open_set_pick = external_grasp_candidates is not None   # the cable replay detour is for closed-set picks
         self.detoured = ''   # the pose the cable replay detour moved the arm to in this pick
@@ -1768,6 +1775,7 @@ class PickTools:
                 self.note_regrasp_info(grasps, widths, object_pose, bounding_box, support_surface_name, True)
                 grasps = self.raise_low_grasps(grasps, support_surface_name, widths, sink=low)
                 self.grasp_funnel('clearance_kept', grasps)
+                grasps = self.prefer_less_backoff(grasps)
                 candidates = grasps
                 grasps = self.reachable_external_grasps(grasps)
                 self.grasp_funnel_ranked(grasps)
@@ -2360,6 +2368,9 @@ class PickTools:
         min_height = rospy.get_param('~open_set_min_grasp_height', 0.0)
         min_fingertip_height = rospy.get_param('~open_set_min_fingertip_height', 0.0)
         max_backoff = rospy.get_param('~open_set_max_grasp_backoff', 0.0)
+        # grasp id -> how far it was moved back (m, 0 = not moved back, a sink forward counts as 0), read by
+        # prefer_less_backoff; a grasp the step did not measure (early return, object not on this surface) has none
+        self.grasp_backoff = {}
         if (min_height <= 0.0 and min_fingertip_height <= 0.0) or not support_surface_name or not grasps:
             return grasps
         support = self.scene_objects([support_surface_name]).get(support_surface_name)
@@ -2380,7 +2391,7 @@ class PickTools:
             approach = tf.transformations.quaternion_matrix(q)[:3, 0]
             if pose.position.z < top - 0.05:
                 kept.append(grasp)
-                continue  # the object is not on this surface (e.g. fell to the floor)
+                continue  # the object is not on this surface (e.g. fell to the floor): back-off unknown
             # -inf: no TCP limit (a sink then goes by the fingertips only)
             missing = top + min_height - pose.position.z if min_height > 0.0 else -float('inf')
             if envelope:
@@ -2393,12 +2404,14 @@ class PickTools:
                     pose.position.y -= shift * approach[1]
                     pose.position.z -= shift * approach[2]
                     lowered.append(f'{grasp.id} {missing * 100:.1f} cm')
+                self.grasp_backoff[grasp.id] = 0.0
                 kept.append(grasp)
                 continue
             if approach[2] > -0.3:
                 if envelope and lowest < top + min_fingertip_height:
                     dropped.append(f'{grasp.id} ({(lowest - top) * 100:+.1f} cm)')
                 else:
+                    self.grasp_backoff[grasp.id] = 0.0
                     kept.append(grasp)
                 continue
             shift = missing / -approach[2]
@@ -2409,6 +2422,7 @@ class PickTools:
             pose.position.y -= shift * approach[1]
             pose.position.z -= shift * approach[2]
             raised.append(f'{grasp.id} +{missing * 100:.1f} cm')
+            self.grasp_backoff[grasp.id] = shift
             mtc = getattr(self, 'mtc', None)
             info = getattr(mtc, 'regrasp_info', {}).get(grasp.id) if mtc is not None else None
             if info is not None:   # backed off from the table on purpose, the re-grasp must not push it deeper
@@ -2428,6 +2442,26 @@ class PickTools:
                           f'{max_backoff * 100:.1f} cm back): '
                           f'{", ".join(dropped)}')
         return kept
+
+    def prefer_less_backoff(self, grasps):
+        '''
+        ~open_set_prefer_less_backoff (off by default, re-read on every goal): the grasps come in steps of how far
+        raise_low_grasps moved them back along their approach (5 mm, smallest first), each step in its previous order:
+        the further back, the less of the pads reaches around the object (rig, heavy lying can, approach 39 deg off
+        vertical: moved back 0.9 cm held, 1.3 cm dropped). A heuristic, no guarantee of a firmer grasp. Done once,
+        before the IK pre-filter, whose two groups (collision-free IK first) and the cable ranking after it partition
+        stably: the keys are cable pass, collision-free IK, back-off step, previous order. The offer limit
+        (~external_grasp_max_attempts) cuts after this order, so it changes which grasps are offered, not only their
+        order (limit_offer logs the steps it kept). A grasp without a measured back-off counts as 0 ("unknown" in the
+        log). Order only: every offered grasp is planned and checked as before.
+        '''
+        if not grasps or not prefer_less_backoff_on():
+            return grasps
+        backoff = getattr(self, 'grasp_backoff', None) or {}
+        ordered = order_by_backoff(grasps, [backoff.get(g.id) for g in grasps])
+        rospy.loginfo('prefer less back-off: grasps in order of how far they were moved back: ' + ', '.join(
+            f'{g.id} ' + (f'{backoff[g.id] * 100:.1f} cm' if g.id in backoff else 'unknown') for g in ordered))
+        return ordered
 
     def add_fallback_reason(self):
         '''
@@ -2861,6 +2895,17 @@ class PickTools:
         '''at most ~external_grasp_max_attempts grasps; the cable gate count follows'''
         if 0 < self.external_grasp_max_attempts < len(grasps):
             rospy.loginfo(f'offering the best {self.external_grasp_max_attempts} of {len(grasps)} grasps')
+            backoff = getattr(self, 'grasp_backoff', None) or {}
+            if backoff and prefer_less_backoff_on():
+                # the limit cuts after the back-off order: which grasps are offered changes, so say per group
+                cut = grasps[: self.external_grasp_max_attempts]
+                free = {g.id for g in (getattr(self, 'ik_prefilter', None) or ([], [], []))[0]}
+                rospy.loginfo(
+                    'prefer less back-off: before / after the offer limit: '
+                    f'predicted cable pass {self.cable_gate_passing} / '
+                    f'{min(self.cable_gate_passing, len(cut))}, collision-free IK '
+                    f'{sum(g.id in free for g in grasps)} / {sum(g.id in free for g in cut)}; per back-off step '
+                    f'(5 mm) {backoff_step_counts(grasps, backoff)} / {backoff_step_counts(cut, backoff)}')
             grasps = grasps[: self.external_grasp_max_attempts]
         self.cable_gate_passing = min(self.cable_gate_passing, len(grasps))
         if self.cable_gate_passing:
