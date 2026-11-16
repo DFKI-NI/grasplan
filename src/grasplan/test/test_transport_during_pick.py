@@ -352,6 +352,34 @@ class AttachSignal(unittest.TestCase):
     def test_a_failed_attach_does_not(self):
         self.run_pick(MoveItErrorCodes.FAILURE).attached.assert_not_called()
 
+    def run_tail(self, attach_code):
+        '''the lift planned again after a re-grasp: its attach reports too, as the attach of the original solution'''
+        from test_regrasp_overclose import FakeSub
+        m = self.harness.mtc(self, MoveItErrorCodes.SUCCESS)
+        subs = [FakeSub() for _ in range(3)]   # allow gripper contacts, attach, lift
+        for sub in subs:
+            sub.trajectory = mock.Mock()
+            sub.trajectory.joint_trajectory.points = [1]
+        m.chosen_solution.toMsg.return_value.sub_trajectory = subs
+        m.pick_tail = {'object': TARGET, 'neighbours': [], 'support': None, 'retreat': None, 'touch': []}
+        m.allow_octomap_contact = False
+        m.gripper_links, m.eef_link = [], 'gripper_tcp'
+        m.start_task = lambda name: (mock.Mock(), [])
+        m.move_relative = lambda *a: mock.Mock()
+        m.plan = lambda task, what: True
+        m.pick_progress = {}
+        m.attach = lambda *a: attach_code
+        m.transport_move = mock.Mock()
+        with mock.patch.object(mpp, 'stages'):
+            m.execute_tail((TARGET, []))
+        return m.transport_move
+
+    def test_the_attach_after_a_regrasp_starts_the_planning(self):
+        self.run_tail(MoveItErrorCodes.SUCCESS).attached.assert_called_once_with()
+
+    def test_a_failed_attach_after_a_regrasp_does_not(self):
+        self.run_tail(MoveItErrorCodes.FAILURE).attached.assert_not_called()
+
 
 class LogMode(TransportMoveTest):
     mode = 'log'
