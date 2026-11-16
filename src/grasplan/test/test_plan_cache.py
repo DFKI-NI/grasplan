@@ -247,6 +247,35 @@ class TestStartMove(Glue):
         self.assertEqual(arm.starts[-1], 'current')
 
 
+class TestPlaceNode(Glue):
+    '''the place node's named moves (the untangle detour before a place; the insert node runs them through its own
+    PlaceTools) take the same cache when that node has the flag'''
+    def place_tools(self, plans):
+        import grasplan.place as place
+        tools = place.PlaceTools.__new__(place.PlaceTools)
+        tools.robot = NS(arm=FakeArm(plans))
+        tools.mtc = NS(cable_guard=self.guard, update_cable_guard=lambda: None)
+        return tools
+
+    def test_the_second_detour_leg_from_the_same_start_reuses_the_checked_plan(self):
+        clean = trajectory(*CLEAN)
+        self.assertTrue(self.place_tools([clean]).move_arm_to_posture(POSES[0]))
+        tools = self.place_tools([])
+        self.now = q_of(CLEAN[0], 0.003)
+        self.assertTrue(tools.move_arm_to_posture(POSES[0]))
+        self.assertEqual((tools.robot.arm.executed, tools.robot.arm.planned, self.check.call_count), ([clean], 0, 1))
+        self.assertEqual(tools.arm_move_report['plans'][0][:2], (POSES[0], 0))
+
+    def test_without_the_flag_the_place_node_plans_every_move(self):
+        self.params = {}
+        for _ in range(2):
+            tools = self.place_tools([trajectory(*CLEAN)])
+            self.assertTrue(tools.move_arm_to_posture(POSES[0]))
+            self.assertEqual(tools.robot.arm.planned, 1)
+        self.assertEqual(self.check.call_count, 2)
+        self.assertIsNone(mpp._named_plan_cache)
+
+
 class TestCollisionCheck(unittest.TestCase):
     def setUp(self):
         self.requests, self.invalid_at = [], None
