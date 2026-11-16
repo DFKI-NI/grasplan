@@ -237,6 +237,11 @@ class PlaceTools:
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
 
+    def clear_octomap(self, before='placing'):
+        '''~clear_octomap: empty move_group's occupancy map before placing or inserting (InsertTools shares this switch)'''
+        rospy.logwarn(f'Clearing octomap before {before}')
+        rospy.ServiceProxy('clear_octomap', Empty)()
+
     def run_place_goal(self, goal, action_server, action_client_helper):
         '''
         execute a moveit_msgs/PlaceGoal with move_group's place action or, in MTC mode, with MoveIt Task
@@ -916,8 +921,7 @@ class PlaceTools:
         # collision obstacles during placement.  Clearing is retained as an
         # opt-in diagnostic/workaround for deployments that explicitly need it.
         if self.clear_octomap_flag:
-            rospy.logwarn('Clearing octomap before placing')
-            rospy.ServiceProxy('clear_octomap', Empty)()
+            self.clear_octomap('placing')
 
         if not self.use_mtc and not action_client.wait_for_server(
             timeout=rospy.Duration(self.moveit_action_server_timeout)

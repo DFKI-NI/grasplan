@@ -404,7 +404,7 @@ class InsertTools:
         # Insertion shares PlaceTools' opt-in switch.  By default the octomap
         # stays intact so obstacles outside the current camera view are kept.
         if self.place.clear_octomap_flag:
-            self.place.clear_octomap()
+            self.place.clear_octomap('inserting')
 
         if self.insert_action_server.is_preempt_requested():
             return False
