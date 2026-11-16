@@ -57,7 +57,7 @@ from moveit_msgs.msg import (
     PlanningScene,
     PlanningSceneComponents,
 )
-from moveit_msgs.srv import GetPlanningScene, GetPlanningSceneRequest, GetPositionIK, GetPositionIKRequest
+from moveit_msgs.srv import ApplyPlanningScene, ApplyPlanningSceneRequest, GetPlanningScene, GetPlanningSceneRequest, GetPositionIK, GetPositionIKRequest
 from grasplan.msg import (
     GenerateGraspsAction,
     GenerateGraspsGoal,
@@ -1714,6 +1714,8 @@ class PickTools:
             object_to_pick, ignore_object_list=ignore_object_list, external_object=external_object
         )
         self.scene_refresh_end(self.scene_before_refresh)
+        # ~clear_target_octomap_cells waits for the mask to apply; stamped only with it on (no ROS clock needed else)
+        self.target_added_at = rospy.get_time() if rospy.get_param('~clear_target_octomap_cells', False) else None
 
         if object_pose is None:
             return False
@@ -1738,6 +1740,7 @@ class PickTools:
         self.cable_gate_passing = 0
         self.grasp_backoff = {}   # per goal: grasp id -> back-off of the table clearance step (raise_low_grasps)
         self.grasps_tried, self.pick_started = 0, time.time()   # for the failure text: how hard this pick tried
+        self.target_cells_cleared = False   # ~clear_target_octomap_cells: once per pick, before its first MTC plan
         self.open_set_pick = external_grasp_candidates is not None   # the cable replay detour is for closed-set picks
         self.detoured = ''   # the pose the cable replay detour moved the arm to in this pick
 
@@ -3054,6 +3057,7 @@ class PickTools:
         goal.allowed_planning_time = self.planning_time
         rospy.loginfo(f'planning pick of {goal.target_name} with MTC, {len(grasps)} grasps')
         # grasp_ik_states stays set for every batch of this pick (pick_object resets it for the next pick)
+        self.clear_target_octomap_cells(goal.target_name)
         pickup_result = self.mtc.pickup(goal)
         result = pickup_result.error_code.val
         # not during the single plan: its pickup again would replay the untangle legs from the detour pose and check the
@@ -3072,6 +3076,48 @@ class PickTools:
                 f'mtc executed grasp {executed.id!r} (quality {executed.grasp_quality:.3f}) out of {len(grasps)} offered'
             )
         return result
+
+    def clear_target_octomap_cells(self, target_name):
+        '''
+        ~clear_target_octomap_cells (careful flag, off in code): once per pick, right before its first MTC plan, free the
+        octomap cells that overlap the target's box as the planning scene holds it (unpadded). The camera maps the
+        inside of an object while it is not yet a scene object (the perceive before the pick); once the object is in
+        the scene it is masked out of the octomap and the updater neither adds nor clears cells inside it, so they stay
+        and the lifted object later counts as colliding with its own old place. move_group's ~clear_octomap_box does
+        it under the map's lock; without that service (a move_group without it): a warning, the pick goes on.
+        '''
+        if getattr(self, 'target_cells_cleared', True) or not rospy.get_param('~clear_target_octomap_cells', False):
+            return
+        self.target_cells_cleared = True
+        target = self.scene.get_objects([target_name]).get(target_name)
+        if target is None:
+            rospy.logwarn(f'clear target octomap cells: {target_name} is not in the planning scene; nothing cleared')
+            return
+        name = rospy.get_param('~clear_octomap_box_service', 'move_group/clear_octomap_box')
+        # a camera cloud taken before the target was in the scene can still be integrated after its ADD (0.51 s seen in
+        # the sim) and make cells inside it again; clear only ~clear_target_octomap_cells_delay s after the ADD
+        delay = float(rospy.get_param('~clear_target_octomap_cells_delay', 1.0))
+        added = getattr(self, 'target_added_at', None)
+        since = rospy.get_time() - added if added is not None else None
+        if since is not None and since < delay:
+            rospy.sleep(delay - since)
+        request = ApplyPlanningSceneRequest()
+        request.scene.is_diff = True
+        request.scene.world.collision_objects = [target]
+        try:
+            rospy.wait_for_service(name, timeout=1.0)
+            done = rospy.ServiceProxy(name, ApplyPlanningScene)(request).success
+        except (rospy.ROSException, rospy.ServiceException) as error:
+            rospy.logwarn(f'clear target octomap cells: {name} unavailable ({error}); the octomap cells inside '
+                          f'{target_name} stay')
+            return
+        if done:
+            when = f'{rospy.get_time() - added:.1f} s after it was added to the scene' if added is not None else \
+                'at an unknown time after it was added to the scene'
+            rospy.loginfo(f'cleared the octomap cells inside {target_name} before planning its pick, {when}')
+        else:
+            rospy.logwarn(f'clear target octomap cells: {name} refused the box of {target_name} (no octomap, or an '
+                          f'unknown frame); the cells stay')
 
     def untangle_poses_before_pick(self, obj_class):
         '''
