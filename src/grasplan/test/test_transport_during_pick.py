@@ -11,7 +11,8 @@ import unittest
 from types import SimpleNamespace as NS
 from unittest import mock
 
-from moveit_msgs.msg import AttachedCollisionObject, CollisionObject, PlanningScene, RobotState
+from moveit_msgs.msg import (AttachedCollisionObject, CollisionObject, MoveItErrorCodes, PlanningScene,
+                             PlanningSceneComponents, RobotState)
 from moveit_task_constructor_msgs.msg import Solution, SubTrajectory
 from sensor_msgs.msg import JointState
 
@@ -24,8 +25,10 @@ from test_start_move import FakeArm, trajectory
 TARGET = 'relay_1'
 
 
-def solution(end_waypoint, attached=TARGET, arm_motion=True):
-    '''an MTC pick solution: an arm motion ending at end_waypoint (deg), then the attach (scene with the object)'''
+def solution(end_waypoint, attached=TARGET, arm_motion=True, collisions_only_after=0):
+    '''an MTC pick solution: an arm motion ending at end_waypoint (deg), then the attach (scene with the object), then
+    collisions_only_after stages that only change the allowed collisions (scene diff without a robot state, as after a
+    lift that tolerated a touching neighbour)'''
     move = SubTrajectory()
     if arm_motion:
         move.trajectory = trajectory(CLEAN[0], end_waypoint)
@@ -37,7 +40,45 @@ def solution(end_waypoint, attached=TARGET, arm_motion=True):
         aco.object = CollisionObject(id=attached, operation=CollisionObject.APPEND)
         state.attached_collision_objects.append(aco)
     attach.scene_diff = PlanningScene(robot_state=state, is_diff=True)
-    return Solution(sub_trajectory=[move, attach])
+    collisions_only = [SubTrajectory(scene_diff=PlanningScene(is_diff=True)) for _ in range(collisions_only_after)]
+    return Solution(sub_trajectory=[move, attach] + collisions_only)
+
+
+class FakeScene:
+    '''get_planning_scene: one (attached, in_world) of TARGET per call, the last one repeats; error: raised instead'''
+    def __init__(self, states, error=None):
+        self.states, self.error, self.requests = list(states), error, []
+
+    def __call__(self, request):
+        self.requests.append(request)
+        if self.error:
+            raise self.error
+        attached, in_world = self.states.pop(0) if len(self.states) > 1 else self.states[0]
+        scene = PlanningScene()
+        if attached:
+            scene.robot_state.attached_collision_objects.append(
+                AttachedCollisionObject(link_name='gripper_tcp', object=CollisionObject(id=TARGET)))
+        scene.world.collision_objects.append(CollisionObject(id='table_1'))
+        if in_world:
+            scene.world.collision_objects.append(CollisionObject(id=TARGET))
+        return NS(scene=scene)
+
+
+class FakeValidity:
+    '''check_state_validity: valid or not with contact pairs; error: raised instead'''
+    def __init__(self, valid=True, contacts=(), error=None):
+        self.valid, self.contacts, self.error, self.requests = valid, list(contacts), error, []
+
+    def __call__(self, request):
+        self.requests.append(request)
+        if self.error:
+            raise self.error
+        return NS(valid=self.valid, contacts=[NS(contact_body_1=a, contact_body_2=b) for a, b in self.contacts])
+
+
+class PlanArm(FakeArm):
+    def get_name(self):
+        return 'arm'
 
 
 class Params:
@@ -79,12 +120,19 @@ class TransportMoveTest(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
         mpp.TransportMove._running = None
+        self.scene = FakeScene([(True, False)])   # after the attach: attached, no world copy
+        self.validity = FakeValidity()
 
-    def begin(self, plans, end=CLEAN[-1], **kwargs):
-        self.planner = FakeArm(plans)
-        with mock.patch.object(mpp, '_transport_planning_commander', lambda group: self.planner):
+    def begin(self, plans, end=CLEAN[-1], join=True, attach=True, **kwargs):
+        '''TransportMove.begin; attach: the pick thread reports its attach right away'''
+        self.planner = PlanArm(plans)
+        with mock.patch.object(mpp, '_transport_planning_commander', lambda group: self.planner), \
+                mock.patch.object(mpp, '_transport_scene', lambda: self.scene), \
+                mock.patch.object(mpp, '_transport_validity', lambda: self.validity):
             move = mpp.TransportMove.begin('arm', solution(end, **kwargs), TARGET, self.guard)
-        if move is not None:
+        if move is not None and attach:
+            move.attached()
+        if move is not None and join:
             move.runner.join(120.0)   # the chain replay of a refused plan takes seconds on one CPU
             self.assertFalse(move.runner.is_alive())
         return move
@@ -116,6 +164,26 @@ class EndState(unittest.TestCase):
         state, why = mpp.solution_end_state(solution(CLEAN[-1], arm_motion=False), TARGET)
         self.assertIsNone(state)
         self.assertIn('no arm motion', why)
+
+    def test_stages_after_the_attach_without_a_robot_state_are_skipped(self):
+        '''a lift that tolerated a touching neighbour ends with a stage that only changes the allowed collisions: its
+        scene diff has no robot state, so the end state comes from the last scene that has one'''
+        state, q = mpp.solution_end_state(solution(CLEAN[-1], collisions_only_after=2), TARGET)
+        self.assertIsNotNone(state, q)
+        self.assertEqual([a.object.id for a in state.attached_collision_objects], [TARGET])
+        self.assertEqual(state.attached_collision_objects[0].object.operation, CollisionObject.ADD)
+        for name, value in zip(NAMES, CLEAN[-1]):
+            self.assertAlmostEqual(q[name], math.radians(value))
+
+    def test_the_last_robot_state_must_hold_the_object(self):
+        '''skipping the empty scenes still refuses when the last robot state has no object attached, or there is none'''
+        state, why = mpp.solution_end_state(solution(CLEAN[-1], attached='', collisions_only_after=1), TARGET)
+        self.assertIsNone(state)
+        self.assertIn('not attached', why)
+        empty = Solution(sub_trajectory=[SubTrajectory(scene_diff=PlanningScene(is_diff=True))])
+        state, why = mpp.solution_end_state(empty, TARGET)
+        self.assertIsNone(state)
+        self.assertIn('has a robot state', why)
 
 
 class Enforce(TransportMoveTest):
@@ -186,6 +254,105 @@ class Enforce(TransportMoveTest):
             gate.set()
 
 
+class LiveAttach(TransportMoveTest):
+    '''the background planning starts only after the pick thread reported its attach, the live scene shows the object
+    attached without its world copy and the start state is valid there: a start state that carries the object while
+    its world copy is still there collides with that copy (MoveIt then plans from a randomly moved start and prepends an
+    unchecked move to it)'''
+    def test_waits_for_the_attach_of_the_pick_thread(self):
+        clean = trajectory(*CLEAN)
+        move = self.begin([clean], join=False, attach=False)
+        time.sleep(0.3)
+        self.assertTrue(move.runner.is_alive())
+        self.assertEqual((self.planner.starts, self.scene.requests, self.validity.requests), ([], [], []))
+        move.attached()
+        move.runner.join(120.0)
+        self.assertIs(move.trajectory, clean)
+        wanted = PlanningSceneComponents.ROBOT_STATE_ATTACHED_OBJECTS | PlanningSceneComponents.WORLD_OBJECT_NAMES
+        self.assertEqual(self.scene.requests[0].components.components, wanted)
+        checked = self.validity.requests[0]
+        self.assertIs(checked.robot_state, move.start_state)   # the end of the pick with the object attached
+        self.assertEqual(checked.group_name, 'arm')
+
+    def test_no_attach_in_time_no_plan(self):
+        self.params.values['plan_transport_during_pick_attach_wait_s'] = 0.2
+        move = self.begin([trajectory(*CLEAN)], attach=False)
+        self.assertIsNone(move.trajectory)
+        self.assertIn(f'the pick did not attach {TARGET} within 0.2 s', move.reason)
+        self.assertEqual((self.planner.starts, self.scene.requests), ([], []))
+
+    def test_a_cancel_ends_the_wait_at_once(self):
+        move = self.begin([trajectory(*CLEAN)], join=False, attach=False)
+        started = time.monotonic()
+        move.cancel()
+        move.runner.join(5.0)
+        self.assertLess(time.monotonic() - started, 1.0)
+        self.assertIsNone(move.trajectory)
+        self.assertIn('the pick ended before', move.reason)
+        self.assertEqual(self.planner.starts, [])
+
+    def test_the_live_scene_must_show_the_attach_without_the_world_copy(self):
+        for state, why in (((True, True), 'its world copy is still there'), ((False, False), 'not attached')):
+            self.scene = FakeScene([state])
+            move = self.begin([trajectory(*CLEAN)])
+            self.assertIsNone(move.trajectory)
+            self.assertIn(f'not attached in the planning scene after the attach ({why})', move.reason)
+            self.assertEqual((self.planner.starts, self.validity.requests), ([], []))
+
+    def test_a_start_state_in_collision_gives_no_plan_and_names_the_contacts(self):
+        self.validity = FakeValidity(valid=False, contacts=[(TARGET, 'table_2'), (TARGET, 'table_2')])
+        move = self.begin([trajectory(*CLEAN)])
+        self.assertIsNone(move.trajectory)
+        self.assertIn(f'the start state is in collision in the live scene ({TARGET}-table_2)', move.reason)
+        self.assertEqual(self.planner.starts, [])
+
+    def test_a_service_error_or_an_invalid_wait_gives_no_plan(self):
+        self.scene = FakeScene([(True, False)], error=RuntimeError('scene down'))
+        self.assertIn('reading the planning scene failed (scene down)', self.begin([trajectory(*CLEAN)]).reason)
+        self.scene = FakeScene([(True, False)])
+        self.validity = FakeValidity(error=RuntimeError('check down'))
+        self.assertIn('checking the start state failed (check down)', self.begin([trajectory(*CLEAN)]).reason)
+        self.validity = FakeValidity()
+        for value in (0.0, 'x', float('nan')):
+            self.params.values['plan_transport_during_pick_attach_wait_s'] = value
+            move = self.begin([trajectory(*CLEAN)])
+            self.assertIsNone(move.trajectory)
+            self.assertIn('invalid attach wait', move.reason)
+        self.assertEqual(self.planner.starts, [])
+
+    def test_a_finish_that_gives_up_on_the_planning_cancels_the_wait(self):
+        move = self.begin([trajectory(*CLEAN)], join=False, attach=False)
+        arm = FakeArm([])
+        with mock.patch.object(mpp, 'guarded_named_move', mock.Mock(return_value=True)):
+            moved, how = move.finish(arm, self.guard, wait_s=0.1)
+        self.assertTrue(moved)
+        self.assertIn('did not end within', how)
+        move.runner.join(5.0)
+        self.assertFalse(move.runner.is_alive())
+
+
+class AttachSignal(unittest.TestCase):
+    '''the pick thread reports its attach to the move planned during the pick, only when the attach succeeded'''
+    def setUp(self):
+        from test_regrasp_overclose import TestPickProgress
+        self.harness = TestPickProgress
+        TestPickProgress.setUp(self)
+
+    def run_pick(self, attach_code):
+        from test_regrasp_overclose import posture
+        m = self.harness.mtc(self, MoveItErrorCodes.SUCCESS)
+        m.attach = lambda *a: attach_code
+        m.transport_move = mock.Mock()
+        m.execute(None, [mpp.GRIPPER, mpp.ATTACH, mpp.ARM], [], posture(0.0), attach=(TARGET, []), check_grasp=True)
+        return m.transport_move
+
+    def test_a_successful_attach_starts_the_planning(self):
+        self.run_pick(MoveItErrorCodes.SUCCESS).attached.assert_called_once_with()
+
+    def test_a_failed_attach_does_not(self):
+        self.run_pick(MoveItErrorCodes.FAILURE).attached.assert_not_called()
+
+
 class LogMode(TransportMoveTest):
     mode = 'log'
 
@@ -237,6 +404,7 @@ class PickSide(unittest.TestCase):
             p = self.tool(move, preempt)
             p.transport_after_pick(success)
             move.finish.assert_not_called()
+            move.cancel.assert_called_once_with()   # a planning still waiting for the attach ends
             self.assertIsNone(p.mtc.transport_move)
 
 

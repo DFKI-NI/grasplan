@@ -980,16 +980,66 @@ def _transport_planning_commander(group, robot_description='robot_description', 
     return _transport_commander
 
 
+_transport_scene_service = None
+
+
+def _transport_scene():
+    '''a get_planning_scene service proxy of its own for TransportMove's background thread; made once per process'''
+    global _transport_scene_service
+    if _transport_scene_service is None:
+        _transport_scene_service = rospy.ServiceProxy('get_planning_scene', GetPlanningScene)
+    return _transport_scene_service
+
+
+_transport_validity_service = None
+
+
+def _transport_validity():
+    '''a check_state_validity service proxy of its own for TransportMove's background thread (not the persistent one
+    of the pick thread); made once per process'''
+    global _transport_validity_service
+    if _transport_validity_service is None:
+        from moveit_msgs.srv import GetStateValidity
+        _transport_validity_service = rospy.ServiceProxy('check_state_validity', GetStateValidity)
+    return _transport_validity_service
+
+
+def live_attach_state(scene_service, target_name):
+    '''(attached, in_world): whether target_name is attached to the robot in move_group's live planning scene and
+    whether a world object of that id is still there'''
+    request = GetPlanningSceneRequest()
+    request.components.components = (PlanningSceneComponents.ROBOT_STATE_ATTACHED_OBJECTS
+                                      | PlanningSceneComponents.WORLD_OBJECT_NAMES)
+    scene = scene_service(request).scene
+    attached = any(a.object.id == target_name for a in scene.robot_state.attached_collision_objects)
+    in_world = any(o.id == target_name for o in scene.world.collision_objects)
+    return attached, in_world
+
+
+def _has_robot_state(robot_state):
+    '''whether a scene diff's moveit_msgs/RobotState holds anything (joints or attached objects): an empty one means
+    the stage left the robot state as it was'''
+    return bool(robot_state.joint_state.name or robot_state.multi_dof_joint_state.joint_names
+                or robot_state.attached_collision_objects)
+
+
 def solution_end_state(solution_msg, target_name):
     '''(moveit_msgs/RobotState, arm joints name -> rad) where an MTC pick solution ends: the robot state of its last
-    sub trajectory's scene with the picked object attached (geometry in the link frame, operation ADD, so a plan request
-    starting from it carries the object and drops the world copy of the same id), the arm joints overwritten by the last
-    point of the last arm trajectory; (None, reason) when the object is not attached there or there is no arm motion'''
+    sub trajectory with a robot state in its scene, with the picked object attached (geometry in the link frame,
+    operation ADD, so a plan request starting from it carries the object; the request does not remove the world copy of
+    the same id from move_group's scene, only the pick's own attach does that, see TransportMove), the arm joints
+    overwritten by the last point of the last arm trajectory; (None, reason) when the object is not attached
+    there or there is no arm motion. A scene diff carries a robot state only when its stage changed it: a last stage
+    that only changes the allowed collisions (e.g. after a lift that tolerated a touching neighbour) has none, so the
+    state is taken from the last sub trajectory that has one'''
     from moveit_msgs.msg import CollisionObject
     subs = list(solution_msg.sub_trajectory)
     if not subs:
         return None, 'the pick solution is empty'
-    state = copy.deepcopy(subs[-1].scene_diff.robot_state)
+    with_state = [sub for sub in subs if _has_robot_state(sub.scene_diff.robot_state)]
+    if not with_state:
+        return None, 'no scene of the pick solution has a robot state'
+    state = copy.deepcopy(with_state[-1].scene_diff.robot_state)
     attached = [a for a in state.attached_collision_objects if a.object.id == target_name]
     if not attached:
         return None, f'{target_name} is not attached at the end of the pick solution'
@@ -1021,6 +1071,11 @@ class TransportMove:
     where the MTC pick solution ends (object attached) while the pick executes, with the planning and the cable guard
     of a named move in its current mode (named_move_guard_mode: enforce = only a plan the guard passes, log = the guard
     only logs, off = no check), without the named-move plan cache (the start state is not in the planning scene yet).
+    The planning waits until the pick thread reports its attach (attached(); the attach removes the object's world copy
+    from move_group's scene), at most ~plan_transport_during_pick_attach_wait_s, then confirms it in the live scene and
+    checks the start state against that scene (check_state_validity): a start state that carries the object while its
+    world copy is still there collides with that copy, and MoveIt would then plan from a randomly moved nearby start
+    and prepend an unchecked move to it. No attach in time, a failed pick (cancel()) or an invalid start: no plan.
     finish() after the pick runs that plan when the arm stands within ~plan_pick_during_start_move_tolerance_rad of its
     start (the start move's arrival rule), else the normal guarded named move from the real state; if that fails too
     the arm stays and the reason is returned (the caller's own transport move is then today's way).
@@ -1028,9 +1083,64 @@ class TransportMove:
 
     _running = None   # the planning thread of the last TransportMove (one at a time per process)
 
-    def __init__(self, name, start_state, start_q, guard, commander):
+    def __init__(self, name, start_state, start_q, guard, commander, target_name='', scene=None, validity=None):
+        import threading
         self.name, self.start_state, self.start_q, self.guard, self.commander = name, start_state, start_q, guard, commander
+        self.target_name, self.scene, self.validity = target_name, scene, validity
         self.trajectory, self.reason, self.plan_s, self.runner = None, 'not planned yet', None, None
+        self.wake = threading.Event()   # set by attached() and cancel()
+        self.is_attached = self.is_cancelled = False
+
+    def attached(self):
+        '''the pick thread: its attach of the object succeeded (the object's world copy is gone from the scene)'''
+        self.is_attached = True
+        self.wake.set()
+
+    def cancel(self):
+        '''the pick ended without using this move: a planning that still waits for the attach ends at once'''
+        self.is_cancelled = True
+        self.wake.set()
+
+    def wait_for_live_attach(self):
+        '''"" once the pick reported its attach, the live scene shows target_name attached without a world copy and
+        the start state is valid in that scene; else why not (no attach within
+        ~plan_transport_during_pick_attach_wait_s, cancel, no scene, start state in collision with the contact pairs)'''
+        wait_s = rospy.get_param('~plan_transport_during_pick_attach_wait_s', 30.0)
+        try:
+            wait_s = float(wait_s)
+        except (TypeError, ValueError):
+            wait_s = float('nan')
+        if not (math.isfinite(wait_s) and wait_s > 0.0):
+            return f'invalid attach wait {wait_s} s'
+        if self.scene is None or self.validity is None:
+            return 'no planning scene service'
+        self.wake.wait(wait_s)
+        if self.is_cancelled:
+            return f'the pick ended before {self.target_name} was attached'
+        if not self.is_attached:
+            return f'the pick did not attach {self.target_name} within {wait_s:g} s'
+        try:
+            attached, in_world = live_attach_state(self.scene, self.target_name)
+        except Exception as e:  # noqa: BLE001 - no plan, the pick goes on
+            return f'reading the planning scene failed ({e})'
+        if not attached or in_world:
+            state = 'its world copy is still there' if attached else 'not attached'
+            return f'{self.target_name} is not attached in the planning scene after the attach ({state})'
+        return self.start_state_valid()
+
+    def start_state_valid(self):
+        '''"" when start_state (end of the pick, object attached) is valid in move_group's live scene, else why not
+        with the contact pairs'''
+        from moveit_msgs.srv import GetStateValidityRequest
+        try:
+            response = self.validity(GetStateValidityRequest(robot_state=self.start_state,
+                                                             group_name=self.commander.get_name()))
+        except Exception as e:  # noqa: BLE001 - no plan, the pick goes on
+            return f'checking the start state failed ({e})'
+        if response.valid:
+            return ''
+        contacts = sorted({f'{c.contact_body_1}-{c.contact_body_2}' for c in response.contacts})
+        return f'the start state is in collision in the live scene ({", ".join(contacts[:3]) or "invalid"})'
 
     @classmethod
     def begin(cls, group, solution_msg, target_name, guard, name=None):
@@ -1047,10 +1157,11 @@ class TransportMove:
             return None
         try:
             commander = _transport_planning_commander(group)
+            scene, validity = _transport_scene(), _transport_validity()
         except Exception as e:  # noqa: BLE001 - the pick goes on without the flag
             rospy.logwarn(f'transport during pick: no planning interface ({e}); no plan to {name}')
             return None
-        move = cls(name, state, start_q, guard, commander)
+        move = cls(name, state, start_q, guard, commander, target_name, scene, validity)
         move.runner = threading.Thread(target=move.plan, name='transport during pick', daemon=True)
         cls._running = move.runner
         move.runner.start()
@@ -1062,6 +1173,14 @@ class TransportMove:
         started = time.monotonic()
         arm, guard = self.commander, self.guard
         mode = named_move_guard_mode() if guard is not None else 'off'
+        why = self.wait_for_live_attach()
+        if why:
+            self.reason, self.plan_s = why, time.monotonic() - started
+            rospy.logwarn(f'transport during pick: no plan to {self.name} ({why})')
+            return
+        rospy.loginfo(f'transport during pick: {self.target_name} attached {time.monotonic() - started:.1f} s after '
+                      f'the pick began, start state valid, planning the move to {self.name}')
+        started = time.monotonic()
         try:
             arm.set_start_state(self.start_state)
             arm.set_named_target(self.name)
@@ -1092,6 +1211,7 @@ class TransportMove:
         self.runner.join(wait_s)
         why = ''
         if self.runner.is_alive():
+            self.cancel()
             why = f'its planning did not end within {wait_s:.0f} s after the pick'
         elif self.trajectory is None:
             why = f'no plan was made during the pick ({self.reason})'
@@ -1397,6 +1517,8 @@ class MtcPickPlace:
             if code == MoveItErrorCodes.SUCCESS and not self.lift_check():
                 self.failure_reason = f'{goal.target_name} was lost during the lift (the gripper is empty)'
                 code = MoveItErrorCodes.FAILURE
+            if code != MoveItErrorCodes.SUCCESS and self.transport_move is not None:
+                self.transport_move.cancel()   # a planning still waiting for the attach ends now
             if code != MoveItErrorCodes.SUCCESS and self.failure_reason:
                 rospy.logerr(f'mtc: pick failed: {self.failure_reason}')
                 self.release_empty_grasp(goal.target_name, grasp.pre_grasp_posture)
@@ -2621,6 +2743,8 @@ class MtcPickPlace:
                 code = self.attach(*attach)
                 if code == MoveItErrorCodes.SUCCESS:
                     self.pick_progress['attached'] = True
+                    if getattr(self, 'transport_move', None) is not None:
+                        self.transport_move.attached()   # its planning may start now
             elif role == DETACH:
                 code = self.detach(detach)
             elif role == PREFIX:
@@ -2863,6 +2987,8 @@ class MtcPickPlace:
                 code = self.attach(*attach)
                 if code == MoveItErrorCodes.SUCCESS:
                     self.pick_progress['attached'] = True
+                    if getattr(self, 'transport_move', None) is not None:
+                        self.transport_move.attached()   # its planning may start now
             else:
                 continue
             if code != MoveItErrorCodes.SUCCESS:

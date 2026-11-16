@@ -505,6 +505,8 @@ class PickTools:
             return
         mtc.transport_move, mtc.transport_done = None, None
         if not success or (done is None and self.pick_action_server.is_preempt_requested()):
+            if move is not None:
+                move.cancel()   # a planning still waiting for the attach ends now, so the next pick can plan
             return
         if done is None:
             mtc.update_cable_guard()
