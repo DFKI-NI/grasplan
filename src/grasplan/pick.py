@@ -971,7 +971,9 @@ class PickTools:
         # query pose selector
         resp = self.pose_selector_get_all_poses_srv()
         perceived = {f'{o.class_id}_{o.instance_id}' for o in resp.poses.objects} | {external_object_name}
-        supports = self.support_boxes(exclude=perceived) if self.clamp_object_boxes_to_support else []
+        # the objects left from the last goal are no supports (they are replaced or removed after the adds)
+        supports = (self.support_boxes(exclude=perceived | getattr(self, 'scene_before_refresh', set()))
+                    if self.clamp_object_boxes_to_support else [])
         target = None   # (pose, size) of the verified open-set target: perceived boxes overlapping it are left out
         copies = self.unknown_copies_of_target(object_to_pick, resp) if external_object is None else {}
         self.target_padding_left = 0.0   # the detector's padding per side still in the target's box
@@ -1238,6 +1240,7 @@ class PickTools:
         if not keep_implausible:
             size = padded_box_size(size, rospy.get_param('~planning_scene_box_padding', 0.0))
         self.scene.add_box(name, pose_stamped, size)
+        self.scene_added(name)
         return True
 
     def remove_from_scene(self, name):
@@ -1289,6 +1292,34 @@ class PickTools:
         '''
         for item in self.scene.get_known_object_names():
             self.scene.remove_world_object(item)
+
+    def scene_refresh_begin(self):
+        '''
+        ~clear_planning_scene: the world objects of the scene before this goal adds its boxes (they are removed by
+        scene_refresh_end unless added again); empty without it. Nothing is removed here: an object added again is
+        replaced in one scene update and so stays masked out of the octomap all the time
+        '''
+        self.scene_refreshed = set()   # world objects this goal's setup added (add_box), see scene_added
+        if not self.clear_planning_scene:
+            return set()
+        rospy.logwarn('Renewing the planning scene: objects not added again are removed after the adds')
+        return set(self.scene.get_known_object_names())
+
+    def scene_added(self, name):
+        '''note an object the scene setup of this goal added (see scene_refresh_end)'''
+        if hasattr(self, 'scene_refreshed'):
+            self.scene_refreshed.add(name)
+
+    def scene_refresh_end(self, before):
+        '''remove the objects of the scene before this goal that its setup did not add again'''
+        stale = sorted(before - getattr(self, 'scene_refreshed', set()))
+        if stale:
+            known = set(self.scene.get_known_object_names())
+            for name in stale:
+                if name in known:
+                    self.scene.remove_world_object(name)
+            rospy.loginfo(f'planning scene: removed the objects not added again: {stale}')
+        self.__dict__.pop('scene_refreshed', None)   # adds after the setup are no longer noted
 
     def clear_octomap(self, octomap_srv_name='clear_octomap'):
         '''
@@ -1573,7 +1604,8 @@ class PickTools:
              collision_object.pose.orientation.z, collision_object.pose.orientation.w)
         ) else collision_object.primitive_poses[0]
         size = list(collision_object.primitives[0].dimensions)
-        self.scene.remove_world_object(object_name)
+        # no remove of the world box first: attaching an object takes the world object of the same name out in the
+        # same scene update, so the object never leaves the octomap's mask (see scene_refresh_begin)
         self.scene.attach_box(eef_link, object_name, pose, size, touch_links=touch_links)
         rospy.logwarn(f'moveit did not attach {object_name}; attached its box to {eef_link} explicitly')
         return True
@@ -1608,6 +1640,7 @@ class PickTools:
             table_pose.pose.orientation.z = planning_scene_box['box_orientation_z']
             table_pose.pose.orientation.w = planning_scene_box['box_orientation_w']
             self.scene.add_box(planning_scene_box['scene_name'], table_pose, (box_x, box_y, box_z))
+            self.scene_added(planning_scene_box['scene_name'])
 
     def pick_object(
         self,
@@ -1665,10 +1698,12 @@ class PickTools:
         # ::::::::: setup planning scene
         rospy.loginfo('setup planning scene')
 
-        # remove all objects from the planning scene if needed
-        if self.clear_planning_scene:
-            rospy.logwarn('Clearing planning scene')
-            self.clean_scene()
+        # renew the planning scene if needed: the objects of the last goal are replaced in place by this goal's boxes
+        # and only the ones not added again are removed afterwards. Removing everything first left each object out of
+        # the scene, and so out of the octomap's mask, until it was added again: the camera cloud of that moment put
+        # cells inside the object into the octomap, and the mask keeps them there once the object is back (the
+        # updater neither adds nor clears masked cells), so the object later collided with its own stale cells
+        self.scene_before_refresh = self.scene_refresh_begin()
 
         # add a list of custom boxes defined by the user to the planning scene
         self.add_custom_boxes_to_ps(self.planning_scene_boxes)
@@ -1678,6 +1713,7 @@ class PickTools:
         object_pose, bounding_box, id = self.make_object_pose_and_add_objs_to_planning_scene(
             object_to_pick, ignore_object_list=ignore_object_list, external_object=external_object
         )
+        self.scene_refresh_end(self.scene_before_refresh)
 
         if object_pose is None:
             return False
