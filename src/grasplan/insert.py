@@ -62,6 +62,14 @@ from object_pose_msgs.msg import ObjectPose
 from shape_msgs.msg import SolidPrimitive
 
 
+def insert_order_ik_timeout():
+    '''~insert_order_ik_timeout (s): the compute_ik timeout per candidate pose of the insert order. TRAC-IK in Distance
+    mode spends its whole timeout on every call, found or not (then returns the solution closest to the seed), so 24
+    poses x 0.05 s are most of the insert order. Default 0.05 (as before); 0.01 is the safe feature flag value (the arm
+    solver's own timeout, which gave the same solutions as 0.1 s). Read per insert.'''
+    return max(0.001, float(rospy.get_param('~insert_order_ik_timeout', 0.05)))
+
+
 class InsertTools:
     def __init__(self):
         # create instance of place
@@ -649,6 +657,7 @@ class InsertTools:
         wrist_3_name = wrist_3_names[0]
         wrist_3_now = current_state.joint_state.position[current_state.joint_state.name.index(wrist_3_name)]
         body_to_tcp = np.linalg.inv(tcp_to_body)
+        ik_timeout = rospy.Duration(insert_order_ik_timeout())
         keyed = []
         for index, body in enumerate(bodies):
             request = GetPositionIKRequest()
@@ -658,7 +667,7 @@ class InsertTools:
             request.ik_request.ik_link_name = self.tcp_frame
             request.ik_request.pose_stamped.header.frame_id = self.place.global_reference_frame
             matrix_to_pose(body.dot(body_to_tcp), request.ik_request.pose_stamped.pose)
-            request.ik_request.timeout = rospy.Duration(0.05)
+            request.ik_request.timeout = ik_timeout
             asked = time.monotonic()
             try:
                 response = self.call_compute_ik(request)
