@@ -83,11 +83,13 @@ from moveit.task_constructor import core, stages
 from grasplan.tools.octomap_probe import count_in_box, occupied_leaves
 from grasplan.tools.common import arm_joint_tag, robot_prefix, robot_frame, robot_topic
 from grasplan.tools.finger_series import analyse_close
+from grasplan.tools import ik_config
 from grasplan.tools.pad_gap import PINCH_GAP_RATIO, PINCH_MAX_TILT_DEG, is_pinch, overclose, pad_gap, pinch_checkable
 from grasplan import cable_shaping
 from grasplan.tools import cable_path as cp
 from grasplan.tools.touching_boxes import boxes_touch
 from grasplan.tools.stage_timing import TIMER, timed
+from grasplan.tools import mtc_stage_times
 from grasplan.tools.moveit_errors import arm_stop_text, moveit_code_text
 
 # the name MoveIt gives the octomap inside the planning scene (planning_scene::PlanningScene::OCTOMAP_NS)
@@ -1466,6 +1468,10 @@ class MtcPickPlace:
         # plans for and refuses the model a new Task would load
         self.task = core.Task()
         self.task.loadRobotModel()
+        try:   # log only: the IK settings this node's MTC planning loaded with the robot model, and the master's
+            rospy.loginfo(ik_config.log_line(rospy.get_name() + '_cpp', self.arm_group, *ik_config.ros_access()))
+        except Exception as e:  # noqa: BLE001 - log only
+            rospy.logwarn(f'mtc: could not read the IK settings in force ({e})')
         self.cartesian = core.CartesianPath()
         self.cartesian.step_size = self.cartesian_step_size
         self.cartesian.min_fraction = 1.0  # min/max distance of MoveRelative decide how far is enough
@@ -1475,6 +1481,11 @@ class MtcPickPlace:
         self.pipeline.planner = self.planner_id
         self.pipeline.max_velocity_scaling_factor = self.velocity_scaling
         self.pipeline.max_acceleration_scaling_factor = self.acceleration_scaling
+        try:   # log only: where each plan's time goes (scene fetch, compute) from MTC's stage statistics
+            self.stage_times = mtc_stage_times.StageTimes()
+        except Exception as e:  # noqa: BLE001 - the plans work without it, only the split is missing
+            self.stage_times = None
+            rospy.logwarn(f'mtc: no stage statistics for the plan time split ({e})')
         rospy.loginfo(f'mtc: ready (planner {self.planner_id}, connect timeout {self.connect_timeout} s)')
 
     # ------------------------------------------------------------------ public api
@@ -2464,10 +2475,11 @@ class MtcPickPlace:
                       f'pinned target {cable_shaping.degrees(target) if target else "none (MTC IK)"}')
 
     @staticmethod
-    def motion_seconds(solution, skip=0):
-        '''summed duration of the arm sub trajectories of an MTC solution (s), without its first skip ones'''
+    def motion_seconds(solution, skip=0, msg=None):
+        '''summed duration of the arm sub trajectories of an MTC solution (s), without its first skip ones; msg: the
+        solution's message when the caller has it already'''
         total = 0.0
-        for sub in solution.toMsg().sub_trajectory[skip:]:
+        for sub in (msg if msg is not None else solution.toMsg()).sub_trajectory[skip:]:
             points = sub.trajectory.joint_trajectory.points
             if points:
                 total += points[-1].time_from_start.to_sec()
@@ -2494,8 +2506,16 @@ class MtcPickPlace:
         else:
             count = self.cable_solutions   # the old search for all solutions at once
         try:
-            task.init()
-            planned = bool(task.plan(count)) and len(task.solutions) > 0
+            with TIMER.stage('init'):
+                task.init()
+            plan_start = time.monotonic()
+            try:
+                planned = bool(task.plan(count)) and len(task.solutions) > 0
+            finally:
+                try:   # log only: never turns a plan into a failure
+                    self.time_plan_split(what, plan_start, time.monotonic() - plan_start)
+                except Exception as e:  # noqa: BLE001 - log only
+                    rospy.logdebug(f'mtc: plan split not logged ({e})')
         except Exception as e:  # MTC raises InitStageError for inconsistent stage setups
             rospy.logwarn(f'mtc: {what}: {e}')
             self.last_plan_failure = f'could not be set up ({e})'
@@ -2537,13 +2557,39 @@ class MtcPickPlace:
             self.guard_rejected_q = None
             rospy.loginfo(f'mtc: {what} cable check passed ({checks[-1]})')
         elapsed = time.monotonic() - start
-        try:
-            motion = f', motion {self.motion_seconds(self.chosen_solution, 2 if self.start_move is not None else 0):.1f} s'
-        except Exception:  # noqa: BLE001 - log only
-            motion = ''
-        rospy.loginfo(f'mtc: {what} planned in {elapsed:.1f} s (cost {self.chosen_solution.cost:.2f}{motion})')
-        task.publish(self.chosen_solution)
+        with TIMER.stage('finish'):
+            size = None
+            try:
+                msg = self.chosen_solution.toMsg()
+                size = mtc_stage_times.scene_size(msg)
+                skip = 2 if self.start_move is not None else 0
+                motion = f', motion {self.motion_seconds(self.chosen_solution, skip, msg=msg):.1f} s'
+            except Exception:  # noqa: BLE001 - log only
+                motion = ''
+            rospy.loginfo(f'mtc: {what} planned in {elapsed:.1f} s (cost {self.chosen_solution.cost:.2f}{motion}, '
+                          f'{mtc_stage_times.size_text(size)})')
+            task.publish(self.chosen_solution)
         return True
+
+    def time_plan_split(self, what, plan_start, plan_seconds):
+        '''log only: task.plan() split into the scene fetch ('current state' stage) and the rest (plan/scene and
+        plan/compute in the TIMING line), from MTC's stage statistics, plus the slowest stages. Without statistics the
+        whole task.plan() counts as compute and the line says so.'''
+        stage_times = getattr(self, 'stage_times', None)
+        leaves = None
+        if stage_times is not None:
+            try:
+                leaves = stage_times.leaf_times(stage_times.latest_since(plan_start))
+            except Exception as e:  # noqa: BLE001 - log only
+                rospy.logdebug(f'mtc: stage statistics unreadable ({e})')
+        scene = mtc_stage_times.scene_seconds(leaves)
+        if scene is not None:
+            scene = min(scene, plan_seconds)
+            TIMER.add('scene', scene)
+        TIMER.add('compute', plan_seconds - (scene or 0.0))
+        rospy.loginfo(f'mtc: {what} plan split: task.plan {plan_seconds:.2f} s = scene fetch '
+                      f'{"n/a (no stage statistics)" if scene is None else f"{scene:.2f} s"} + compute '
+                      f'{plan_seconds - (scene or 0.0):.2f} s; slowest stages: {mtc_stage_times.slowest(leaves)}')
 
     def check_solution(self, solution_msg):
         '''the cable guard's (ok, stretch, span, q) of a planned solution: as one path from a fresh chain, or for the
