@@ -124,7 +124,7 @@ class TestSingleTaskLayout(unittest.TestCase):
 
     def test_a_running_start_move_wins(self):
         # the prefix stands in for the poses the arm is running; never both
-        start_move = mock.Mock(names=POSES)
+        start_move = mock.Mock(names=POSES, end_q={'mobipick/ur5_wrist_3_joint': 2.9})
         task, roles = build(mtc(single=(POSES, 'transport'), start_move=start_move))
         self.assertEqual(task.children[1].name, 'start move (planned meanwhile)')
         self.assertNotIn(f'move to {POSES[0]}', [s.name for s in task.children])

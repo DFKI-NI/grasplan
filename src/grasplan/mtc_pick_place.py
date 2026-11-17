@@ -1931,10 +1931,13 @@ class MtcPickPlace:
             for pose in poses:
                 task.add(self.move_to(f'move to {pose}', pose))
             return task, [NOOP] + [UNTANGLE] * len(poses)
-        # the arm is on its way to the start move's last pose; plan from there (a stand-in path, dropped)
+        # the arm is on its way to the start move's last pose; plan from there (a stand-in path, dropped). The goal is
+        # the joint state the start move really ends in, not the named pose: its legs end anywhere within the arm's
+        # goal tolerance of that pose, and a pick planned from the pose itself then starts up to that tolerance away
+        # from the standing arm, at the edge of the arrival check, so it was planned again
         prefix = stages.MoveTo('start move (planned meanwhile)', self.pipeline)
         prefix.group = self.arm_group
-        prefix.setGoal(self.start_move.names[-1])
+        prefix.setGoal(dict(self.start_move.end_q) if self.start_move.end_q else self.start_move.names[-1])
         task.add(prefix)
         return task, [NOOP, PREFIX]
 

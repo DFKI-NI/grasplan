@@ -325,6 +325,15 @@ class TestMtcPrefix(Base):
             _, roles = m.start_task('pick')
         self.assertEqual(roles, [mpp.NOOP, mpp.PREFIX])
         self.assertEqual((added[1].goal, added[1].planner, added[1].group), (POSES[-1], 'pipeline', 'arm'))
+        # the stand-in ends where the start move really ends (its legs stop within the goal tolerance of the named
+        # pose, not on it), so the pick plan starts on the standing arm
+        end_q = {'mobipick/ur5_wrist_2_joint': -1.5608, 'mobipick/ur5_wrist_3_joint': 2.9001}
+        m.start_move = NS(end_q=end_q, names=POSES)
+        with mock.patch.object(mpp.stages, 'CurrentState', lambda name: name), \
+                mock.patch.object(mpp.stages, 'MoveTo', MoveTo):
+            m.start_task('pick')
+        self.assertEqual(added[1].goal, end_q)
+        self.assertIsNot(added[1].goal, end_q)   # a copy: MTC keeps the goal
 
     def test_the_start_state_reads_are_the_start_moves_end(self):
         m = planner()
