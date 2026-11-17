@@ -803,6 +803,13 @@ def plan_pick_during_start_move():
     return bool(rospy.get_param('~plan_pick_during_start_move', False))
 
 
+def plan_place_during_detour():
+    '''~plan_place_during_detour (careful, off in code): the closed-set place is planned while the arm runs its untangle
+    detour (a StartMove, as the pick's start move); the check that the gripper still holds the object then runs once the
+    arm is there, before the first place motion'''
+    return bool(rospy.get_param('~plan_place_during_detour', False))
+
+
 def single_plan_pick():
     '''~mtc_single_plan_pick (careful, off in code): a closed-set pick plans its untangle poses, the grasp and the move
     to ~mtc_single_plan_pick_end_pose (default transport, empty = none) as one MTC task and executes that one solution
@@ -828,8 +835,8 @@ class StartMove:
 
     MAX_TOLERANCE_RAD = 0.05   # a larger ~plan_pick_during_start_move_tolerance_rad is refused, not clipped
 
-    def __init__(self, names, trajectories):
-        self.names = list(names)
+    def __init__(self, names, trajectories, what='pick'):
+        self.names, self.what = list(names), what   # what: the motion planned meanwhile, for the log and reasons
         self.trajectories = list(trajectories)
         last = self.trajectories[-1].joint_trajectory
         self.end_q = dict(zip(last.joint_names, last.points[-1].positions))
@@ -840,7 +847,7 @@ class StartMove:
         self.started = None
 
     @classmethod
-    def plan(cls, arm, names, guard, attempts=2):
+    def plan(cls, arm, names, guard, attempts=2, what='pick'):
         '''the StartMove for names, or None (logged) when a pose cannot be planned and checked from the end of the one
         before: the caller then moves the old way (guarded_named_move, with its replans via transport)'''
         from moveit_msgs.msg import RobotState
@@ -870,7 +877,7 @@ class StartMove:
         finally:
             arm.set_start_state_to_current_state()
         try:
-            return cls(names, trajectories)
+            return cls(names, trajectories, what)
         except ValueError as e:
             rospy.logwarn(f'{e}; moving the old way, one pose after the other')
             return None
@@ -882,7 +889,7 @@ class StartMove:
         self.client, self.started = client, time.monotonic()
         self.runner = threading.Thread(target=self.run, args=(client,), name='start move', daemon=True)
         self.runner.start()
-        rospy.loginfo(f'start move to {self.names} running ({self.seconds():.1f} s of motion); planning the pick meanwhile')
+        rospy.loginfo(f'start move to {self.names} running ({self.seconds():.1f} s of motion); planning the {self.what} meanwhile')
 
     def run(self, client):
         '''the background part of start(): each pose as its own goal and trajectory start; stops at the first failure.
@@ -943,7 +950,7 @@ class StartMove:
                 if why:
                     return False, why
                 if off > tolerance:
-                    return False, f'the pick was planned from {math.degrees(off):.2f} deg off {label} (tolerance ' \
+                    return False, f'the {self.what} was planned from {math.degrees(off):.2f} deg off {label} (tolerance ' \
                                   f'{math.degrees(tolerance):.2f} deg)'
         return True, ''
 
@@ -1586,6 +1593,19 @@ class MtcPickPlace:
 
     def place(self, goal):
         '''
+        plan and execute a moveit_msgs/PlaceGoal with MTC (see place_once); a detour still running when it returns
+        (preempted, an error before planning) is waited for, so no StartMove outlives its goal
+        '''
+        try:
+            return self.place_once(goal)
+        finally:
+            if self.start_move is not None:
+                arrived, why = self.finish_start_move()
+                if not arrived:
+                    rospy.logwarn(f'mtc: detour: {why}')
+
+    def place_once(self, goal):
+        '''
         plan and execute a moveit_msgs/PlaceGoal with MTC, trying its locations in order; returns PlaceResult.
         When no location can be planned but some only failed at the retreat (the gripper opened, then could not
         back off the full min_distance), the locations are tried again: first retreating straight up (planning
@@ -1593,22 +1613,16 @@ class MtcPickPlace:
         runs into the box wall; then accepting a retreat of at least ~mtc_relaxed_retreat_min_distance
         (e.g. the camera touches the box rim) along the axis, then straight up. The object is already released
         there and the next arm motion is planned collision free anyway.
+        With the untangle detour still running (~plan_place_during_detour, self.start_move) the locations are planned
+        from its end; a plan is used only once the arm stands there (else planned again from the real state) and the
+        gripper check before placing waits until then.
         '''
         result = PlaceResult()
         result.error_code.val = MoveItErrorCodes.PLANNING_FAILED
         self.failure_reason, self.executed = '', False
         self.unplanned = []   # why each place location could not be planned, for the failure reason
         self.update_cable_guard()
-        if not self.gripper_holds_object('before placing', delay=0.2):
-            # e.g. it slipped out while the arm swung through the observe or untangle poses
-            self.failure_reason = f'{goal.attached_object_name} is no longer in the gripper (gripper_has_object false)'
-            rospy.logerr(f'mtc: place failed: {self.failure_reason}')
-            # open the empty gripper too: left closed, the next pick finds its fingers inside every target box
-            open_posture = goal.place_locations[0].post_place_posture if goal.place_locations else None
-            self.release_empty_grasp(goal.attached_object_name,
-                                     open_posture if open_posture is not None and open_posture.points else None)
-            self.executed = True
-            result.error_code.val = MoveItErrorCodes.FAILURE
+        if self.start_move is None and self.object_lost_before_placing(goal, result):
             return result
         try:
             eef_to_object = self.eef_to_attached_object(goal.attached_object_name)
@@ -1663,6 +1677,16 @@ class MtcPickPlace:
                 if not self.plan(task, f'place location {location.id} ({index + 1}/{len(goal.place_locations)})'):
                     self.retreat_failed = self.only_retreat_failed(task)
                     continue
+                if self.start_move is not None:
+                    # planned while the arm ran its detour; use the plan only when the arm is where it starts
+                    arrived, why = self.finish_start_move(roles)
+                    if not arrived:
+                        rospy.logwarn(f'mtc: {why}: planning the place again from the current state')
+                        return self.place_once(goal)
+                    rospy.loginfo(f'mtc: place location {location.id} was planned during the detour')
+                    # the arm stands after the detour, before the first place motion: the same check as without it
+                    if self.object_lost_before_placing(goal, result):
+                        return result
                 self.executed = True
                 self.log_place_pose(location)
                 code = self.execute(task, roles, [], location.post_place_posture,
@@ -1674,12 +1698,34 @@ class MtcPickPlace:
                     self.failure_reason = f'executing place location {location.id} failed: {self.execution_text(code)}'
                 return result
             self.unplanned.append(getattr(self, 'last_plan_failure', '') or 'not planned')
+        if self.start_move is not None:
+            # nothing planned from the detour's end (also when only its stand-in path failed): once the arm is there,
+            # the old way, from the real state
+            arrived, why = self.finish_start_move()
+            rospy.logwarn(f'mtc: no place location planned during the detour{f" ({why})" if why else ""}: planning the '
+                          f'place again from the current state')
+            return self.place_once(goal)
         rospy.logerr(f'mtc: none of the {len(goal.place_locations)} place locations could be planned')
         self.failure_reason = (f'none of the {len(goal.place_locations)} place locations could be planned'
                                + self.unplanned_breakdown())
         if blocked:
             self.failure_reason += f' ({len(blocked)} skipped: objects only the octomap sees in the footprint)'
         return result
+
+    def object_lost_before_placing(self, goal, result):
+        '''the gripper check before placing: True (result set to FAILURE, the empty gripper opened) when the object is no
+        longer held, e.g. it slipped out while the arm swung through the observe or untangle poses'''
+        if self.gripper_holds_object('before placing', delay=0.2):
+            return False
+        self.failure_reason = f'{goal.attached_object_name} is no longer in the gripper (gripper_has_object false)'
+        rospy.logerr(f'mtc: place failed: {self.failure_reason}')
+        # open the empty gripper too: left closed, the next pick finds its fingers inside every target box
+        open_posture = goal.place_locations[0].post_place_posture if goal.place_locations else None
+        self.release_empty_grasp(goal.attached_object_name,
+                                 open_posture if open_posture is not None and open_posture.points else None)
+        self.executed = True
+        result.error_code.val = MoveItErrorCodes.FAILURE
+        return True
 
     def turned_grasp_plan(self, goal, grasp):
         '''
@@ -1984,7 +2030,7 @@ class MtcPickPlace:
         plan_start = self.retained_start_q(roles)
         if plan_start is None:
             move.wait()
-            return False, 'the planned pick has no arm trajectory to compare with the arrival'
+            return False, f'the planned {move.what} has no arm trajectory to compare with the arrival'
         return move.wait(plan_start=plan_start)
 
     def retained_start_q(self, roles):

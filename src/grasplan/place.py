@@ -512,7 +512,7 @@ class PlaceTools:
         return separate_object_class_from_id(object_name)[0] not in catalog
 
     @timed('detour')
-    def go_before_place(self, object_name, poses):
+    def go_before_place(self, object_name, poses, plan_meanwhile=False):
         '''
         the arm poses before placing or inserting object_name: the closed-set untangle detour (poses, e.g.
         untangle_cable_guide_1/2_right, the battle-tested hack against cable entanglement), or for an object picked
@@ -520,6 +520,8 @@ class PlaceTools:
         2026-09-28: the fast detour swings shook a picked Pringles can out of the gripper).
         ~open_set_skip_untangle_detour false keeps the detour for every object. In cable_aware mode
         (~cable_detour_mode) a closed-set object gets no untangle pose at all.
+        plan_meanwhile (the place, not the insert): with ~plan_place_during_detour the closed-set detour runs as one
+        background motion while MTC plans the place from its end (detour_while_planning).
         '''
         if rospy.get_param('~open_set_skip_untangle_detour', True) and self.picked_open_set(object_name):
             start = rospy.get_param('~open_set_place_start_pose', 'transport')
@@ -541,11 +543,40 @@ class PlaceTools:
             self.detour_state = 'deferred'
             rospy.loginfo(f'untangle detour {poses} skipped: taken only if the cable guard rejects the place without it')
             return
-        for arm_pose in poses:
-            rospy.loginfo(f'Going to intermediate arm pose {arm_pose} to disentangle cable')
-            self.move_arm_to_posture(arm_pose)
+        if not (plan_meanwhile and self.detour_while_planning(poses)):
+            for arm_pose in poses:
+                rospy.loginfo(f'Going to intermediate arm pose {arm_pose} to disentangle cable')
+                self.move_arm_to_posture(arm_pose)
         if state == 'forced':
             self.detour_state = 'done'
+
+    def detour_while_planning(self, poses):
+        '''
+        (~plan_place_during_detour, careful, off in code): instead of moving through the untangle poses one by one
+        before planning the place, plan and cable-check them all now, send them as one motion and let MTC plan the place
+        meanwhile from their end (mtc_pick_place.StartMove, as the pick's start move). True when the motion runs; False
+        (the old way) without MTC, without poses or when a pose cannot be planned and checked from the one before.
+        '''
+        from grasplan.mtc_pick_place import StartMove, plan_place_during_detour
+        mtc = getattr(self, 'mtc', None)
+        if not poses or not plan_place_during_detour() or mtc is None or mtc.start_move is not None:
+            return False
+        mtc.update_cable_guard()
+        move = StartMove.plan(self.robot.arm, poses, mtc.cable_guard, what='place')
+        if move is None:
+            return False
+        move.start(mtc.execute_client)
+        mtc.start_move = move
+        return True
+
+    def finish_detour_move(self):
+        '''wait for a detour the place did not use (the place goal did not run); no-op otherwise'''
+        mtc = getattr(self, 'mtc', None)
+        if getattr(mtc, 'start_move', None) is None:
+            return
+        arrived, why = mtc.finish_start_move()
+        if not arrived:
+            rospy.logwarn(f'detour: {why}')
 
     def detour_deferrable(self):
         '''whether go_before_place may leave the untangle detour out for now: switch on and an MTC cable guard to judge'''
@@ -951,7 +982,7 @@ class PlaceTools:
             if not override_disentangle_dont_doit:
                 # go to intermediate arm poses if needed to disentangle arm cable
                 if self.disentangle_required:
-                    self.go_before_place(object_to_be_placed, self.poses_to_go_before_place)
+                    self.go_before_place(object_to_be_placed, self.poses_to_go_before_place, plan_meanwhile=True)
 
             rospy.loginfo(
                 f'Sending goal with batch of {len(batch_poses.objects)} poses to place, '
@@ -961,6 +992,7 @@ class PlaceTools:
                 f'{(i + len(batch_poses.objects)) * 100 // len(global_place_poses.objects)}% completed'
             )
             result = self.run_place_goal(goal, self.place_action_server, self.action_client_helper)
+            self.finish_detour_move()   # never leave a detour motion running across goals
             if result is None:
                 rospy.logerr('Failed to run the place goal')
                 return False
