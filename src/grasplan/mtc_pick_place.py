@@ -107,6 +107,10 @@ SUPPORT_CABLE_MAX_STRETCH = -0.07
 # on to check the grasp; the klt and materialbox widths (0.0005) count as fully closed
 GRASP_CHECK_SQUEEZE_MIN_WIDTH = 0.005
 
+# how often (s) the check after closing reads the gripper fact while it waits for the hold, with ~mtc_grasp_check_early
+# on and a close the gripper reported as stalled
+GRASP_CHECK_POLL_S = 0.05
+
 # pinch (m) the fingers may close past the object's width before the re-grasp fires
 # (~grasp_regrasp_overclose, 20 mm: the pads sink 8-12 mm into a flat holding grasp in the sim, and of 16 Pringles picks
 # those closed >= 19 mm past the can's diameter rotated it in the grasp 7 of 8 times; the first sim number, 15 mm, sat
@@ -2730,6 +2734,9 @@ class MtcPickPlace:
                         self.failure_reason = f'the gripper closed on nothing at {attach[0] if attach else "the object"}'
                         return MoveItErrorCodes.FAILURE
                     self.pick_progress['closed'] = True
+                    if regrasp is not None and regrasp.get('open_set', True) \
+                            and (regrasp.get('pinch_check') or regrasp.get('regrasp', True)):
+                        self.settle_before_finger_reading()   # an early hold check returned before the full delay
                     if regrasp is not None and regrasp.get('pinch_check') and self.pinched(regrasp):
                         return MoveItErrorCodes.FAILURE   # failure_reason says why; the caller opens the gripper
                     if regrasp is not None and regrasp.get('regrasp', True) and self.regrasp_after_overclose(regrasp, posture):
@@ -3095,10 +3102,56 @@ class MtcPickPlace:
             return True
         if delay is None:
             delay = rospy.get_param('~mtc_grasp_check_delay', 1.0)
+        self.hold_check_waited = None   # set only by the early check (see holds_early)
+        if when == 'after closing' and getattr(self, 'gripper_stalled', False) \
+                and rospy.get_param('~mtc_grasp_check_early', False):
+            return self.holds_early(when, delay)
         rospy.sleep(delay)  # the fingers settle, the fact's effort hold and gOBJ catch up
         holds = bool(self.gripper_fact.generate_facts())
         rospy.loginfo(f'mtc: gripper_has_object {when}: {holds}')
         return holds
+
+    def holds_early(self, when, delay):
+        '''
+        safe flag ~mtc_grasp_check_early (off in the code), the check after closing only, and only when the gripper's
+        action result said stalled (the fingers stopped on something): read the gripper fact every GRASP_CHECK_POLL_S
+        and go on at the first True instead of always waiting ~mtc_grasp_check_delay. The delay stays the cap: no True
+        until then reads the fact once more at the cap, as without the flag, so a False never comes earlier than today
+        (no new "closed on nothing"), only a True can, and it needs two readings, the stalled result and the fact.
+        Sim 2026-11-16: the fact read True 0.6 s before the result in 40 of 40 drill closes, then the arm stood the
+        whole second. The time waited is kept in hold_check_waited for settle_before_finger_reading.
+        '''
+        start = rospy.get_time()
+        while True:
+            holds = bool(self.gripper_fact.generate_facts())
+            waited = max(0.0, rospy.get_time() - start)
+            if holds or delay - waited < 1e-3:   # at the cap (a rest below 1 ms would not move the clock)
+                break
+            rospy.sleep(min(GRASP_CHECK_POLL_S, delay - waited))
+        self.hold_check_waited = waited
+        if holds:
+            rospy.loginfo(f'mtc: gripper_has_object {when}: True ({waited:.2f} s after the gripper stalled, '
+                          f'cap {delay:.2f} s)')
+        else:
+            rospy.loginfo(f'mtc: gripper_has_object {when}: False (not held within the cap {delay:.2f} s after '
+                          'the gripper stalled)')
+        return holds
+
+    def settle_before_finger_reading(self):
+        '''
+        the pinch check and the re-grasp after over-closing read the finger angle right after the check after closing;
+        their thresholds were tested on the angle after the full ~mtc_grasp_check_delay (the sim fingers still creep up
+        to 0.015 rad after the gripper result). After an early True (holds_early) sleep the rest of that delay first,
+        so those reads see the same settled angle as without ~mtc_grasp_check_early.
+        '''
+        waited = getattr(self, 'hold_check_waited', None)
+        self.hold_check_waited = None
+        if waited is None:
+            return
+        rest = rospy.get_param('~mtc_grasp_check_delay', 1.0) - waited
+        if rest > 0.0:
+            rospy.loginfo(f'mtc: waiting the rest of the grasp check delay ({rest:.2f} s) before reading the finger angle')
+            rospy.sleep(rest)
 
     def closed_on_object(self, close_posture):
         '''
@@ -3176,11 +3229,13 @@ class MtcPickPlace:
     @timed('gripper')
     def command_gripper(self, posture):
         '''send the single point posture of a Grasp/PlaceLocation (opening in metres) to the GripperCommand server'''
+        self.gripper_stalled = False
         if not self.gripper_client.wait_for_server(rospy.Duration(2.0)):
             self.execution_failure = f'the gripper action server {self.gripper_action_name} is not available'
             rospy.logerr(f'mtc: {self.execution_failure}')
             return MoveItErrorCodes.CONTROL_FAILED
         point = posture.points[-1]
+        self.gripper_stalled = False   # the last command's result said stalled (read by the check after closing)
         goal = GripperCommandGoal()
         goal.command.position = point.positions[0]
         goal.command.max_effort = point.effort[0] if point.effort else 0.0
@@ -3193,6 +3248,7 @@ class MtcPickPlace:
             return MoveItErrorCodes.TIMED_OUT
         # closing on an object stalls the fingers before the commanded position, which is a successful grasp
         result = self.gripper_client.get_result()
+        self.gripper_stalled = bool(getattr(result, 'stalled', False))
         if self.gripper_client.get_state() == GoalStatus.SUCCEEDED or (result is not None and result.stalled):
             return MoveItErrorCodes.SUCCESS
         rospy.logwarn(
