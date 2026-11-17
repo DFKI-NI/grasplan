@@ -1,5 +1,6 @@
 '''The timing line of an action (pure Python, fake clock, no ROS master).'''
 import sys
+import threading
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -54,6 +55,21 @@ class TestStageTiming(unittest.TestCase):
         self.timer.close()
         self.assertIsNone(self.timer.end(True))
         self.assertEqual(self.lines, [])
+
+    def test_add_counts_a_block_the_caller_timed_inside_the_open_stages(self):
+        t, c = self.timer, self.clock
+        self.timer.add('ik_solved', 9.0)   # outside an action: nothing
+        t.begin('insert', 'klt_1')
+        with t.stage('insert_order'):
+            c.now += 1.0
+            t.add('ik_solved', 0.25)
+            t.add('ik_unsolved', 0.5)
+            t.add('ik_solved', 0.25)
+        thread = threading.Thread(target=t.add, args=('ik_solved', 7.0))   # another thread: nothing
+        thread.start()
+        thread.join()
+        self.assertEqual(t.end(True), 'TIMING insert klt_1 ok=1 total=1.00 insert_order=1.00 insert_order/ik_solved=0.50 '
+                                      'insert_order/ik_solved#=2 insert_order/ik_unsolved=0.50 other=0.00')
 
     def test_a_stage_that_raises_is_still_closed(self):
         t, c = self.timer, self.clock

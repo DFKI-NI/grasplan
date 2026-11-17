@@ -5,7 +5,7 @@ measured with the same numbers. Log only: no behaviour changes, no flag.
     TIMING pick banana ok=1 total=31.42 view=12.50 filters=1.50 plan=1.02 plan/guard_replay=5.00 plan/guard_replay#=3 ...
 
 ``begin(kind, target)`` starts an action, ``stage(name)`` (context manager) and ``@timed(name)`` (method decorator) time a
-block; stages nest and are named by their path (``plan/guard_replay``); a stage that runs several times is summed and gets
+block, ``add(name, seconds)`` counts a block the caller timed itself; stages nest and are named by their path (``plan/guard_replay``); a stage that runs several times is summed and gets
 its count in ``<path>#``. ``end(ok)`` logs the line: ``total`` is the wall time of the action, the top-level stages follow
 in the order they first ran, ``other`` is the part of ``total`` that no top-level stage covers. Outside an action
 everything is a no-op. Not thread safe on purpose: the action server thread runs the whole goal; a stage entered from
@@ -56,6 +56,15 @@ class StageTimer:
         name, start = self._open.pop()
         path = '/'.join([n for n, _ in self._open] + [name])
         self.totals[path] = self.totals.get(path, 0.0) + self._clock() - start
+        self.counts[path] = self.counts.get(path, 0) + 1
+
+    def add(self, name, seconds):
+        '''one run of stage name inside the stages open now, timed by the caller: for a block whose name follows from
+        its result (e.g. an IK call that found a solution or not)'''
+        if self.action is None or self._foreign():
+            return
+        path = '/'.join([n for n, _ in self._open] + [name])
+        self.totals[path] = self.totals.get(path, 0.0) + seconds
         self.counts[path] = self.counts.get(path, 0) + 1
 
     @contextmanager

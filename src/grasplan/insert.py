@@ -51,7 +51,7 @@ from pose_selector.srv import ClassQuery
 from grasplan.tools.common import objectToPick  # name is misleading, in this case we want to insert an object in it
 from grasplan.msg import InsertObjectAction, InsertObjectResult
 from grasplan.tools.action_client_helper import ActionClientHelper
-from grasplan.tools.stage_timing import action, timed, watch_server
+from grasplan.tools.stage_timing import TIMER, action, timed, watch_server
 from grasplan.tools.comfortable_insert import (
     comfortable_insert_candidates,
     free_yaw_insert_candidates,
@@ -87,7 +87,7 @@ class InsertTools:
         # free_yaw: order the yaws by the wrist_3 change an IK solution (seeded with the current arm state) needs,
         # instead of by the TCP rotation, which does not predict wrist_3 when the arm has to reconfigure
         self.insert_sort_by_ik = rospy.get_param('~insert_sort_by_ik', True)
-        self.compute_ik_srv = rospy.ServiceProxy('compute_ik', GetPositionIK)
+        self.compute_ik_srv = self.new_compute_ik_proxy()
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
         rospy.loginfo(
@@ -601,13 +601,34 @@ class InsertTools:
                 break
         return result
 
+    @staticmethod
+    def new_compute_ik_proxy():
+        '''compute_ik over one kept connection: the insert order asks it once per candidate pose (24 and more), a new
+        connection per call costs time'''
+        return rospy.ServiceProxy('compute_ik', GetPositionIK, persistent=True)
+
+    def call_compute_ik(self, request):
+        '''compute_ik on the kept connection; a broken one (e.g. move_group restarted) is opened again once. Raises
+        rospy.ServiceException when the second try fails too'''
+        for again in (False, True):
+            try:
+                return self.compute_ik_srv(request)
+            except (rospy.ServiceException, rospy.exceptions.TransportException) as e:
+                # a persistent proxy keeps its broken connection: replace it
+                self.compute_ik_srv.close()
+                self.compute_ik_srv = self.new_compute_ik_proxy()
+                if again:
+                    raise rospy.ServiceException(str(e)) from e
+
     @timed('insert_order')
     def sort_by_wrist_3_change(self, bodies, tcp_to_body):
         '''
         Object body poses sorted by how far wrist_3 turns from the current state (collision-aware IK). With
         ~insert_cable_gate and the MTC guard enabled, predict cable stretch along the joint-linear path to each IK
         state; offer predicted-pass poses before the rest. MTC samples its own IK, so this prediction
-        ranks candidates rather than fixing the solution. Unsorted when IK is unavailable.
+        ranks candidates rather than fixing the solution. Unsorted when IK is unavailable. The TIMING line splits
+        insert_order into the IK calls that found a solution and those that did not (each with its count) and the cable
+        prediction.
         '''
         self.insert_gate_passing = 0
         try:
@@ -638,14 +659,17 @@ class InsertTools:
             request.ik_request.pose_stamped.header.frame_id = self.place.global_reference_frame
             matrix_to_pose(body.dot(body_to_tcp), request.ik_request.pose_stamped.pose)
             request.ik_request.timeout = rospy.Duration(0.05)
+            asked = time.monotonic()
             try:
-                response = self.compute_ik_srv(request)
+                response = self.call_compute_ik(request)
             except rospy.ServiceException as e:
                 rospy.logwarn(f'compute_ik failed ({e}): insert poses not sorted by wrist_3')
                 return bodies
+            solved = response.error_code.val == MoveItErrorCodes.SUCCESS
+            TIMER.add('ik_solved' if solved else 'ik_unsolved', time.monotonic() - asked)
             key = (1, float(index), None)
             stretch = None
-            if response.error_code.val == MoveItErrorCodes.SUCCESS:
+            if solved:
                 names = response.solution.joint_state.name
                 if wrist_3_name in names:
                     wrist_3 = response.solution.joint_state.position[names.index(wrist_3_name)]
@@ -653,7 +677,8 @@ class InsertTools:
                     if guard is not None:
                         goal_q = dict(zip(names, response.solution.joint_state.position))
                         try:
-                            stretch = max(guard.model.evaluate(q).max_stretch for q in joint_path(start_q, goal_q))
+                            with TIMER.stage('cable_prediction'):
+                                stretch = max(guard.model.evaluate(q).max_stretch for q in joint_path(start_q, goal_q))
                         except Exception as e:  # no prediction leaves this pose after the predicted-pass group
                             rospy.logwarn(f'insert cable gate: no prediction for pose {index + 1}: {e}')
             keyed.append((key, body, stretch, index + 1))

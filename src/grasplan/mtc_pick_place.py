@@ -234,6 +234,23 @@ def place_retreat_passes(relaxed_min_distance, force_straight_up=False):
     passes = [(None, False), (None, True), (relaxed_min_distance, False), (relaxed_min_distance, True)]
     return [p for p in passes if p[1]] if force_straight_up else passes
 
+
+def reset_cache_counts(model):
+    '''(hits, misses) of the cable model's start-pose cache (cable_model reset_cache_mrad), None for a model without it'''
+    hits, misses = getattr(model, 'reset_cache_hits', None), getattr(model, 'reset_cache_misses', None)
+    return (hits, misses) if isinstance(hits, int) and isinstance(misses, int) else None
+
+
+def reset_cache_word(before, after):
+    '''for the chain replay log line: whether its fresh start came from the start-pose cache; empty when the cache is
+    off or the replay started from the live chain'''
+    if before is None or after is None:
+        return ''
+    if after[0] > before[0]:
+        return ' (start-pose cache hit)'
+    return ' (start-pose cache miss)' if after[1] > before[1] else ''
+
+
 class CableGuard:
     '''
     Arm cable entanglement as constraints on MTC paths, from the cable model of
@@ -374,11 +391,12 @@ class CableGuard:
         verdicts = []
         for start_state, where in runs:
             start = time.monotonic()
+            before = reset_cache_counts(self.chain_model)
             verdict = carrier_replay(self.chain_model, samples, self.chain_rate, start_state=start_state)
             if verdict is None:
                 continue
             rospy.loginfo(f'mtc cable guard: chain replay of {verdict.updates} ticks in {time.monotonic() - start:.1f} s '
-                          f'from {where}: max stretch '
+                          f'from {where}{reset_cache_word(before, reset_cache_counts(self.chain_model))}: max stretch '
                           f'{verdict.max_stretch:+.3f} ({verdict.limiting}), stop {verdict.stop}')
             verdicts.append(verdict)
         if not verdicts:

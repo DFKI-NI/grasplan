@@ -3102,7 +3102,8 @@ class PickTools:
         added = getattr(self, 'target_added_at', None)
         since = rospy.get_time() - added if added is not None else None
         if since is not None and since < delay:
-            rospy.sleep(delay - since)
+            with TIMER.stage('octomap_clear_wait'):   # its share of the TIMING line
+                rospy.sleep(delay - since)
         request = ApplyPlanningSceneRequest()
         request.scene.is_diff = True
         request.scene.world.collision_objects = [target]
